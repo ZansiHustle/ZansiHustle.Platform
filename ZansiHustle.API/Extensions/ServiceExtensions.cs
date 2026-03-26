@@ -1,0 +1,236 @@
+﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
+using System;
+using System.Text;
+using ZansiHustle.API.Middleware;
+using ZansiHustle.API.Services;
+using ZansiHustle.Application.Auth;
+using ZansiHustle.Application.Common.Interfaces;
+using ZansiHustle.Application.Persistence.Identity;
+using ZansiHustle.Application.Persistence.Users;
+using ZansiHustle.Application.Users;
+using ZansiHustle.Domain.Identity;
+using ZansiHustle.Infrastructure.Configuration;
+using ZansiHustle.Infrastructure.Data;
+using ZansiHustle.Infrastructure.Identity;
+using ZansiHustle.Infrastructure.Persistence.Users;
+using ZansiHustle.Infrastructure.Services;
+
+namespace ZansiHustle.API.Extensions;
+
+/// <summary>
+/// Centralized registration for API, infrastructure, auth, and middleware services.
+/// </summary>
+public static class ServiceExtensions
+{
+    /// <summary>
+    /// Registers core ASP.NET services.
+    /// </summary>
+    public static IServiceCollection AddCoreServices(this IServiceCollection services)
+    {
+        services.AddControllers();
+        services.AddEndpointsApiExplorer();
+        services.AddHttpContextAccessor();
+
+        services.AddSwaggerGen(options =>
+        {
+            options.SwaggerDoc("v1", new OpenApiInfo
+            {
+                Title = "ZansiHustle API",
+                Version = "v1",
+                Description = "Backend API for ZansiHustle mobile and web clients."
+            });
+
+            var securityScheme = new OpenApiSecurityScheme
+            {
+                Name = "Authorization",
+                Description = "Enter: Bearer {your JWT}",
+                In = ParameterLocation.Header,
+                Type = SecuritySchemeType.Http,
+                Scheme = "bearer",
+                BearerFormat = "JWT",
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = JwtBearerDefaults.AuthenticationScheme
+                }
+            };
+
+            options.AddSecurityDefinition(JwtBearerDefaults.AuthenticationScheme, securityScheme);
+            options.AddSecurityRequirement(new OpenApiSecurityRequirement
+            {
+                {
+                    securityScheme,
+                    Array.Empty<string>()
+                }
+            });
+        });
+
+        services.AddScoped<IUserService, UserService>();
+        services.AddScoped<IUserProfileService, UserProfileService>();
+        services.AddScoped<IUserSettingsService, UserSettingsService>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers Entity Framework Core database services.
+    /// </summary>
+    public static IServiceCollection AddDatabaseServices(this IServiceCollection services, IConfiguration configuration)
+    {
+        var connectionString = configuration.GetConnectionString("DefaultConnection")
+                               ?? throw new InvalidOperationException("DefaultConnection is not configured.");
+
+        services.AddDbContext<AppDbContext>(options =>
+        {
+            options.UseSqlServer(
+                connectionString,
+                sql =>
+                {
+                    sql.MigrationsAssembly("ZansiHustle.Infrastructure");
+                    sql.MigrationsHistoryTable("__EFMigrationsHistory", "dbo");
+                });
+        });
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers ASP.NET Identity and JWT bearer authentication.
+    /// </summary>
+    public static IServiceCollection AddIdentityServices(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<JwtSettings>(configuration.GetSection(JwtSettings.SectionName));
+
+        var jwtSettings = configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()
+                         ?? throw new InvalidOperationException("JwtSettings configuration is missing.");
+
+        if (string.IsNullOrWhiteSpace(jwtSettings.Key))
+            throw new InvalidOperationException("JWT signing key is missing.");
+
+        var key = Encoding.UTF8.GetBytes(jwtSettings.Key);
+
+        services.AddIdentity<User, IdentityRole<Guid>>(options =>
+        {
+            options.Password.RequireDigit = true;
+            options.Password.RequiredLength = 8;
+            options.Password.RequireNonAlphanumeric = true;
+            options.Password.RequireUppercase = true;
+            options.Password.RequireLowercase = true;
+            options.User.RequireUniqueEmail = true;
+            options.SignIn.RequireConfirmedEmail = true;
+            options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
+            options.Lockout.MaxFailedAccessAttempts = 5;
+        })
+        .AddEntityFrameworkStores<AppDbContext>()
+        .AddDefaultTokenProviders();
+
+        services
+            .AddAuthentication(options =>
+            {
+                options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+                options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
+            })
+            .AddJwtBearer(options =>
+            {
+                options.RequireHttpsMetadata = true;
+                options.SaveToken = true;
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = new SymmetricSecurityKey(key),
+                    ValidateIssuer = true,
+                    ValidIssuer = jwtSettings.Issuer,
+                    ValidateAudience = true,
+                    ValidAudience = jwtSettings.Audience,
+                    ValidateLifetime = true,
+                    ClockSkew = TimeSpan.Zero
+                };
+            });
+
+        services.AddAuthorization();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers infrastructure implementations.
+    /// </summary>
+    public static IServiceCollection AddInfrastructureServices(this IServiceCollection services)
+    {
+        services.AddScoped<IUserRepository, UserRepository>();
+        services.AddScoped<IUserProfileRepository, UserProfileRepository>();
+        services.AddScoped<IUserSettingsRepository, UserSettingsRepository>();
+        services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
+        services.AddScoped<IEmailService, ConsoleEmailService>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers application-layer auth services.
+    /// </summary>
+    public static IServiceCollection AddAuthServices(this IServiceCollection services)
+    {
+        services.AddScoped<IAuthService, AuthService>();
+        return services;
+    }
+
+    /// <summary>
+    /// Registers API-specific services.
+    /// </summary>
+    public static IServiceCollection AddApiServices(this IServiceCollection services)
+    {
+        services.AddScoped<ICurrentUserService, CurrentUserService>();
+        return services;
+    }
+
+    /// <summary>
+    /// Configures the HTTP request pipeline.
+    /// </summary>
+    public static WebApplication ConfigureMiddleware(this WebApplication app)
+    {
+        if (app.Environment.IsDevelopment())
+        {
+            app.UseSwagger();
+            app.UseSwaggerUI();
+        }
+
+        app.UseMiddleware<ExceptionHandlingMiddleware>();
+
+        app.UseHttpsRedirection();
+        app.UseAuthentication();
+        app.UseAuthorization();
+        app.MapControllers();
+
+        return app;
+    }
+
+    /// <summary>
+    /// Applies migrations and seeds startup data.
+    /// </summary>
+    public static async Task SeedApplicationAsync(this WebApplication app)
+    {
+        await using var scope = app.Services.CreateAsyncScope();
+        var services = scope.ServiceProvider;
+
+        try
+        {
+            var dbContext = services.GetRequiredService<AppDbContext>();
+            await dbContext.Database.MigrateAsync();
+
+            var roleManager = services.GetRequiredService<RoleManager<IdentityRole<Guid>>>();
+            await IdentitySeeder.SeedRolesAsync(roleManager);
+        }
+        catch (Exception ex)
+        {
+            var logger = services.GetRequiredService<ILogger<Program>>();
+            logger.LogError(ex, "An error occurred during application startup seeding.");
+            throw;
+        }
+    }
+}
