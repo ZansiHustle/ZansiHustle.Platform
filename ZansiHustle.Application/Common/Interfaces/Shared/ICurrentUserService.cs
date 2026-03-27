@@ -1,4 +1,4 @@
-﻿namespace ZansiHustle.Application.Common.Interfaces;
+﻿namespace ZansiHustle.Application.Common.Interfaces.Shared;
 
 /// <summary>
 /// Provides access to the current authenticated user context.

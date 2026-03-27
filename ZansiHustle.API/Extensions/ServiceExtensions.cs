@@ -9,10 +9,16 @@ using ZansiHustle.API.Middleware;
 using ZansiHustle.API.Services;
 using ZansiHustle.Application.Auth;
 using ZansiHustle.Application.Common.Interfaces;
+using ZansiHustle.Application.Common.Interfaces.Shared;
+using ZansiHustle.Application.Communications.Email.Interfaces;
+using ZansiHustle.Application.Communications.Email.Mappers;
+using ZansiHustle.Application.Communications.Email.Services;
 using ZansiHustle.Application.Persistence.Identity;
 using ZansiHustle.Application.Persistence.Users;
 using ZansiHustle.Application.Users;
 using ZansiHustle.Domain.Identity;
+using ZansiHustle.Infrastructure.Communications.Email.Mappers;
+using ZansiHustle.Infrastructure.Communications.Email.Providers.Smtp;
 using ZansiHustle.Infrastructure.Configuration;
 using ZansiHustle.Infrastructure.Data;
 using ZansiHustle.Infrastructure.Identity;
@@ -81,8 +87,8 @@ public static class ServiceExtensions
     /// </summary>
     public static IServiceCollection AddDatabaseServices(this IServiceCollection services, IConfiguration configuration)
     {
-        var connectionString = configuration.GetConnectionString("DefaultConnection")
-                               ?? throw new InvalidOperationException("DefaultConnection is not configured.");
+        var connectionString = configuration.GetConnectionString("UATConnection")
+                               ?? throw new InvalidOperationException("UATConnection is not configured.");
 
         services.AddDbContext<AppDbContext>(options =>
         {
@@ -166,7 +172,6 @@ public static class ServiceExtensions
         services.AddScoped<IUserProfileRepository, UserProfileRepository>();
         services.AddScoped<IUserSettingsRepository, UserSettingsRepository>();
         services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
-        services.AddScoped<IEmailService, ConsoleEmailService>();
 
         return services;
     }
@@ -189,12 +194,23 @@ public static class ServiceExtensions
         return services;
     }
 
+    public static IServiceCollection AddEmailServices(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<SmtpEmailOptions>(configuration.GetSection(SmtpEmailOptions.SectionName));
+
+        services.AddScoped<IEmailProvider, SmtpEmailProvider>();
+        services.AddScoped<IEmailService, EmailService>();
+        services.AddScoped<IEmailSenderMapper, EmailSenderMapper>();
+
+        return services;
+    }
+
     /// <summary>
     /// Configures the HTTP request pipeline.
     /// </summary>
     public static WebApplication ConfigureMiddleware(this WebApplication app)
     {
-        if (app.Environment.IsDevelopment())
+        if (true)//app.Environment.IsDevelopment())
         {
             app.UseSwagger();
             app.UseSwaggerUI();

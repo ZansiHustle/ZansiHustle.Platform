@@ -1,9 +1,8 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using ZansiHustle.API.Services;
 using ZansiHustle.Application.Auth;
 using ZansiHustle.Application.Auth.Dtos;
-using ZansiHustle.Application.Common.Interfaces;
+using ZansiHustle.Application.Common.Interfaces.Shared;
 using ZansiHustle.Shared.Results;
 
 namespace ZansiHustle.API.Controllers;
@@ -17,9 +16,7 @@ public class AuthController : BaseController
     private readonly IAuthService _authService;
     private readonly ICurrentUserService _currentUserService;
 
-    public AuthController(
-        IAuthService authService,
-        ICurrentUserService currentUserService)
+    public AuthController(IAuthService authService, ICurrentUserService currentUserService)
     {
         _authService = authService;
         _currentUserService = currentUserService;
@@ -129,10 +126,7 @@ public class AuthController : BaseController
             });
         }
 
-        var result = await _authService.ChangePasswordAsync(
-            _currentUserService.UserId.Value,
-            dto.CurrentPassword,
-            dto.NewPassword);
+        var result = await _authService.ChangePasswordAsync(_currentUserService.UserId.Value, dto.CurrentPassword, dto.NewPassword);
 
         return ToActionResult(result);
     }

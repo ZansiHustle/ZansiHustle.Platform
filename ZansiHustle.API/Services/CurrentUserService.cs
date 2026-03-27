@@ -1,5 +1,5 @@
 ﻿using System.Security.Claims;
-using ZansiHustle.Application.Common.Interfaces;
+using ZansiHustle.Application.Common.Interfaces.Shared;
 
 namespace ZansiHustle.API.Services;
 

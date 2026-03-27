@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using ZansiHustle.Application.Common.Interfaces;
+using ZansiHustle.Application.Communications.Email.Interfaces;
 
 namespace ZansiHustle.Infrastructure.Services;
 
@@ -7,7 +8,7 @@ namespace ZansiHustle.Infrastructure.Services;
 /// Development email service that logs email contents instead of sending them.
 /// Replace with SMTP/SendGrid/etc. in production.
 /// </summary>
-public sealed class ConsoleEmailService : IEmailService
+public sealed class ConsoleEmailService //: IEmailService
 {
     private readonly ILogger<ConsoleEmailService> _logger;
 

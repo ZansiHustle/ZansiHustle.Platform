@@ -1,8 +1,12 @@
 ﻿using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
+using System.Net.Http.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using ZansiHustle.Application.Auth.Dtos;
-using ZansiHustle.Application.Common.Interfaces;
+using ZansiHustle.Application.Communications.Email.Interfaces;
 using ZansiHustle.Application.Persistence.Identity;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Shared.Enums.User;
@@ -22,11 +26,7 @@ public sealed class AuthService : IAuthService
     private readonly IEmailService _emailService;
     private readonly ILogger<AuthService> _logger;
 
-    public AuthService(
-        UserManager<User> userManager,
-        IJwtTokenGenerator jwtTokenGenerator,
-        IEmailService emailService,
-        ILogger<AuthService> logger)
+    public AuthService(UserManager<User> userManager, IJwtTokenGenerator jwtTokenGenerator, IEmailService emailService, ILogger<AuthService> logger)
     {
         _userManager = userManager;
         _jwtTokenGenerator = jwtTokenGenerator;
@@ -41,23 +41,17 @@ public sealed class AuthService : IAuthService
         {
             var email = dto.Email.Trim().ToLowerInvariant();
             var user = await _userManager.Users.FirstOrDefaultAsync(x => x.Email == email);
-
+            
             if (user == null || !user.IsActive || user.AccountStatus != AccountStatus.Active)
-            {
                 return Result<AuthTokenDto>.Failure(ErrorCodes.Unauthorized, "Invalid credentials.");
-            }
-
+            
             var validPassword = await _userManager.CheckPasswordAsync(user, dto.Password);
             if (!validPassword)
-            {
                 return Result<AuthTokenDto>.Failure(ErrorCodes.Unauthorized, "Invalid credentials.");
-            }
-
+            /*
             if (!user.EmailConfirmed)
-            {
                 return Result<AuthTokenDto>.Failure(ErrorCodes.Forbidden, "Please verify your email address before logging in.");
-            }
-
+            */
             var token = await _jwtTokenGenerator.GenerateTokenAsync(user);
 
             _logger.LogInformation("User {UserId} logged in successfully.", user.Id);
@@ -79,9 +73,7 @@ public sealed class AuthService : IAuthService
             var existingUser = await _userManager.FindByEmailAsync(email);
 
             if (existingUser != null)
-            {
                 return Result<Guid>.Failure(ErrorCodes.Conflict, "Email address is already registered.");
-            }
 
             var user = new User
             {
@@ -127,9 +119,7 @@ public sealed class AuthService : IAuthService
         {
             var tokens = await _jwtTokenGenerator.RefreshTokenAsync(refreshToken);
             if (tokens == null)
-            {
                 return Result<AuthTokenDto>.Failure(ErrorCodes.Unauthorized, "Invalid or expired refresh token.");
-            }
 
             return Result<AuthTokenDto>.Success(tokens, "Token refreshed successfully.");
         }
@@ -147,23 +137,27 @@ public sealed class AuthService : IAuthService
         {
             var user = await _userManager.FindByEmailAsync(email.Trim().ToLowerInvariant());
             if (user == null)
-            {
                 return Result.Success("If the account exists, a verification email has been sent.");
-            }
 
             var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
             var callbackUrl = $"{callbackBaseUrl}?userId={user.Id}&token={Uri.EscapeDataString(token)}";
+            var sendResult = await _emailService.SendVerifyEmailAsync(user.Email!, user.FirstName, callbackUrl);
 
-            var body = $@"
-                <h2>Verify your email</h2>
-                <p>Welcome to ZansiHustle.</p>
-                <p>Please verify your email by clicking the link below:</p>
-                <p><a href=""{callbackUrl}"">Verify Email</a></p>";
-
-            await _emailService.SendAsync(user.Email!, "Verify your ZansiHustle email", body);
+            if (!sendResult.IsSuccess)
+            {
+                _logger.LogWarning("Failed to send verification email to {Email}. Reason: {Message}", email, sendResult.Message);
+                return sendResult;
+            }
 
             _logger.LogInformation("Email verification link sent to {Email}.", email);
-            return Result.Success("Verification email sent.");
+            var message = new
+            {
+                response = "Verification email sent.",
+                callBackUrl = callbackBaseUrl,
+                token
+            };
+            string jsonString = JsonConvert.SerializeObject(message);
+            return Result.Success(jsonString);
         }
         catch (Exception ex)
         {
@@ -179,9 +173,7 @@ public sealed class AuthService : IAuthService
         {
             var user = await _userManager.FindByIdAsync(userId);
             if (user == null)
-            {
                 return Result.Failure(ErrorCodes.NotFound, "User not found.");
-            }
 
             var result = await _userManager.ConfirmEmailAsync(user, token);
             if (!result.Succeeded)
@@ -189,6 +181,10 @@ public sealed class AuthService : IAuthService
                 var errors = string.Join("; ", result.Errors.Select(x => x.Description));
                 return Result.Failure(ErrorCodes.BadRequest, $"Email verification failed: {errors}");
             }
+
+            var sendResult = await _emailService.SendEmailVerifiedConfirmationAsync(user.Email!, user.FirstName);
+            if (!sendResult.IsSuccess)
+                _logger.LogWarning("Email verified for user {UserId}, but confirmation email failed. Reason: {Message}", user.Id, sendResult.Message);
 
             return Result.Success("Email verified successfully.");
         }
@@ -206,19 +202,17 @@ public sealed class AuthService : IAuthService
         {
             var user = await _userManager.FindByEmailAsync(email.Trim().ToLowerInvariant());
             if (user == null)
-            {
                 return Result.Success("If the account exists, a password reset email has been sent.");
-            }
 
             var token = await _userManager.GeneratePasswordResetTokenAsync(user);
             var callbackUrl = $"{callbackBaseUrl}?userId={user.Id}&token={Uri.EscapeDataString(token)}";
+            var sendResult = await _emailService.SendPasswordResetAsync(user.Email!, user.FirstName, callbackUrl);
 
-            var body = $@"
-                <h2>Reset your password</h2>
-                <p>Click the link below to reset your password:</p>
-                <p><a href=""{callbackUrl}"">Reset Password</a></p>";
-
-            await _emailService.SendAsync(user.Email!, "Reset your ZansiHustle password", body);
+            if (!sendResult.IsSuccess)
+            {
+                _logger.LogWarning("Failed to send password reset email to {Email}. Reason: {Message}", email, sendResult.Message);
+                return sendResult;
+            }
 
             _logger.LogInformation("Password reset email sent to {Email}.", email);
             return Result.Success("Password reset email sent.");
@@ -237,9 +231,7 @@ public sealed class AuthService : IAuthService
         {
             var user = await _userManager.FindByIdAsync(userId);
             if (user == null)
-            {
                 return Result.Failure(ErrorCodes.NotFound, "User not found.");
-            }
 
             var result = await _userManager.ResetPasswordAsync(user, token, newPassword);
             if (!result.Succeeded)
@@ -249,7 +241,6 @@ public sealed class AuthService : IAuthService
             }
 
             await _jwtTokenGenerator.RevokeAllRefreshTokensForUserAsync(user.Id);
-
             return Result.Success("Password reset successful.");
         }
         catch (Exception ex)
@@ -266,9 +257,7 @@ public sealed class AuthService : IAuthService
         {
             var user = await _userManager.FindByIdAsync(userId.ToString());
             if (user == null)
-            {
                 return Result.Failure(ErrorCodes.NotFound, "User not found.");
-            }
 
             var result = await _userManager.ChangePasswordAsync(user, currentPassword, newPassword);
             if (!result.Succeeded)
@@ -278,7 +267,6 @@ public sealed class AuthService : IAuthService
             }
 
             await _jwtTokenGenerator.RevokeAllRefreshTokensForUserAsync(user.Id);
-
             return Result.Success("Password changed successfully.");
         }
         catch (Exception ex)
@@ -295,9 +283,7 @@ public sealed class AuthService : IAuthService
         {
             var user = await _userManager.FindByIdAsync(userId.ToString());
             if (user == null || !user.IsActive || user.AccountStatus != AccountStatus.Active)
-            {
                 return Result<CurrentUserDto>.Failure(ErrorCodes.NotFound, "User not found.");
-            }
 
             var roles = await _userManager.GetRolesAsync(user);
 
