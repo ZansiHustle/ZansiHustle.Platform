@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using ZansiHustle.Shared.Enums.User;
 
 namespace ZansiHustle.Application.Auth.Dtos;
 
@@ -21,4 +22,6 @@ public sealed class RegisterDto
 
     [Required, MinLength(8)]
     public string Password { get; set; } = string.Empty;
+
+    public List<UserRole> UserRoles { get; set; } = new List<UserRole> { UserRole.Customer };
 }

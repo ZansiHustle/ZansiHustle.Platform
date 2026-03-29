@@ -95,7 +95,7 @@ public sealed class AuthService : IAuthService
                 return Result<Guid>.Failure(ErrorCodes.BadRequest, $"Registration failed: {errors}");
             }
 
-            var roleResult = await _userManager.AddToRoleAsync(user, UserRole.Customer.ToString());
+            var roleResult = await _userManager.AddToRolesAsync(user, dto.UserRoles.Select(x=>x.ToString()));
             if (!roleResult.Succeeded)
             {
                 var errors = string.Join("; ", roleResult.Errors.Select(e => e.Description));
