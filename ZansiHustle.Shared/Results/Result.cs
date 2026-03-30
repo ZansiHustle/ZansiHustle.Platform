@@ -27,4 +27,14 @@ public class Result
             Message = message
         };
     }
+
+    public static Result Failure(string message)
+    {
+        return new Result
+        {
+            IsSuccess = false,
+            Code = "500",
+            Message = message
+        };
+    }
 }

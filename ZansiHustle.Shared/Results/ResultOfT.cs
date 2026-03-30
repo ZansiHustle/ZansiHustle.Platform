@@ -27,4 +27,15 @@ public sealed class Result<T> : Result
             Data = default
         };
     }
+
+    public new static Result<T> Failure(string message)
+    {
+        return new Result<T>
+        {
+            IsSuccess = false,
+            Code = "500",
+            Message = message,
+            Data = default
+        };
+    }
 }

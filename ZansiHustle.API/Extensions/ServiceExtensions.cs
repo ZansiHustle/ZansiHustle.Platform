@@ -24,6 +24,33 @@ using ZansiHustle.Infrastructure.Data;
 using ZansiHustle.Infrastructure.Identity;
 using ZansiHustle.Infrastructure.Persistence.Users;
 using ZansiHustle.Infrastructure.Services;
+using ZansiHustle.Application.Agents;
+using ZansiHustle.Application.AgentApplications;
+using ZansiHustle.Application.BudgetTransactions;
+using ZansiHustle.Application.Campaigns;
+using ZansiHustle.Application.ContentTasks;
+using ZansiHustle.Application.Influencers;
+using ZansiHustle.Application.Persistence.AgentApplications;
+using ZansiHustle.Application.Persistence.Agents;
+using ZansiHustle.Application.Persistence.BudgetTransactions;
+using ZansiHustle.Application.Persistence.Campaigns;
+using ZansiHustle.Application.Persistence.ContentTasks;
+using ZansiHustle.Application.Persistence.Influencers;
+using ZansiHustle.Application.Persistence.Podcasts;
+using ZansiHustle.Application.Persistence.SellerLeads;
+using ZansiHustle.Application.Podcasts;
+using ZansiHustle.Application.SellerLeads;
+using ZansiHustle.Infrastructure.Persistence.AgentApplications;
+using ZansiHustle.Infrastructure.Persistence.Agents;
+using ZansiHustle.Infrastructure.Persistence.BudgetTransactions;
+using ZansiHustle.Infrastructure.Persistence.Campaigns;
+using ZansiHustle.Infrastructure.Persistence.ContentTasks;
+using ZansiHustle.Infrastructure.Persistence.Influencers;
+using ZansiHustle.Infrastructure.Persistence.Podcasts;
+using ZansiHustle.Infrastructure.Persistence.SellerLeads;
+using ZansiHustle.Application.Dashboard;
+using ZansiHustle.Application.Persistence.Dashboard;
+using ZansiHustle.Infrastructure.Persistence.Dashboard;
 
 namespace ZansiHustle.API.Extensions;
 
@@ -206,6 +233,58 @@ public static class ServiceExtensions
     }
 
     /// <summary>
+    /// Registers marketing and operations repositories and services.
+    /// </summary>
+    public static IServiceCollection AddMarketingAndOperationsServices(this IServiceCollection services)
+    {
+        // Repositories
+        services.AddScoped<IAgentRepository, AgentRepository>();
+        services.AddScoped<IAgentApplicationRepository, AgentApplicationRepository>();
+        services.AddScoped<ISellerLeadRepository, SellerLeadRepository>();
+        services.AddScoped<IInfluencerRepository, InfluencerRepository>();
+        services.AddScoped<IPodcastRepository, PodcastRepository>();
+        services.AddScoped<ICampaignRepository, CampaignRepository>();
+        services.AddScoped<IContentTaskRepository, ContentTaskRepository>();
+        services.AddScoped<IBudgetTransactionRepository, BudgetTransactionRepository>();
+        services.AddScoped<ILaunchOpsDashboardRepository, LaunchOpsDashboardRepository>();
+        services.AddScoped<IMarketingDashboardRepository, MarketingDashboardRepository>();
+
+        // Services
+        services.AddScoped<IAgentService, AgentService>();
+        services.AddScoped<IAgentApplicationService, AgentApplicationService>();
+        services.AddScoped<ISellerLeadService, SellerLeadService>();
+        services.AddScoped<IInfluencerService, InfluencerService>();
+        services.AddScoped<IPodcastService, PodcastService>();
+        services.AddScoped<ICampaignService, CampaignService>();
+        services.AddScoped<IContentTaskService, ContentTaskService>();
+        services.AddScoped<IBudgetTransactionService, BudgetTransactionService>();
+        services.AddScoped<ILaunchOpsDashboardService, LaunchOpsDashboardService>();
+        services.AddScoped<IMarketingDashboardService, MarketingDashboardService>();
+
+        return services;
+    }
+
+    public static IServiceCollection AddCustomCors(this IServiceCollection services)
+    {
+        services.AddCors(options =>
+        {
+            options.AddPolicy("FrontendCors", policy =>
+            {
+                policy
+                    .WithOrigins(
+                        "http://localhost:5173",
+                        "https://localhost:5173"
+                    )
+                    .AllowAnyHeader()
+                    .AllowAnyMethod()
+                    .AllowCredentials();
+            });
+        });
+
+        return services;
+    }
+
+    /// <summary>
     /// Configures the HTTP request pipeline.
     /// </summary>
     public static WebApplication ConfigureMiddleware(this WebApplication app)
@@ -217,6 +296,9 @@ public static class ServiceExtensions
         }
 
         app.UseMiddleware<ExceptionHandlingMiddleware>();
+
+        app.UseRouting();
+        app.UseCors("FrontendCors");
 
         app.UseHttpsRedirection();
         app.UseAuthentication();
