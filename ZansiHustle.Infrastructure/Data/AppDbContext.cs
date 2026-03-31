@@ -9,6 +9,7 @@ using ZansiHustle.Domain.Campaigns;
 using ZansiHustle.Domain.ContentTasks;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Domain.Influencers;
+using ZansiHustle.Domain.Merchants;
 using ZansiHustle.Domain.Podcasts;
 using ZansiHustle.Domain.SellerLeads;
 
@@ -97,5 +98,7 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     public DbSet<CampaignMetricSnapshot> CampaignMetricSnapshots { get; set; }
     public DbSet<ContentTask> ContentTasks { get; set; }
     public DbSet<BudgetTransaction> BudgetTransactions { get; set; }
+
+    public DbSet<Merchant> Merchants => Set<Merchant>();
 
 }

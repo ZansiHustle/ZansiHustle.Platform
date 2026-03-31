@@ -25,5 +25,6 @@ public enum UserRole
     Moderator = 15,
     Support = 16,
     Admin = 17,
-    SuperAdmin = 18
+    SuperAdmin = 18,
+    TeamManager = 19
 }
