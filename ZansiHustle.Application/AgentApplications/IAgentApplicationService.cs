@@ -7,7 +7,7 @@ using ZansiHustle.Shared.Results;
 namespace ZansiHustle.Application.AgentApplications
 {
     /// <summary>
-    /// Service contract for agent application operations.
+    /// Service contract for user application operations.
     /// </summary>
     public interface IAgentApplicationService
     {
@@ -18,3 +18,4 @@ namespace ZansiHustle.Application.AgentApplications
         Task<Result> DeleteAsync(Guid id);
     }
 }
+

@@ -8,7 +8,6 @@ using System.Text;
 using ZansiHustle.API.Middleware;
 using ZansiHustle.API.Services;
 using ZansiHustle.Application.AgentApplications;
-using ZansiHustle.Application.Agents;
 using ZansiHustle.Application.Auth;
 using ZansiHustle.Application.BudgetTransactions;
 using ZansiHustle.Application.Campaigns;
@@ -22,7 +21,6 @@ using ZansiHustle.Application.Dashboard;
 using ZansiHustle.Application.Influencers;
 using ZansiHustle.Application.Merchants;
 using ZansiHustle.Application.Persistence.AgentApplications;
-using ZansiHustle.Application.Persistence.Agents;
 using ZansiHustle.Application.Persistence.BudgetTransactions;
 using ZansiHustle.Application.Persistence.Campaigns;
 using ZansiHustle.Application.Persistence.ContentTasks;
@@ -36,6 +34,8 @@ using ZansiHustle.Application.Persistence.Users;
 using ZansiHustle.Application.Podcasts;
 using ZansiHustle.Application.SellerLeads;
 using ZansiHustle.Application.Users;
+
+using ZansiHustle.Application.TeamMembers;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Infrastructure.Communications.Email.Mappers;
 using ZansiHustle.Infrastructure.Communications.Email.Providers.Smtp;
@@ -43,7 +43,6 @@ using ZansiHustle.Infrastructure.Configuration;
 using ZansiHustle.Infrastructure.Data;
 using ZansiHustle.Infrastructure.Identity;
 using ZansiHustle.Infrastructure.Persistence.AgentApplications;
-using ZansiHustle.Infrastructure.Persistence.Agents;
 using ZansiHustle.Infrastructure.Persistence.BudgetTransactions;
 using ZansiHustle.Infrastructure.Persistence.Campaigns;
 using ZansiHustle.Infrastructure.Persistence.ContentTasks;
@@ -109,7 +108,8 @@ public static class ServiceExtensions
         services.AddScoped<IUserProfileService, UserProfileService>();
         services.AddScoped<IUserSettingsService, UserSettingsService>();
 
-        return services;
+        
+        services.AddScoped<ITeamMemberService, TeamMemberService>();return services;
     }
 
     /// <summary>
@@ -241,7 +241,6 @@ public static class ServiceExtensions
     public static IServiceCollection AddMarketingAndOperationsServices(this IServiceCollection services)
     {
         // Repositories
-        services.AddScoped<IAgentRepository, AgentRepository>();
         services.AddScoped<IAgentApplicationRepository, AgentApplicationRepository>();
         services.AddScoped<ISellerLeadRepository, SellerLeadRepository>();
         services.AddScoped<IInfluencerRepository, InfluencerRepository>();
@@ -254,7 +253,6 @@ public static class ServiceExtensions
         services.AddScoped<IMerchantRepository, MerchantRepository>();
 
         // Services
-        services.AddScoped<IAgentService, AgentService>();
         services.AddScoped<IAgentApplicationService, AgentApplicationService>();
         services.AddScoped<ISellerLeadService, SellerLeadService>();
         services.AddScoped<IInfluencerService, InfluencerService>();
@@ -337,3 +335,5 @@ public static class ServiceExtensions
         }
     }
 }
+
+

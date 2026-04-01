@@ -17,10 +17,11 @@ namespace ZansiHustle.Application.SellerLeads.Dtos
         public string? Province { get; set; }
         public string? City { get; set; }
         public string? SourceType { get; set; }
-        public Guid? AgentId { get; set; }
-        public string? AgentName { get; set; }
+        public Guid? AssignedUserId { get; set; }
+        public string? AssignedUserName { get; set; }
         public VerificationStatus VerificationStatus { get; set; }
         public ApprovalStatus ApprovalStatus { get; set; }
         public DateTime SubmittedAtUtc { get; set; }
     }
 }
+

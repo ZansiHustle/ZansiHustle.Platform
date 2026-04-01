@@ -19,7 +19,7 @@ namespace ZansiHustle.Application.SellerLeads.Dtos
         public string? City { get; set; }
         public string? SocialHandleOrLink { get; set; }
         public string? SourceType { get; set; }
-        public Guid? AgentId { get; set; }
         public string? Notes { get; set; }
     }
 }
+

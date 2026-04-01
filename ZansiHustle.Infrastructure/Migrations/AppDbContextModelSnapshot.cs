@@ -225,72 +225,6 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.ToTable("AgentApplications", (string)null);
                 });
 
-            modelBuilder.Entity("ZansiHustle.Domain.Agents.Agent", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("City")
-                        .HasMaxLength(150)
-                        .HasColumnType("nvarchar(150)");
-
-                    b.Property<string>("Code")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("Email")
-                        .HasMaxLength(256)
-                        .HasColumnType("nvarchar(256)");
-
-                    b.Property<string>("FullName")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<DateTime>("JoinedDateUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)");
-
-                    b.Property<string>("PhoneNumber")
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.Property<string>("Province")
-                        .HasMaxLength(150)
-                        .HasColumnType("nvarchar(150)");
-
-                    b.Property<string>("SocialHandle")
-                        .HasMaxLength(250)
-                        .HasColumnType("nvarchar(250)");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime?>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Code")
-                        .IsUnique();
-
-                    b.HasIndex("Email");
-
-                    b.HasIndex("PhoneNumber");
-
-                    b.HasIndex("Status");
-
-                    b.ToTable("Agents", (string)null);
-                });
-
             modelBuilder.Entity("ZansiHustle.Domain.BudgetTransactions.BudgetTransaction", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1050,11 +984,11 @@ namespace ZansiHustle.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<Guid?>("AgentId")
-                        .HasColumnType("uniqueidentifier");
-
                     b.Property<int>("ApprovalStatus")
                         .HasColumnType("int");
+
+                    b.Property<Guid?>("AssignedUserId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("BusinessName")
                         .IsRequired()
@@ -1133,9 +1067,9 @@ namespace ZansiHustle.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("AgentId");
-
                     b.HasIndex("ApprovalStatus");
+
+                    b.HasIndex("AssignedUserId");
 
                     b.HasIndex("BusinessName");
 
@@ -1278,17 +1212,12 @@ namespace ZansiHustle.Infrastructure.Migrations
 
             modelBuilder.Entity("ZansiHustle.Domain.SellerLeads.SellerLead", b =>
                 {
-                    b.HasOne("ZansiHustle.Domain.Agents.Agent", "Agent")
-                        .WithMany("SellerLeads")
-                        .HasForeignKey("AgentId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                    b.HasOne("ZansiHustle.Domain.Identity.User", "AssignedUser")
+                        .WithMany()
+                        .HasForeignKey("AssignedUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
 
-                    b.Navigation("Agent");
-                });
-
-            modelBuilder.Entity("ZansiHustle.Domain.Agents.Agent", b =>
-                {
-                    b.Navigation("SellerLeads");
+                    b.Navigation("AssignedUser");
                 });
 
             modelBuilder.Entity("ZansiHustle.Domain.Campaigns.Campaign", b =>

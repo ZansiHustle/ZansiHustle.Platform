@@ -3,7 +3,7 @@
 namespace ZansiHustle.Application.AgentApplications.Dtos
 {
     /// <summary>
-    /// Request model used to review an agent application.
+    /// Request model used to review an user application.
     /// </summary>
     public class ReviewAgentApplicationRequestDto
     {
@@ -12,3 +12,4 @@ namespace ZansiHustle.Application.AgentApplications.Dtos
         public System.Guid? ReviewedByUserId { get; set; }
     }
 }
+

@@ -11,7 +11,7 @@ using ZansiHustle.Shared.Results;
 namespace ZansiHustle.Application.AgentApplications
 {
     /// <summary>
-    /// Provides business logic for agent application operations.
+    /// Provides business logic for user application operations.
     /// </summary>
     public class AgentApplicationService : IAgentApplicationService
     {
@@ -34,11 +34,11 @@ namespace ZansiHustle.Application.AgentApplications
 
                 var data = applications.Select(MapToListItemDto).ToList();
 
-                return Result<List<AgentApplicationListItemDto>>.Success(data, "Agent applications retrieved successfully.");
+                return Result<List<AgentApplicationListItemDto>>.Success(data, "User applications retrieved successfully.");
             }
             catch (Exception ex)
             {
-                return Result<List<AgentApplicationListItemDto>>.Failure($"An error occurred while retrieving agent applications. {ex.Message}");
+                return Result<List<AgentApplicationListItemDto>>.Failure($"An error occurred while retrieving user applications. {ex.Message}");
             }
         }
 
@@ -51,14 +51,14 @@ namespace ZansiHustle.Application.AgentApplications
 
                 if (application is null)
                 {
-                    return Result<AgentApplicationDetailsDto>.Failure("Agent application not found.");
+                    return Result<AgentApplicationDetailsDto>.Failure("User application not found.");
                 }
 
-                return Result<AgentApplicationDetailsDto>.Success(MapToDetailsDto(application), "Agent application retrieved successfully.");
+                return Result<AgentApplicationDetailsDto>.Success(MapToDetailsDto(application), "User application retrieved successfully.");
             }
             catch (Exception ex)
             {
-                return Result<AgentApplicationDetailsDto>.Failure($"An error occurred while retrieving the agent application. {ex.Message}");
+                return Result<AgentApplicationDetailsDto>.Failure($"An error occurred while retrieving the user application. {ex.Message}");
             }
         }
 
@@ -99,14 +99,14 @@ namespace ZansiHustle.Application.AgentApplications
 
                 if (!saved)
                 {
-                    return Result<AgentApplicationDetailsDto>.Failure("Failed to create agent application.");
+                    return Result<AgentApplicationDetailsDto>.Failure("Failed to create user application.");
                 }
 
-                return Result<AgentApplicationDetailsDto>.Success(MapToDetailsDto(entity), "Agent application created successfully.");
+                return Result<AgentApplicationDetailsDto>.Success(MapToDetailsDto(entity), "User application created successfully.");
             }
             catch (Exception ex)
             {
-                return Result<AgentApplicationDetailsDto>.Failure($"An error occurred while creating the agent application. {ex.Message}");
+                return Result<AgentApplicationDetailsDto>.Failure($"An error occurred while creating the user application. {ex.Message}");
             }
         }
 
@@ -124,7 +124,7 @@ namespace ZansiHustle.Application.AgentApplications
 
                 if (application is null)
                 {
-                    return Result<AgentApplicationDetailsDto>.Failure("Agent application not found.");
+                    return Result<AgentApplicationDetailsDto>.Failure("User application not found.");
                 }
 
                 application.Status = request.Status;
@@ -139,14 +139,14 @@ namespace ZansiHustle.Application.AgentApplications
 
                 if (!saved)
                 {
-                    return Result<AgentApplicationDetailsDto>.Failure("Failed to review agent application.");
+                    return Result<AgentApplicationDetailsDto>.Failure("Failed to review user application.");
                 }
 
-                return Result<AgentApplicationDetailsDto>.Success(MapToDetailsDto(application), "Agent application reviewed successfully.");
+                return Result<AgentApplicationDetailsDto>.Success(MapToDetailsDto(application), "User application reviewed successfully.");
             }
             catch (Exception ex)
             {
-                return Result<AgentApplicationDetailsDto>.Failure($"An error occurred while reviewing the agent application. {ex.Message}");
+                return Result<AgentApplicationDetailsDto>.Failure($"An error occurred while reviewing the user application. {ex.Message}");
             }
         }
 
@@ -159,7 +159,7 @@ namespace ZansiHustle.Application.AgentApplications
 
                 if (application is null)
                 {
-                    return Result.Failure("Agent application not found.");
+                    return Result.Failure("User application not found.");
                 }
 
                 _agentApplicationRepository.Delete(application);
@@ -168,14 +168,14 @@ namespace ZansiHustle.Application.AgentApplications
 
                 if (!saved)
                 {
-                    return Result.Failure("Failed to delete agent application.");
+                    return Result.Failure("Failed to delete user application.");
                 }
 
-                return Result.Success("Agent application deleted successfully.");
+                return Result.Success("User application deleted successfully.");
             }
             catch (Exception ex)
             {
-                return Result.Failure($"An error occurred while deleting the agent application. {ex.Message}");
+                return Result.Failure($"An error occurred while deleting the user application. {ex.Message}");
             }
         }
 
@@ -218,3 +218,4 @@ namespace ZansiHustle.Application.AgentApplications
         }
     }
 }
+

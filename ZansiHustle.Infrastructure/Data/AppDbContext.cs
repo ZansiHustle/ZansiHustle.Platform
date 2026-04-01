@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using System.Reflection;
 using ZansiHustle.Domain.AgentApplications;
-using ZansiHustle.Domain.Agents;
 using ZansiHustle.Domain.BudgetTransactions;
 using ZansiHustle.Domain.Campaigns;
 using ZansiHustle.Domain.ContentTasks;
@@ -85,9 +84,6 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
     public DbSet<UserSettings> UserSettings => Set<UserSettings>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
-
-
-    public DbSet<Agent> Agents { get; set; }
     public DbSet<AgentApplication> AgentApplications { get; set; }
     public DbSet<SellerLead> SellerLeads { get; set; }
     public DbSet<Influencer> Influencers { get; set; }

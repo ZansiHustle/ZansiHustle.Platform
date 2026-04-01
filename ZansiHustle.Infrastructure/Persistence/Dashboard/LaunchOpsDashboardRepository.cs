@@ -28,7 +28,7 @@ namespace ZansiHustle.Infrastructure.Persistence.Dashboard
         /// <inheritdoc />
         public async Task<LaunchOpsSummaryDto> GetSummaryAsync()
         {
-            var totalAgents = await _context.Agents.CountAsync();
+            var totalAgents = await _context.Users.CountAsync();
             var totalAgentApplications = await _context.AgentApplications.CountAsync();
             var pendingAgentApplications = await _context.AgentApplications.CountAsync(x => x.Status == AgentApplicationStatus.Pending);
 
@@ -72,19 +72,35 @@ namespace ZansiHustle.Infrastructure.Persistence.Dashboard
         /// <inheritdoc />
         public async Task<List<TeamActivityDto>> GetTeamActivityAsync()
         {
-            return await _context.Agents
-                .AsNoTracking()
-                .Select(x => new TeamActivityDto
-                {
-                    TeamMember = x.FullName,
-                    Leads = x.SellerLeads.Count(),
-                    Conversions = x.SellerLeads.Count(s => s.ConvertedSellerId != null),
-                    Pending = x.SellerLeads.Count(s => s.ApprovalStatus == ApprovalStatus.Pending),
-                    Reach = 0,
-                    Spend = 0m
-                })
-                .OrderByDescending(x => x.Leads)
-                .ToListAsync();
+            try
+            {
+                return await _context.Users
+                    .AsNoTracking()
+                    .Select(x => new TeamActivityDto
+                    {
+                        TeamMember = ((x.FirstName ?? string.Empty) + " " + (x.LastName ?? string.Empty)).Trim(),
+
+                        Leads = _context.SellerLeads.Count(s => s.AssignedUserId == x.Id),
+
+                        Conversions = _context.SellerLeads.Count(s =>
+                            s.AssignedUserId == x.Id &&
+                            s.ConvertedSellerId != null),
+
+                        Pending = _context.SellerLeads.Count(s =>
+                            s.AssignedUserId == x.Id &&
+                            s.ApprovalStatus == ApprovalStatus.Pending),
+
+                        Reach = 0,
+                        Spend = 0m
+                    })
+                    .OrderByDescending(x => x.Leads)
+                    .ToListAsync();
+            }
+            catch (Exception ex)
+            {
+                throw new Exception("An error occurred while retrieving team activity.", ex);
+            }
         }
     }
 }
+

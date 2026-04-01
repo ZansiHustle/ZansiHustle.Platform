@@ -26,5 +26,6 @@ public enum UserRole
     Support = 16,
     Admin = 17,
     SuperAdmin = 18,
-    TeamManager = 19
+    TeamManager = 19,
+    Accountant = 20,
 }

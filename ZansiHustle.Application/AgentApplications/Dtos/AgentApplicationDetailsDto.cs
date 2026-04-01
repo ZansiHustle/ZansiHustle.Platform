@@ -4,7 +4,7 @@ using ZansiHustle.Shared.Enums.AgentApplications;
 namespace ZansiHustle.Application.AgentApplications.Dtos
 {
     /// <summary>
-    /// Detailed agent application DTO for detail screens.
+    /// Detailed user application DTO for detail screens.
     /// </summary>
     public class AgentApplicationDetailsDto
     {
@@ -25,3 +25,4 @@ namespace ZansiHustle.Application.AgentApplications.Dtos
         public DateTime? UpdatedAtUtc { get; set; }
     }
 }
+

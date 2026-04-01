@@ -24,7 +24,7 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.SellerLeads
             builder.HasIndex(x => x.ContactName);
             builder.HasIndex(x => x.Email);
             builder.HasIndex(x => x.PhoneNumber);
-            builder.HasIndex(x => x.AgentId);
+            builder.HasIndex(x => x.AssignedUserId);
             builder.HasIndex(x => x.LeadType);
             builder.HasIndex(x => x.VerificationStatus);
             builder.HasIndex(x => x.ApprovalStatus);
@@ -86,10 +86,11 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.SellerLeads
             builder.Property(x => x.CreatedAtUtc)
                 .IsRequired();
 
-            builder.HasOne(x => x.Agent)
-                .WithMany(x => x.SellerLeads)
-                .HasForeignKey(x => x.AgentId)
-                .OnDelete(DeleteBehavior.SetNull);
+            builder.HasOne(x => x.AssignedUser)
+                .WithMany()
+                .HasForeignKey(x => x.AssignedUserId)
+                .OnDelete(DeleteBehavior.Restrict);
         }
     }
 }
+

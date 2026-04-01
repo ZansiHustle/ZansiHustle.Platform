@@ -4,7 +4,7 @@ using ZansiHustle.Shared.Enums.AgentApplications;
 namespace ZansiHustle.Application.AgentApplications.Dtos
 {
     /// <summary>
-    /// Lightweight agent application DTO for list screens.
+    /// Lightweight user application DTO for list screens.
     /// </summary>
     public class AgentApplicationListItemDto
     {
@@ -19,3 +19,4 @@ namespace ZansiHustle.Application.AgentApplications.Dtos
         public DateTime SubmittedAtUtc { get; set; }
     }
 }
+

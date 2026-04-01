@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ZansiHustle.Application.SellerLeads;
 using ZansiHustle.Application.SellerLeads.Dtos;
@@ -10,6 +11,7 @@ namespace ZansiHustle.API.Controllers
     /// Exposes endpoints for seller lead management.
     /// </summary>
     [ApiController]
+    [Authorize]
     [Route("api/[controller]")]
     public class SellerLeadsController : ControllerBase
     {

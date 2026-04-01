@@ -7,7 +7,7 @@ using ZansiHustle.Application.AgentApplications.Dtos;
 namespace ZansiHustle.API.Controllers
 {
     /// <summary>
-    /// Exposes endpoints for agent application management.
+    /// Exposes endpoints for user application management.
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
@@ -24,7 +24,7 @@ namespace ZansiHustle.API.Controllers
         }
 
         /// <summary>
-        /// Gets all agent applications.
+        /// Gets all user applications.
         /// </summary>
         [HttpGet]
         public async Task<IActionResult> GetAll()
@@ -35,7 +35,7 @@ namespace ZansiHustle.API.Controllers
         }
 
         /// <summary>
-        /// Gets an agent application by identifier.
+        /// Gets an user application by identifier.
         /// </summary>
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> GetById(Guid id)
@@ -46,7 +46,7 @@ namespace ZansiHustle.API.Controllers
         }
 
         /// <summary>
-        /// Creates a new agent application.
+        /// Creates a new user application.
         /// </summary>
         [HttpPost]
         public async Task<IActionResult> Create([FromBody] CreateAgentApplicationRequestDto request)
@@ -57,7 +57,7 @@ namespace ZansiHustle.API.Controllers
         }
 
         /// <summary>
-        /// Reviews an agent application.
+        /// Reviews an user application.
         /// </summary>
         [HttpPut("{id:guid}/review")]
         public async Task<IActionResult> Review(Guid id, [FromBody] ReviewAgentApplicationRequestDto request)
@@ -68,7 +68,7 @@ namespace ZansiHustle.API.Controllers
         }
 
         /// <summary>
-        /// Deletes an agent application.
+        /// Deletes an user application.
         /// </summary>
         [HttpDelete("{id:guid}")]
         public async Task<IActionResult> Delete(Guid id)
@@ -79,3 +79,4 @@ namespace ZansiHustle.API.Controllers
         }
     }
 }
+

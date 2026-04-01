@@ -1,7 +1,7 @@
 ﻿namespace ZansiHustle.Application.AgentApplications.Dtos
 {
     /// <summary>
-    /// Request model used to create a new agent application.
+    /// Request model used to create a new user application.
     /// </summary>
     public class CreateAgentApplicationRequestDto
     {
@@ -14,3 +14,4 @@
         public string? Notes { get; set; }
     }
 }
+

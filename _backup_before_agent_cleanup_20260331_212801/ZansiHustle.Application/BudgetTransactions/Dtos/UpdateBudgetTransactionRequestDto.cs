@@ -1,0 +1,21 @@
+﻿using System;
+using ZansiHustle.Shared.Enums.Budget;
+
+namespace ZansiHustle.Application.BudgetTransactions.Dtos
+{
+    /// <summary>
+    /// Request model used to update an existing budget transaction.
+    /// </summary>
+    public class UpdateBudgetTransactionRequestDto
+    {
+        public DateTime TransactionDateUtc { get; set; }
+        public BudgetTransactionType TransactionType { get; set; }
+        public BudgetCategory Category { get; set; }
+        public string Description { get; set; } = string.Empty;
+        public decimal Amount { get; set; }
+        public string? Reference { get; set; }
+        public Guid? RecordedByUserId { get; set; }
+        public string? RelatedEntityType { get; set; }
+        public Guid? RelatedEntityId { get; set; }
+    }
+}

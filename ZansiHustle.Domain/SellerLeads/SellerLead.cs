@@ -1,5 +1,5 @@
 ﻿using System;
-using ZansiHustle.Domain.Agents;
+using ZansiHustle.Domain.Identity;
 using ZansiHustle.Shared.Enums.SellerLeads;
 
 namespace ZansiHustle.Domain.SellerLeads
@@ -25,10 +25,11 @@ namespace ZansiHustle.Domain.SellerLeads
         public DateTime SubmittedAtUtc { get; set; } = DateTime.UtcNow;
         public DateTime? ReviewedAtUtc { get; set; }
         public Guid? ReviewedByUserId { get; set; }
-        public Guid? AgentId { get; set; }
-        public virtual Agent? Agent { get; set; }
+        public Guid? AssignedUserId { get; set; }
+        public virtual User? AssignedUser { get; set; }
         public Guid? ConvertedSellerId { get; set; }
         public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
         public DateTime? UpdatedAtUtc { get; set; }
     }
 }
+

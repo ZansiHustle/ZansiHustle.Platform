@@ -2,8 +2,9 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using ZansiHustle.Application.Persistence.Agents;
+using ZansiHustle.Application.Common.Interfaces.Shared;
 using ZansiHustle.Application.Persistence.SellerLeads;
+using ZansiHustle.Application.Persistence.Users;
 using ZansiHustle.Application.SellerLeads.Dtos;
 using ZansiHustle.Domain.SellerLeads;
 using ZansiHustle.Shared.Enums.SellerLeads;
@@ -17,15 +18,17 @@ namespace ZansiHustle.Application.SellerLeads
     public class SellerLeadService : ISellerLeadService
     {
         private readonly ISellerLeadRepository _sellerLeadRepository;
-        private readonly IAgentRepository _agentRepository;
+        private readonly IUserRepository _userRepository;
+        private readonly ICurrentUserService _currentUserService;
 
         /// <summary>
         /// Creates a new instance of the <see cref="SellerLeadService"/> class.
         /// </summary>
-        public SellerLeadService(ISellerLeadRepository sellerLeadRepository, IAgentRepository agentRepository)
+        public SellerLeadService(ISellerLeadRepository sellerLeadRepository, IUserRepository agentRepository, ICurrentUserService currentUserService)
         {
             _sellerLeadRepository = sellerLeadRepository;
-            _agentRepository = agentRepository;
+            _userRepository = agentRepository;
+            _currentUserService = currentUserService;
         }
 
         /// <inheritdoc />
@@ -85,14 +88,9 @@ namespace ZansiHustle.Application.SellerLeads
                     return Result<SellerLeadDetailsDto>.Failure("Business name is required.");
                 }
 
-                if (request.AgentId.HasValue)
+                if (!_currentUserService.UserId.HasValue)
                 {
-                    var agent = await _agentRepository.GetByIdAsync(request.AgentId.Value);
-
-                    if (agent is null)
-                    {
-                        return Result<SellerLeadDetailsDto>.Failure("Selected agent was not found.");
-                    }
+                    return Result<SellerLeadDetailsDto>.Failure("Authenticated user was not found.");
                 }
 
                 var entity = new SellerLead
@@ -110,7 +108,7 @@ namespace ZansiHustle.Application.SellerLeads
                     City = request.City?.Trim(),
                     SocialHandleOrLink = request.SocialHandleOrLink?.Trim(),
                     SourceType = request.SourceType?.Trim(),
-                    AgentId = request.AgentId,
+                    AssignedUserId = _currentUserService.UserId.Value,
                     Notes = request.Notes?.Trim(),
                     SubmittedAtUtc = DateTime.UtcNow,
                     CreatedAtUtc = DateTime.UtcNow,
@@ -157,14 +155,9 @@ namespace ZansiHustle.Application.SellerLeads
                     return Result<SellerLeadDetailsDto>.Failure("Business name is required.");
                 }
 
-                if (request.AgentId.HasValue)
+                if (!_currentUserService.UserId.HasValue)
                 {
-                    var agent = await _agentRepository.GetByIdAsync(request.AgentId.Value);
-
-                    if (agent is null)
-                    {
-                        return Result<SellerLeadDetailsDto>.Failure("Selected agent was not found.");
-                    }
+                    return Result<SellerLeadDetailsDto>.Failure("Authenticated user was not found.");
                 }
 
                 var sellerLead = await _sellerLeadRepository.GetByIdAsync(id);
@@ -185,7 +178,7 @@ namespace ZansiHustle.Application.SellerLeads
                 sellerLead.City = request.City?.Trim();
                 sellerLead.SocialHandleOrLink = request.SocialHandleOrLink?.Trim();
                 sellerLead.SourceType = request.SourceType?.Trim();
-                sellerLead.AgentId = request.AgentId;
+                sellerLead.AssignedUserId = _currentUserService.UserId;
                 sellerLead.Notes = request.Notes?.Trim();
                 sellerLead.UpdatedAtUtc = DateTime.UtcNow;
 
@@ -385,8 +378,8 @@ namespace ZansiHustle.Application.SellerLeads
                 Province = sellerLead.Province,
                 City = sellerLead.City,
                 SourceType = sellerLead.SourceType,
-                AgentId = sellerLead.AgentId,
-                AgentName = sellerLead.Agent?.FullName,
+                AssignedUserId = sellerLead.AssignedUserId,
+                AssignedUserName = $"{sellerLead.AssignedUser?.FirstName} {sellerLead.AssignedUser?.FirstName}",
                 VerificationStatus = sellerLead.VerificationStatus,
                 ApprovalStatus = sellerLead.ApprovalStatus,
                 SubmittedAtUtc = sellerLead.SubmittedAtUtc
@@ -410,8 +403,8 @@ namespace ZansiHustle.Application.SellerLeads
                 City = sellerLead.City,
                 SocialHandleOrLink = sellerLead.SocialHandleOrLink,
                 SourceType = sellerLead.SourceType,
-                AgentId = sellerLead.AgentId,
-                AgentName = sellerLead.Agent?.FullName,
+                AssignedUserId = sellerLead.AssignedUserId,
+                AssignedUserName = sellerLead.AssignedUser?.FirstName,
                 VerificationStatus = sellerLead.VerificationStatus,
                 ApprovalStatus = sellerLead.ApprovalStatus,
                 Notes = sellerLead.Notes,
@@ -425,3 +418,4 @@ namespace ZansiHustle.Application.SellerLeads
         }
     }
 }
+

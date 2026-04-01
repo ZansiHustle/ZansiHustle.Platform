@@ -6,25 +6,25 @@ using ZansiHustle.Domain.AgentApplications;
 namespace ZansiHustle.Application.Persistence.AgentApplications
 {
     /// <summary>
-    /// Repository contract for managing agent application persistence operations.
+    /// Repository contract for managing user application persistence operations.
     /// </summary>
     public interface IAgentApplicationRepository
     {
         /// <summary>
-        /// Gets all agent applications in the system.
+        /// Gets all user applications in the system.
         /// </summary>
-        /// <returns>A list of agent applications.</returns>
+        /// <returns>A list of user applications.</returns>
         Task<List<AgentApplication>> GetAllAsync();
 
         /// <summary>
-        /// Gets a single agent application by its unique identifier.
+        /// Gets a single user application by its unique identifier.
         /// </summary>
-        /// <param name="id">The agent application identifier.</param>
+        /// <param name="id">The user application identifier.</param>
         /// <returns>The matching application if found; otherwise null.</returns>
         Task<AgentApplication?> GetByIdAsync(Guid id);
 
         /// <summary>
-        /// Gets a single agent application by its unique business code.
+        /// Gets a single user application by its unique business code.
         /// </summary>
         /// <param name="code">The application code.</param>
         /// <returns>The matching application if found; otherwise null.</returns>
@@ -38,19 +38,19 @@ namespace ZansiHustle.Application.Persistence.AgentApplications
         Task<bool> ExistsByCodeAsync(string code);
 
         /// <summary>
-        /// Adds a new agent application to the data store.
+        /// Adds a new user application to the data store.
         /// </summary>
         /// <param name="application">The application entity to add.</param>
         Task AddAsync(AgentApplication application);
 
         /// <summary>
-        /// Updates an existing agent application in the data store.
+        /// Updates an existing user application in the data store.
         /// </summary>
         /// <param name="application">The application entity to update.</param>
         void Update(AgentApplication application);
 
         /// <summary>
-        /// Deletes an agent application from the data store.
+        /// Deletes an user application from the data store.
         /// </summary>
         /// <param name="application">The application entity to delete.</param>
         void Delete(AgentApplication application);
@@ -62,3 +62,4 @@ namespace ZansiHustle.Application.Persistence.AgentApplications
         Task<bool> SaveChangesAsync();
     }
 }
+

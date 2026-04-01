@@ -30,7 +30,7 @@ namespace ZansiHustle.Infrastructure.Persistence.SellerLeads
         {
             return await _context.SellerLeads
                 .AsNoTracking()
-                .Include(x => x.Agent)
+                .Include(x => x.AssignedUser)
                 .OrderByDescending(x => x.SubmittedAtUtc)
                 .ToListAsync();
         }
@@ -39,7 +39,7 @@ namespace ZansiHustle.Infrastructure.Persistence.SellerLeads
         public async Task<SellerLead?> GetByIdAsync(Guid id)
         {
             return await _context.SellerLeads
-                .Include(x => x.Agent)
+                .Include(x => x.AssignedUser)
                 .FirstOrDefaultAsync(x => x.Id == id);
         }
 
@@ -54,7 +54,7 @@ namespace ZansiHustle.Infrastructure.Persistence.SellerLeads
             var normalizedCode = code.Trim();
 
             return await _context.SellerLeads
-                .Include(x => x.Agent)
+                .Include(x => x.AssignedUser)
                 .FirstOrDefaultAsync(x => x.Code == normalizedCode);
         }
 
@@ -102,3 +102,4 @@ namespace ZansiHustle.Infrastructure.Persistence.SellerLeads
         }
     }
 }
+
