@@ -13,6 +13,8 @@ using ZansiHustle.Application.BudgetTransactions;
 using ZansiHustle.Application.Campaigns;
 using ZansiHustle.Application.Common.Interfaces;
 using ZansiHustle.Application.Common.Interfaces.Shared;
+using ZansiHustle.Application.Communication.Email.Interfaces;
+using ZansiHustle.Application.Communication.Email.Services;
 using ZansiHustle.Application.Communications.Email.Interfaces;
 using ZansiHustle.Application.Communications.Email.Mappers;
 using ZansiHustle.Application.Communications.Email.Services;
@@ -29,13 +31,15 @@ using ZansiHustle.Application.Persistence.Identity;
 using ZansiHustle.Application.Persistence.Influencers;
 using ZansiHustle.Application.Persistence.Merchants;
 using ZansiHustle.Application.Persistence.Podcasts;
+using ZansiHustle.Application.Persistence.SellerCategories;
 using ZansiHustle.Application.Persistence.SellerLeads;
 using ZansiHustle.Application.Persistence.Users;
 using ZansiHustle.Application.Podcasts;
+using ZansiHustle.Application.SellerCategories;
 using ZansiHustle.Application.SellerLeads;
-using ZansiHustle.Application.Users;
-
+using ZansiHustle.Application.Support;
 using ZansiHustle.Application.TeamMembers;
+using ZansiHustle.Application.Users;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Infrastructure.Communications.Email.Mappers;
 using ZansiHustle.Infrastructure.Communications.Email.Providers.Smtp;
@@ -50,6 +54,7 @@ using ZansiHustle.Infrastructure.Persistence.Dashboard;
 using ZansiHustle.Infrastructure.Persistence.Influencers;
 using ZansiHustle.Infrastructure.Persistence.Merchants;
 using ZansiHustle.Infrastructure.Persistence.Podcasts;
+using ZansiHustle.Infrastructure.Persistence.SellerCategories;
 using ZansiHustle.Infrastructure.Persistence.SellerLeads;
 using ZansiHustle.Infrastructure.Persistence.Users;
 using ZansiHustle.Infrastructure.Services;
@@ -117,8 +122,14 @@ public static class ServiceExtensions
     /// </summary>
     public static IServiceCollection AddDatabaseServices(this IServiceCollection services, IConfiguration configuration)
     {
-        var connectionString = configuration.GetConnectionString("UATConnection")
-                               ?? throw new InvalidOperationException("UATConnection is not configured.");
+        const bool IS_LIVE = false;
+        const string UAT_DB = "UATConnection";
+        const string LIVE_DB = "LiveConnection";
+
+        const string SELECTED_ENV = IS_LIVE ? LIVE_DB : UAT_DB; 
+
+        var connectionString = configuration.GetConnectionString(SELECTED_ENV)
+                               ?? throw new InvalidOperationException($"{SELECTED_ENV} is not configured.");
 
         services.AddDbContext<AppDbContext>(options =>
         {
@@ -231,7 +242,8 @@ public static class ServiceExtensions
         services.AddScoped<IEmailProvider, SmtpEmailProvider>();
         services.AddScoped<IEmailService, EmailService>();
         services.AddScoped<IEmailSenderMapper, EmailSenderMapper>();
-
+        services.AddScoped<ISupportEmailService, SupportEmailService>();
+        services.AddScoped<IMerchantEmailService, MerchantEmailService>();
         return services;
     }
 
@@ -251,6 +263,7 @@ public static class ServiceExtensions
         services.AddScoped<ILaunchOpsDashboardRepository, LaunchOpsDashboardRepository>();
         services.AddScoped<IMarketingDashboardRepository, MarketingDashboardRepository>();
         services.AddScoped<IMerchantRepository, MerchantRepository>();
+        services.AddScoped<ISellerCategoryRepository, SellerCategoryRepository>();
 
         // Services
         services.AddScoped<IAgentApplicationService, AgentApplicationService>();
@@ -263,6 +276,7 @@ public static class ServiceExtensions
         services.AddScoped<ILaunchOpsDashboardService, LaunchOpsDashboardService>();
         services.AddScoped<IMarketingDashboardService, MarketingDashboardService>();
         services.AddScoped<IMerchantService, MerchantService>();
+        services.AddScoped<ISellerCategoryService, SellerCategoryService>();
 
         return services;
     }
@@ -273,14 +287,25 @@ public static class ServiceExtensions
         {
             options.AddPolicy("FrontendCors", policy =>
             {
-                policy
-                    .WithOrigins(
-                        "http://localhost:5173",
-                        "https://localhost:5173"
-                    )
-                    .AllowAnyHeader()
-                    .AllowAnyMethod()
-                    .AllowCredentials();
+                if (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development")
+                {
+                    policy
+                        .AllowAnyOrigin()
+                        .AllowAnyHeader()
+                        .AllowAnyMethod();
+                }
+                else
+                {
+                    policy
+                        .WithOrigins(
+                            "http://localhost:5173",
+                            "https://localhost:5173",
+                            "https://portal.zansihustle.com"
+                        )
+                        .AllowAnyHeader()
+                        .AllowAnyMethod()
+                        .AllowCredentials();
+                }
             });
         });
 

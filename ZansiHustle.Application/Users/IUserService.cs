@@ -27,4 +27,9 @@ public interface IUserService
     /// Deactivates a user account.
     /// </summary>
     Task<Result> DeactivateAsync(Guid userId);
+
+    /// <summary>
+    /// Searches for users by name (first name, last name, or full name).
+    /// </summary>
+    Task<Result<Guid?>> SearchByNameAsync(string searchTerm);
 }

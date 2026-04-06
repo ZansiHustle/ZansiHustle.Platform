@@ -1,25 +1,19 @@
 ﻿param(
     [string]$Root = ".",
-    [switch]$DryRun = $false
+    [switch]$PatchAppDbContext,
+    [switch]$PatchServiceExtensions
 )
 
 $ErrorActionPreference = "Stop"
 
-function Write-Info($msg) { Write-Host "[INFO] $msg" -ForegroundColor Cyan }
-function Write-Ok($msg)   { Write-Host "[ OK ] $msg" -ForegroundColor Green }
-function Write-Warn($msg) { Write-Host "[WARN] $msg" -ForegroundColor Yellow }
-
 function Ensure-Dir {
     param([string]$Path)
     if (-not (Test-Path $Path)) {
-        if (-not $DryRun) {
-            New-Item -ItemType Directory -Path $Path -Force | Out-Null
-        }
-        Write-Ok "Created directory: $Path"
+        New-Item -ItemType Directory -Path $Path -Force | Out-Null
     }
 }
 
-function Write-FileUtf8 {
+function Write-Utf8File {
     param(
         [string]$Path,
         [string]$Content
@@ -27,558 +21,1386 @@ function Write-FileUtf8 {
 
     $dir = Split-Path $Path -Parent
     Ensure-Dir $dir
-
-    if (-not $DryRun) {
-        Set-Content -Path $Path -Value $Content -Encoding UTF8
-    }
-
-    Write-Ok "Wrote file: $Path"
-}
-
-function Replace-InFile {
-    param(
-        [string]$Path,
-        [string]$Pattern,
-        [string]$Replacement
-    )
-
-    if (-not (Test-Path $Path)) {
-        Write-Warn "File not found, skipping replace: $Path"
-        return
-    }
-
-    $content = Get-Content -Path $Path -Raw
-    $updated = [regex]::Replace($content, $Pattern, $Replacement)
-
-    if ($updated -ne $content) {
-        if (-not $DryRun) {
-            Set-Content -Path $Path -Value $updated -Encoding UTF8
-        }
-        Write-Ok "Updated file: $Path"
-    }
-    else {
-        Write-Warn "No changes made in: $Path"
-    }
+    [System.IO.File]::WriteAllText($Path, $Content, [System.Text.UTF8Encoding]::new($false))
+    Write-Host "Created: $Path" -ForegroundColor Green
 }
 
 $rootPath = (Resolve-Path $Root).Path
 
-Write-Info "Root path: $rootPath"
-Write-Info "DryRun: $DryRun"
+$domainPath = Join-Path $rootPath "ZansiHustle.Domain\SellerCategories"
+$appSellerCategoriesPath = Join-Path $rootPath "ZansiHustle.Application\SellerCategories"
+$appDtosPath = Join-Path $appSellerCategoriesPath "Dtos"
+$appPersistencePath = Join-Path $rootPath "ZansiHustle.Application\Persistence\SellerCategories"
+$infraRepoPath = Join-Path $rootPath "ZansiHustle.Infrastructure\Persistence\SellerCategories"
+$infraConfigPath = Join-Path $rootPath "ZansiHustle.Infrastructure\Data\Configurations\SellerCategories"
+$infraSeedPath = Join-Path $rootPath "ZansiHustle.Infrastructure\Data\Seed"
+$apiControllersPath = Join-Path $rootPath "ZansiHustle.API\Controllers"
 
-# -------------------------------------------------------------------
-# Paths
-# -------------------------------------------------------------------
-$apiControllersDir = Join-Path $rootPath "ZansiHustle.API\Controllers"
-$appTeamMembersDir = Join-Path $rootPath "ZansiHustle.Application\TeamMembers"
-$appTeamMembersDtosDir = Join-Path $appTeamMembersDir "Dtos"
+# =========================
+# Domain
+# =========================
 
-$serviceExtensionsPath = Join-Path $rootPath "ZansiHustle.API\Extensions\ServiceExtensions.cs"
-
-# -------------------------------------------------------------------
-# 1. DTOs
-# -------------------------------------------------------------------
-$teamMemberDto = @"
+Write-Utf8File (Join-Path $domainPath "SellerCategory.cs") @'
 using System;
 using System.Collections.Generic;
 
-namespace ZansiHustle.Application.TeamMembers.Dtos
+namespace ZansiHustle.Domain.SellerCategories
 {
     /// <summary>
-    /// Team member DTO used by admin/portal screens.
+    /// Top-level seller category used for structured marketplace/service discovery.
     /// </summary>
-    public class TeamMemberDto
+    public class SellerCategory
     {
-        public string Id { get; set; } = string.Empty;
-        public string Email { get; set; } = string.Empty;
-        public string FullName { get; set; } = string.Empty;
-        public string? PhoneNumber { get; set; }
-        public List<string> Roles { get; set; } = new();
-        public bool TeamPortalEnabled { get; set; }
-        public bool AdminPortalEnabled { get; set; }
-        public bool FinanceAccess { get; set; }
-        public string Status { get; set; } = "active";
-        public string? Department { get; set; }
-        public DateTime JoinedDateUtc { get; set; }
-        public string? Notes { get; set; }
+        public Guid Id { get; set; } = Guid.NewGuid();
+
+        /// <summary>
+        /// Display name of the category.
+        /// </summary>
+        public string Name { get; set; } = string.Empty;
+
+        /// <summary>
+        /// URL-friendly slug for frontend usage and analytics.
+        /// </summary>
+        public string Slug { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Optional description shown in admin or future app experiences.
+        /// </summary>
+        public string? Description { get; set; }
+
+        /// <summary>
+        /// Controls display ordering.
+        /// </summary>
+        public int SortOrder { get; set; }
+
+        /// <summary>
+        /// Allows soft disabling without deleting history.
+        /// </summary>
+        public bool IsActive { get; set; } = true;
+
+        public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+        public DateTime? UpdatedAtUtc { get; set; }
+
+        public ICollection<SellerSubcategory> Subcategories { get; set; } = new List<SellerSubcategory>();
     }
 }
-"@
+'@
 
-$createTeamMemberRequestDto = @"
+Write-Utf8File (Join-Path $domainPath "SellerSubcategory.cs") @'
+using System;
+
+namespace ZansiHustle.Domain.SellerCategories
+{
+    /// <summary>
+    /// Child subcategory mapped to a top-level seller category.
+    /// </summary>
+    public class SellerSubcategory
+    {
+        public Guid Id { get; set; } = Guid.NewGuid();
+
+        public Guid SellerCategoryId { get; set; }
+
+        /// <summary>
+        /// Display name of the subcategory.
+        /// </summary>
+        public string Name { get; set; } = string.Empty;
+
+        /// <summary>
+        /// URL-friendly slug for frontend usage and analytics.
+        /// </summary>
+        public string Slug { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Optional description shown in admin or future app experiences.
+        /// </summary>
+        public string? Description { get; set; }
+
+        public int SortOrder { get; set; }
+        public bool IsActive { get; set; } = true;
+
+        public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
+        public DateTime? UpdatedAtUtc { get; set; }
+
+        public SellerCategory? SellerCategory { get; set; }
+    }
+}
+'@
+
+# =========================
+# DTOs
+# =========================
+
+Write-Utf8File (Join-Path $appDtosPath "SellerSubcategoryDto.cs") @'
+using System;
+
+namespace ZansiHustle.Application.SellerCategories.Dtos
+{
+    public class SellerSubcategoryDto
+    {
+        public Guid Id { get; set; }
+        public Guid SellerCategoryId { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string Slug { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public int SortOrder { get; set; }
+        public bool IsActive { get; set; }
+    }
+}
+'@
+
+Write-Utf8File (Join-Path $appDtosPath "SellerCategoryDto.cs") @'
+using System;
 using System.Collections.Generic;
 
-namespace ZansiHustle.Application.TeamMembers.Dtos
+namespace ZansiHustle.Application.SellerCategories.Dtos
 {
-    /// <summary>
-    /// Request model used to create a team member based on the Users table.
-    /// </summary>
-    public class CreateTeamMemberRequestDto
+    public class SellerCategoryDto
     {
-        public string Email { get; set; } = string.Empty;
-        public string FullName { get; set; } = string.Empty;
-        public string? PhoneNumber { get; set; }
-        public List<string> Roles { get; set; } = new();
-        public bool TeamPortalEnabled { get; set; } = true;
-        public bool AdminPortalEnabled { get; set; }
-        public bool FinanceAccess { get; set; }
-        public string? Department { get; set; }
-        public string? Notes { get; set; }
-        public string Password { get; set; } = string.Empty;
+        public Guid Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string Slug { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public int SortOrder { get; set; }
+        public bool IsActive { get; set; }
+
+        public List<SellerSubcategoryDto> Subcategories { get; set; } = new();
     }
 }
-"@
+'@
 
-$updateTeamMemberRequestDto = @"
+Write-Utf8File (Join-Path $appDtosPath "CreateSellerCategoryRequestDto.cs") @'
 using System.Collections.Generic;
 
-namespace ZansiHustle.Application.TeamMembers.Dtos
+namespace ZansiHustle.Application.SellerCategories.Dtos
 {
-    /// <summary>
-    /// Request model used to update a team member based on the Users table.
-    /// </summary>
-    public class UpdateTeamMemberRequestDto
+    public class CreateSellerCategoryRequestDto
     {
-        public string FullName { get; set; } = string.Empty;
-        public string? PhoneNumber { get; set; }
-        public List<string> Roles { get; set; } = new();
-        public bool TeamPortalEnabled { get; set; } = true;
-        public bool AdminPortalEnabled { get; set; }
-        public bool FinanceAccess { get; set; }
-        public string Status { get; set; } = "active";
-        public string? Department { get; set; }
-        public string? Notes { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public int SortOrder { get; set; }
+        public bool IsActive { get; set; } = true;
+
+        /// <summary>
+        /// Optional initial subcategories to create together with the category.
+        /// </summary>
+        public List<CreateSellerSubcategoryRequestDto> Subcategories { get; set; } = new();
     }
 }
-"@
+'@
 
-# -------------------------------------------------------------------
-# 2. Service interface
-# -------------------------------------------------------------------
-$iTeamMemberService = @"
+Write-Utf8File (Join-Path $appDtosPath "UpdateSellerCategoryRequestDto.cs") @'
+namespace ZansiHustle.Application.SellerCategories.Dtos
+{
+    public class UpdateSellerCategoryRequestDto
+    {
+        public string Name { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public int SortOrder { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+}
+'@
+
+Write-Utf8File (Join-Path $appDtosPath "CreateSellerSubcategoryRequestDto.cs") @'
+using System;
+
+namespace ZansiHustle.Application.SellerCategories.Dtos
+{
+    public class CreateSellerSubcategoryRequestDto
+    {
+        public Guid SellerCategoryId { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public int SortOrder { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+}
+'@
+
+Write-Utf8File (Join-Path $appDtosPath "UpdateSellerSubcategoryRequestDto.cs") @'
+namespace ZansiHustle.Application.SellerCategories.Dtos
+{
+    public class UpdateSellerSubcategoryRequestDto
+    {
+        public string Name { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public int SortOrder { get; set; }
+        public bool IsActive { get; set; } = true;
+    }
+}
+'@
+
+# =========================
+# Repository interface
+# =========================
+
+Write-Utf8File (Join-Path $appPersistencePath "ISellerCategoryRepository.cs") @'
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using ZansiHustle.Application.TeamMembers.Dtos;
-using ZansiHustle.Shared.Results;
+using ZansiHustle.Domain.SellerCategories;
 
-namespace ZansiHustle.Application.TeamMembers
+namespace ZansiHustle.Application.Persistence.SellerCategories
 {
     /// <summary>
-    /// Service contract for team member CRUD operations using the Users table.
+    /// Repository contract for seller categories and subcategories.
     /// </summary>
-    public interface ITeamMemberService
+    public interface ISellerCategoryRepository
     {
-        Task<Result<List<TeamMemberDto>>> GetAllAsync();
-        Task<Result<TeamMemberDto>> GetByIdAsync(string id);
-        Task<Result<TeamMemberDto>> CreateAsync(CreateTeamMemberRequestDto request);
-        Task<Result<TeamMemberDto>> UpdateAsync(string id, UpdateTeamMemberRequestDto request);
-        Task<Result> DeleteAsync(string id);
+        Task<List<SellerCategory>> GetAllAsync(bool activeOnly = false);
+        Task<SellerCategory?> GetByIdAsync(Guid id);
+        Task<SellerCategory?> GetBySlugAsync(string slug);
+        Task<bool> ExistsByNameAsync(string name, Guid? excludeId = null);
+
+        Task AddAsync(SellerCategory category);
+        void Update(SellerCategory category);
+        void Delete(SellerCategory category);
+
+        Task<SellerSubcategory?> GetSubcategoryByIdAsync(Guid id);
+        Task<List<SellerSubcategory>> GetSubcategoriesByCategoryIdAsync(Guid sellerCategoryId, bool activeOnly = false);
+        Task<bool> SubcategoryExistsByNameAsync(Guid sellerCategoryId, string name, Guid? excludeId = null);
+
+        Task AddSubcategoryAsync(SellerSubcategory subcategory);
+        void UpdateSubcategory(SellerSubcategory subcategory);
+        void DeleteSubcategory(SellerSubcategory subcategory);
+
+        Task<bool> SaveChangesAsync();
     }
 }
-"@
+'@
 
-# -------------------------------------------------------------------
-# 3. Service implementation
-# -------------------------------------------------------------------
-$teamMemberService = @"
+# =========================
+# Service interface
+# =========================
+
+Write-Utf8File (Join-Path $appSellerCategoriesPath "ISellerCategoryService.cs") @'
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using ZansiHustle.Application.SellerCategories.Dtos;
+using ZansiHustle.Shared.Results;
+
+namespace ZansiHustle.Application.SellerCategories
+{
+    public interface ISellerCategoryService
+    {
+        Task<Result<List<SellerCategoryDto>>> GetAllAsync(bool activeOnly = false);
+        Task<Result<SellerCategoryDto>> GetByIdAsync(Guid id);
+
+        Task<Result<SellerCategoryDto>> CreateAsync(CreateSellerCategoryRequestDto request);
+        Task<Result<SellerCategoryDto>> UpdateAsync(Guid id, UpdateSellerCategoryRequestDto request);
+        Task<Result> DeleteAsync(Guid id);
+
+        Task<Result<SellerSubcategoryDto>> CreateSubcategoryAsync(CreateSellerSubcategoryRequestDto request);
+        Task<Result<SellerSubcategoryDto>> UpdateSubcategoryAsync(Guid id, UpdateSellerSubcategoryRequestDto request);
+        Task<Result> DeleteSubcategoryAsync(Guid id);
+    }
+}
+'@
+
+# =========================
+# Service implementation
+# =========================
+
+Write-Utf8File (Join-Path $appSellerCategoriesPath "SellerCategoryService.cs") @'
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.AspNetCore.Identity;
-using Microsoft.EntityFrameworkCore;
-using ZansiHustle.Application.TeamMembers.Dtos;
-using ZansiHustle.Domain.Identity;
+using ZansiHustle.Application.Persistence.SellerCategories;
+using ZansiHustle.Application.SellerCategories.Dtos;
+using ZansiHustle.Domain.SellerCategories;
 using ZansiHustle.Shared.Results;
 
-namespace ZansiHustle.Application.TeamMembers
+namespace ZansiHustle.Application.SellerCategories
 {
-    /// <summary>
-    /// Team member management service backed by the ASP.NET Identity users table.
-    /// </summary>
-    public class TeamMemberService : ITeamMemberService
+    public class SellerCategoryService : ISellerCategoryService
     {
-        private readonly UserManager<User> _userManager;
+        private readonly ISellerCategoryRepository _repository;
 
-        public TeamMemberService(UserManager<User> userManager)
+        public SellerCategoryService(ISellerCategoryRepository repository)
         {
-            _userManager = userManager;
+            _repository = repository;
         }
 
-        public async Task<Result<List<TeamMemberDto>>> GetAllAsync()
+        public async Task<Result<List<SellerCategoryDto>>> GetAllAsync(bool activeOnly = false)
         {
-            try
-            {
-                var users = await _userManager.Users
-                    .AsNoTracking()
-                    .OrderBy(x => x.FirstName)
-                    .ThenBy(x => x.LastName)
-                    .ToListAsync();
-
-                var data = new List<TeamMemberDto>();
-
-                foreach (var user in users)
-                {
-                    var roles = await _userManager.GetRolesAsync(user);
-
-                    if (!IsTeamUser(user, roles))
-                        continue;
-
-                    data.Add(MapToDto(user, roles));
-                }
-
-                return Result<List<TeamMemberDto>>.Success(data, "Team members retrieved successfully.");
-            }
-            catch (Exception ex)
-            {
-                return Result<List<TeamMemberDto>>.Failure($"An error occurred while retrieving team members. {ex.Message}");
-            }
+            var items = await _repository.GetAllAsync(activeOnly);
+            return Result<List<SellerCategoryDto>>.Success(Map(items), "Seller categories retrieved successfully.");
         }
 
-        public async Task<Result<TeamMemberDto>> GetByIdAsync(string id)
+        public async Task<Result<SellerCategoryDto>> GetByIdAsync(Guid id)
         {
-            try
+            var item = await _repository.GetByIdAsync(id);
+            if (item == null)
             {
-                if (string.IsNullOrWhiteSpace(id))
-                    return Result<TeamMemberDto>.Failure("Team member id is required.");
-
-                var user = await _userManager.Users.FirstOrDefaultAsync(x => x.Id.ToString() == id);
-                if (user is null)
-                    return Result<TeamMemberDto>.Failure("Team member not found.");
-
-                var roles = await _userManager.GetRolesAsync(user);
-
-                if (!IsTeamUser(user, roles))
-                    return Result<TeamMemberDto>.Failure("Team member not found.");
-
-                return Result<TeamMemberDto>.Success(MapToDto(user, roles), "Team member retrieved successfully.");
+                return Result<SellerCategoryDto>.Failure("NOT_FOUND", "Seller category was not found.");
             }
-            catch (Exception ex)
-            {
-                return Result<TeamMemberDto>.Failure($"An error occurred while retrieving the team member. {ex.Message}");
-            }
+
+            return Result<SellerCategoryDto>.Success(Map(item), "Seller category retrieved successfully.");
         }
 
-        public async Task<Result<TeamMemberDto>> CreateAsync(CreateTeamMemberRequestDto request)
+        public async Task<Result<SellerCategoryDto>> CreateAsync(CreateSellerCategoryRequestDto request)
         {
-            try
+            if (string.IsNullOrWhiteSpace(request.Name))
             {
-                if (request is null)
-                    return Result<TeamMemberDto>.Failure("Request is required.");
-
-                if (string.IsNullOrWhiteSpace(request.Email))
-                    return Result<TeamMemberDto>.Failure("Email is required.");
-
-                if (string.IsNullOrWhiteSpace(request.Password))
-                    return Result<TeamMemberDto>.Failure("Password is required.");
-
-                var existing = await _userManager.FindByEmailAsync(request.Email.Trim());
-                if (existing is not null)
-                    return Result<TeamMemberDto>.Failure("A user with this email already exists.");
-
-                var (firstName, lastName) = SplitName(request.FullName);
-
-                var user = new User
-                {
-                    UserName = request.Email.Trim(),
-                    Email = request.Email.Trim(),
-                    FirstName = firstName,
-                    LastName = lastName,
-                    PhoneNumber = request.PhoneNumber?.Trim(),
-                    EmailConfirmed = true,
-                    IsActive = true,
-                    TeamPortalEnabled = request.TeamPortalEnabled,
-                    AdminPortalEnabled = request.AdminPortalEnabled,
-                    FinanceAccess = request.FinanceAccess,
-                    Department = request.Department?.Trim(),
-                    Notes = request.Notes?.Trim(),
-                    JoinedDateUtc = DateTime.UtcNow,
-                    CreatedAtUtc = DateTime.UtcNow
-                };
-
-                var createResult = await _userManager.CreateAsync(user, request.Password);
-                if (!createResult.Succeeded)
-                {
-                    var message = string.Join(" | ", createResult.Errors.Select(x => x.Description));
-                    return Result<TeamMemberDto>.Failure(message);
-                }
-
-                var roles = NormaliseRoles(request.Roles);
-                if (!roles.Any())
-                    roles.Add("TeamMember");
-
-                var roleResult = await _userManager.AddToRolesAsync(user, roles);
-                if (!roleResult.Succeeded)
-                {
-                    var message = string.Join(" | ", roleResult.Errors.Select(x => x.Description));
-                    return Result<TeamMemberDto>.Failure(message);
-                }
-
-                var savedRoles = await _userManager.GetRolesAsync(user);
-
-                return Result<TeamMemberDto>.Success(MapToDto(user, savedRoles), "Team member created successfully.");
+                return Result<SellerCategoryDto>.Failure("BAD_REQUEST", "Category name is required.");
             }
-            catch (Exception ex)
+
+            if (await _repository.ExistsByNameAsync(request.Name))
             {
-                return Result<TeamMemberDto>.Failure($"An error occurred while creating the team member. {ex.Message}");
+                return Result<SellerCategoryDto>.Failure("CONFLICT", "A seller category with the same name already exists.");
             }
-        }
 
-        public async Task<Result<TeamMemberDto>> UpdateAsync(string id, UpdateTeamMemberRequestDto request)
-        {
-            try
+            var category = new SellerCategory
             {
-                if (string.IsNullOrWhiteSpace(id))
-                    return Result<TeamMemberDto>.Failure("Team member id is required.");
-
-                if (request is null)
-                    return Result<TeamMemberDto>.Failure("Request is required.");
-
-                var user = await _userManager.Users.FirstOrDefaultAsync(x => x.Id.ToString() == id);
-                if (user is null)
-                    return Result<TeamMemberDto>.Failure("Team member not found.");
-
-                var (firstName, lastName) = SplitName(request.FullName);
-
-                user.FirstName = firstName;
-                user.LastName = lastName;
-                user.PhoneNumber = request.PhoneNumber?.Trim();
-                user.TeamPortalEnabled = request.TeamPortalEnabled;
-                user.AdminPortalEnabled = request.AdminPortalEnabled;
-                user.FinanceAccess = request.FinanceAccess;
-                user.Department = request.Department?.Trim();
-                user.Notes = request.Notes?.Trim();
-                user.IsActive = string.Equals(request.Status, "active", StringComparison.OrdinalIgnoreCase);
-                user.UpdatedAtUtc = DateTime.UtcNow;
-
-                var updateResult = await _userManager.UpdateAsync(user);
-                if (!updateResult.Succeeded)
-                {
-                    var message = string.Join(" | ", updateResult.Errors.Select(x => x.Description));
-                    return Result<TeamMemberDto>.Failure(message);
-                }
-
-                var existingRoles = await _userManager.GetRolesAsync(user);
-                if (existingRoles.Any())
-                {
-                    var removeRolesResult = await _userManager.RemoveFromRolesAsync(user, existingRoles);
-                    if (!removeRolesResult.Succeeded)
-                    {
-                        var message = string.Join(" | ", removeRolesResult.Errors.Select(x => x.Description));
-                        return Result<TeamMemberDto>.Failure(message);
-                    }
-                }
-
-                var newRoles = NormaliseRoles(request.Roles);
-                if (!newRoles.Any())
-                    newRoles.Add("TeamMember");
-
-                var addRolesResult = await _userManager.AddToRolesAsync(user, newRoles);
-                if (!addRolesResult.Succeeded)
-                {
-                    var message = string.Join(" | ", addRolesResult.Errors.Select(x => x.Description));
-                    return Result<TeamMemberDto>.Failure(message);
-                }
-
-                var savedRoles = await _userManager.GetRolesAsync(user);
-
-                return Result<TeamMemberDto>.Success(MapToDto(user, savedRoles), "Team member updated successfully.");
-            }
-            catch (Exception ex)
-            {
-                return Result<TeamMemberDto>.Failure($"An error occurred while updating the team member. {ex.Message}");
-            }
-        }
-
-        public async Task<Result> DeleteAsync(string id)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(id))
-                    return Result.Failure("Team member id is required.");
-
-                var user = await _userManager.Users.FirstOrDefaultAsync(x => x.Id.ToString() == id);
-                if (user is null)
-                    return Result.Failure("Team member not found.");
-
-                var result = await _userManager.DeleteAsync(user);
-                if (!result.Succeeded)
-                {
-                    var message = string.Join(" | ", result.Errors.Select(x => x.Description));
-                    return Result.Failure(message);
-                }
-
-                return Result.Success("Team member deleted successfully.");
-            }
-            catch (Exception ex)
-            {
-                return Result.Failure($"An error occurred while deleting the team member. {ex.Message}");
-            }
-        }
-
-        private static TeamMemberDto MapToDto(User user, IList<string> roles)
-        {
-            return new TeamMemberDto
-            {
-                Id = user.Id.ToString(),
-                Email = user.Email ?? string.Empty,
-                FullName = BuildFullName(user.FirstName, user.LastName),
-                PhoneNumber = user.PhoneNumber,
-                Roles = roles.ToList(),
-                TeamPortalEnabled = user.TeamPortalEnabled,
-                AdminPortalEnabled = user.AdminPortalEnabled,
-                FinanceAccess = user.FinanceAccess,
-                Status = user.IsActive ? "active" : "inactive",
-                Department = user.Department,
-                JoinedDateUtc = user.JoinedDateUtc ?? user.CreatedAtUtc ?? DateTime.UtcNow,
-                Notes = user.Notes
+                Name = request.Name.Trim(),
+                Slug = ToSlug(request.Name),
+                Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
+                SortOrder = request.SortOrder,
+                IsActive = request.IsActive,
+                CreatedAtUtc = DateTime.UtcNow
             };
+
+            foreach (var sub in request.Subcategories ?? new List<CreateSellerSubcategoryRequestDto>())
+            {
+                if (string.IsNullOrWhiteSpace(sub.Name))
+                    continue;
+
+                category.Subcategories.Add(new SellerSubcategory
+                {
+                    SellerCategoryId = category.Id,
+                    Name = sub.Name.Trim(),
+                    Slug = ToSlug(sub.Name),
+                    Description = string.IsNullOrWhiteSpace(sub.Description) ? null : sub.Description.Trim(),
+                    SortOrder = sub.SortOrder,
+                    IsActive = sub.IsActive,
+                    CreatedAtUtc = DateTime.UtcNow
+                });
+            }
+
+            await _repository.AddAsync(category);
+
+            if (!await _repository.SaveChangesAsync())
+            {
+                return Result<SellerCategoryDto>.Failure("BAD_REQUEST", "Unable to create seller category.");
+            }
+
+            var created = await _repository.GetByIdAsync(category.Id) ?? category;
+            return Result<SellerCategoryDto>.Success(Map(created), "Seller category created successfully.");
         }
 
-        private static bool IsTeamUser(User user, IEnumerable<string> roles)
+        public async Task<Result<SellerCategoryDto>> UpdateAsync(Guid id, UpdateSellerCategoryRequestDto request)
         {
-            if (user.TeamPortalEnabled || user.AdminPortalEnabled)
-                return true;
+            var category = await _repository.GetByIdAsync(id);
+            if (category == null)
+            {
+                return Result<SellerCategoryDto>.Failure("NOT_FOUND", "Seller category was not found.");
+            }
 
-            return roles.Any(r =>
-                r.Equals("TeamMember", StringComparison.OrdinalIgnoreCase) ||
-                r.Equals("Agent", StringComparison.OrdinalIgnoreCase) ||
-                r.Equals("Admin", StringComparison.OrdinalIgnoreCase) ||
-                r.Equals("TeamManager", StringComparison.OrdinalIgnoreCase) ||
-                r.Equals("MarketplaceGrowthAssociate", StringComparison.OrdinalIgnoreCase) ||
-                r.Equals("SocialMediaManager", StringComparison.OrdinalIgnoreCase) ||
-                r.Equals("ContentCreator", StringComparison.OrdinalIgnoreCase));
+            if (string.IsNullOrWhiteSpace(request.Name))
+            {
+                return Result<SellerCategoryDto>.Failure("BAD_REQUEST", "Category name is required.");
+            }
+
+            if (await _repository.ExistsByNameAsync(request.Name, id))
+            {
+                return Result<SellerCategoryDto>.Failure("CONFLICT", "A seller category with the same name already exists.");
+            }
+
+            category.Name = request.Name.Trim();
+            category.Slug = ToSlug(request.Name);
+            category.Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
+            category.SortOrder = request.SortOrder;
+            category.IsActive = request.IsActive;
+            category.UpdatedAtUtc = DateTime.UtcNow;
+
+            _repository.Update(category);
+
+            if (!await _repository.SaveChangesAsync())
+            {
+                return Result<SellerCategoryDto>.Failure("BAD_REQUEST", "Unable to update seller category.");
+            }
+
+            var updated = await _repository.GetByIdAsync(category.Id) ?? category;
+            return Result<SellerCategoryDto>.Success(Map(updated), "Seller category updated successfully.");
         }
 
-        private static List<string> NormaliseRoles(IEnumerable<string>? roles)
+        public async Task<Result> DeleteAsync(Guid id)
         {
-            return (roles ?? Enumerable.Empty<string>())
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Select(x => x.Trim())
-                .Distinct(StringComparer.OrdinalIgnoreCase)
+            var category = await _repository.GetByIdAsync(id);
+            if (category == null)
+            {
+                return Result.Failure("NOT_FOUND", "Seller category was not found.");
+            }
+
+            _repository.Delete(category);
+
+            if (!await _repository.SaveChangesAsync())
+            {
+                return Result.Failure("BAD_REQUEST", "Unable to delete seller category.");
+            }
+
+            return Result.Success("Seller category deleted successfully.");
+        }
+
+        public async Task<Result<SellerSubcategoryDto>> CreateSubcategoryAsync(CreateSellerSubcategoryRequestDto request)
+        {
+            if (request.SellerCategoryId == Guid.Empty)
+            {
+                return Result<SellerSubcategoryDto>.Failure("BAD_REQUEST", "Seller category is required.");
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Name))
+            {
+                return Result<SellerSubcategoryDto>.Failure("BAD_REQUEST", "Subcategory name is required.");
+            }
+
+            var parent = await _repository.GetByIdAsync(request.SellerCategoryId);
+            if (parent == null)
+            {
+                return Result<SellerSubcategoryDto>.Failure("NOT_FOUND", "Parent seller category was not found.");
+            }
+
+            if (await _repository.SubcategoryExistsByNameAsync(request.SellerCategoryId, request.Name))
+            {
+                return Result<SellerSubcategoryDto>.Failure("CONFLICT", "A subcategory with the same name already exists under this category.");
+            }
+
+            var sub = new SellerSubcategory
+            {
+                SellerCategoryId = request.SellerCategoryId,
+                Name = request.Name.Trim(),
+                Slug = ToSlug(request.Name),
+                Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
+                SortOrder = request.SortOrder,
+                IsActive = request.IsActive,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+
+            await _repository.AddSubcategoryAsync(sub);
+
+            if (!await _repository.SaveChangesAsync())
+            {
+                return Result<SellerSubcategoryDto>.Failure("BAD_REQUEST", "Unable to create seller subcategory.");
+            }
+
+            var created = await _repository.GetSubcategoryByIdAsync(sub.Id) ?? sub;
+            return Result<SellerSubcategoryDto>.Success(Map(created), "Seller subcategory created successfully.");
+        }
+
+        public async Task<Result<SellerSubcategoryDto>> UpdateSubcategoryAsync(Guid id, UpdateSellerSubcategoryRequestDto request)
+        {
+            var sub = await _repository.GetSubcategoryByIdAsync(id);
+            if (sub == null)
+            {
+                return Result<SellerSubcategoryDto>.Failure("NOT_FOUND", "Seller subcategory was not found.");
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Name))
+            {
+                return Result<SellerSubcategoryDto>.Failure("BAD_REQUEST", "Subcategory name is required.");
+            }
+
+            if (await _repository.SubcategoryExistsByNameAsync(sub.SellerCategoryId, request.Name, id))
+            {
+                return Result<SellerSubcategoryDto>.Failure("CONFLICT", "A subcategory with the same name already exists under this category.");
+            }
+
+            sub.Name = request.Name.Trim();
+            sub.Slug = ToSlug(request.Name);
+            sub.Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
+            sub.SortOrder = request.SortOrder;
+            sub.IsActive = request.IsActive;
+            sub.UpdatedAtUtc = DateTime.UtcNow;
+
+            _repository.UpdateSubcategory(sub);
+
+            if (!await _repository.SaveChangesAsync())
+            {
+                return Result<SellerSubcategoryDto>.Failure("BAD_REQUEST", "Unable to update seller subcategory.");
+            }
+
+            var updated = await _repository.GetSubcategoryByIdAsync(sub.Id) ?? sub;
+            return Result<SellerSubcategoryDto>.Success(Map(updated), "Seller subcategory updated successfully.");
+        }
+
+        public async Task<Result> DeleteSubcategoryAsync(Guid id)
+        {
+            var sub = await _repository.GetSubcategoryByIdAsync(id);
+            if (sub == null)
+            {
+                return Result.Failure("NOT_FOUND", "Seller subcategory was not found.");
+            }
+
+            _repository.DeleteSubcategory(sub);
+
+            if (!await _repository.SaveChangesAsync())
+            {
+                return Result.Failure("BAD_REQUEST", "Unable to delete seller subcategory.");
+            }
+
+            return Result.Success("Seller subcategory deleted successfully.");
+        }
+
+        private static List<SellerCategoryDto> Map(List<SellerCategory> items)
+        {
+            return items
+                .OrderBy(x => x.SortOrder)
+                .ThenBy(x => x.Name)
+                .Select(Map)
                 .ToList();
         }
 
-        private static (string firstName, string lastName) SplitName(string? fullName)
+        private static SellerCategoryDto Map(SellerCategory item)
         {
-            var clean = (fullName ?? string.Empty).Trim();
-            if (string.IsNullOrWhiteSpace(clean))
-                return (string.Empty, string.Empty);
-
-            var parts = clean.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 1)
-                return (parts[0], string.Empty);
-
-            return (parts[0], string.Join(" ", parts.Skip(1)));
+            return new SellerCategoryDto
+            {
+                Id = item.Id,
+                Name = item.Name,
+                Slug = item.Slug,
+                Description = item.Description,
+                SortOrder = item.SortOrder,
+                IsActive = item.IsActive,
+                Subcategories = item.Subcategories
+                    .OrderBy(x => x.SortOrder)
+                    .ThenBy(x => x.Name)
+                    .Select(Map)
+                    .ToList()
+            };
         }
 
-        private static string BuildFullName(string? firstName, string? lastName)
+        private static SellerSubcategoryDto Map(SellerSubcategory item)
         {
-            return ((firstName ?? string.Empty) + " " + (lastName ?? string.Empty)).Trim();
+            return new SellerSubcategoryDto
+            {
+                Id = item.Id,
+                SellerCategoryId = item.SellerCategoryId,
+                Name = item.Name,
+                Slug = item.Slug,
+                Description = item.Description,
+                SortOrder = item.SortOrder,
+                IsActive = item.IsActive
+            };
+        }
+
+        private static string ToSlug(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            return value.Trim()
+                .ToLowerInvariant()
+                .Replace("&", "and")
+                .Replace("/", "-")
+                .Replace("(", string.Empty)
+                .Replace(")", string.Empty)
+                .Replace(".", string.Empty)
+                .Replace(",", string.Empty)
+                .Replace("'", string.Empty)
+                .Replace("  ", " ")
+                .Replace(" ", "-");
         }
     }
 }
-"@
+'@
 
-# -------------------------------------------------------------------
-# 4. Controller
-# -------------------------------------------------------------------
-$teamMembersController = @"
+# =========================
+# Repository implementation
+# =========================
+
+# Continue from where it left off...
+
+Write-Utf8File (Join-Path $infraRepoPath "SellerCategoryRepository.cs") @'
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using ZansiHustle.Application.Persistence.SellerCategories;
+using ZansiHustle.Domain.SellerCategories;
+using ZansiHustle.Infrastructure.Data;
+
+namespace ZansiHustle.Infrastructure.Persistence.SellerCategories
+{
+    public class SellerCategoryRepository : ISellerCategoryRepository
+    {
+        private readonly AppDbContext _context;
+
+        public SellerCategoryRepository(AppDbContext context)
+        {
+            _context = context;
+        }
+
+        public async Task<List<SellerCategory>> GetAllAsync(bool activeOnly = false)
+        {
+            var query = _context.SellerCategories
+                .Include(x => x.Subcategories)
+                .AsNoTracking()
+                .AsQueryable();
+
+            if (activeOnly)
+            {
+                query = query.Where(x => x.IsActive);
+            }
+
+            return await query
+                .OrderBy(x => x.SortOrder)
+                .ThenBy(x => x.Name)
+                .ToListAsync();
+        }
+
+        public async Task<SellerCategory?> GetByIdAsync(Guid id)
+        {
+            return await _context.SellerCategories
+                .Include(x => x.Subcategories)
+                .FirstOrDefaultAsync(x => x.Id == id);
+        }
+
+        public async Task<SellerCategory?> GetBySlugAsync(string slug)
+        {
+            if (string.IsNullOrWhiteSpace(slug))
+                return null;
+
+            var normalized = slug.Trim().ToLowerInvariant();
+
+            return await _context.SellerCategories
+                .Include(x => x.Subcategories)
+                .FirstOrDefaultAsync(x => x.Slug.ToLower() == normalized);
+        }
+
+        public async Task<bool> ExistsByNameAsync(string name, Guid? excludeId = null)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return false;
+
+            var normalized = name.Trim().ToLowerInvariant();
+
+            return await _context.SellerCategories.AnyAsync(x =>
+                x.Name.ToLower() == normalized &&
+                (!excludeId.HasValue || x.Id != excludeId.Value));
+        }
+
+        public async Task AddAsync(SellerCategory category)
+        {
+            ArgumentNullException.ThrowIfNull(category);
+            await _context.SellerCategories.AddAsync(category);
+        }
+
+        public void Update(SellerCategory category)
+        {
+            ArgumentNullException.ThrowIfNull(category);
+            _context.SellerCategories.Update(category);
+        }
+
+        public void Delete(SellerCategory category)
+        {
+            ArgumentNullException.ThrowIfNull(category);
+            _context.SellerCategories.Remove(category);
+        }
+
+        public async Task<SellerSubcategory?> GetSubcategoryByIdAsync(Guid id)
+        {
+            return await _context.SellerSubcategories
+                .Include(x => x.SellerCategory)
+                .FirstOrDefaultAsync(x => x.Id == id);
+        }
+
+        public async Task<List<SellerSubcategory>> GetSubcategoriesByCategoryIdAsync(Guid sellerCategoryId, bool activeOnly = false)
+        {
+            var query = _context.SellerSubcategories
+                .AsNoTracking()
+                .Where(x => x.SellerCategoryId == sellerCategoryId);
+
+            if (activeOnly)
+            {
+                query = query.Where(x => x.IsActive);
+            }
+
+            return await query
+                .OrderBy(x => x.SortOrder)
+                .ThenBy(x => x.Name)
+                .ToListAsync();
+        }
+
+        public async Task<bool> SubcategoryExistsByNameAsync(Guid sellerCategoryId, string name, Guid? excludeId = null)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return false;
+
+            var normalized = name.Trim().ToLowerInvariant();
+
+            return await _context.SellerSubcategories.AnyAsync(x =>
+                x.SellerCategoryId == sellerCategoryId &&
+                x.Name.ToLower() == normalized &&
+                (!excludeId.HasValue || x.Id != excludeId.Value));
+        }
+
+        public async Task AddSubcategoryAsync(SellerSubcategory subcategory)
+        {
+            ArgumentNullException.ThrowIfNull(subcategory);
+            await _context.SellerSubcategories.AddAsync(subcategory);
+        }
+
+        public void UpdateSubcategory(SellerSubcategory subcategory)
+        {
+            ArgumentNullException.ThrowIfNull(subcategory);
+            _context.SellerSubcategories.Update(subcategory);
+        }
+
+        public void DeleteSubcategory(SellerSubcategory subcategory)
+        {
+            ArgumentNullException.ThrowIfNull(subcategory);
+            _context.SellerSubcategories.Remove(subcategory);
+        }
+
+        public async Task<bool> SaveChangesAsync()
+        {
+            return await _context.SaveChangesAsync() > 0;
+        }
+    }
+}
+'@
+
+# =========================
+# Entity Framework Configurations
+# =========================
+
+Write-Utf8File (Join-Path $infraConfigPath "SellerCategoryConfiguration.cs") @'
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using ZansiHustle.Domain.SellerCategories;
+
+namespace ZansiHustle.Infrastructure.Data.Configurations.SellerCategories
+{
+    public class SellerCategoryConfiguration : IEntityTypeConfiguration<SellerCategory>
+    {
+        public void Configure(EntityTypeBuilder<SellerCategory> builder)
+        {
+            builder.ToTable("SellerCategories");
+
+            builder.HasKey(x => x.Id);
+
+            builder.Property(x => x.Name)
+                .IsRequired()
+                .HasMaxLength(100);
+
+            builder.HasIndex(x => x.Name)
+                .IsUnique();
+
+            builder.Property(x => x.Slug)
+                .IsRequired()
+                .HasMaxLength(120);
+
+            builder.HasIndex(x => x.Slug)
+                .IsUnique();
+
+            builder.Property(x => x.Description)
+                .HasMaxLength(500);
+
+            builder.Property(x => x.SortOrder)
+                .HasDefaultValue(0);
+
+            builder.Property(x => x.IsActive)
+                .HasDefaultValue(true);
+
+            builder.Property(x => x.CreatedAtUtc)
+                .IsRequired();
+
+            builder.Property(x => x.UpdatedAtUtc)
+                .IsRequired(false);
+
+            builder.HasMany(x => x.Subcategories)
+                .WithOne(x => x.SellerCategory)
+                .HasForeignKey(x => x.SellerCategoryId)
+                .OnDelete(DeleteBehavior.Cascade);
+        }
+    }
+}
+'@
+
+Write-Utf8File (Join-Path $infraConfigPath "SellerSubcategoryConfiguration.cs") @'
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using ZansiHustle.Domain.SellerCategories;
+
+namespace ZansiHustle.Infrastructure.Data.Configurations.SellerCategories
+{
+    public class SellerSubcategoryConfiguration : IEntityTypeConfiguration<SellerSubcategory>
+    {
+        public void Configure(EntityTypeBuilder<SellerSubcategory> builder)
+        {
+            builder.ToTable("SellerSubcategories");
+
+            builder.HasKey(x => x.Id);
+
+            builder.Property(x => x.Name)
+                .IsRequired()
+                .HasMaxLength(100);
+
+            builder.HasIndex(x => new { x.SellerCategoryId, x.Name })
+                .IsUnique();
+
+            builder.Property(x => x.Slug)
+                .IsRequired()
+                .HasMaxLength(120);
+
+            builder.Property(x => x.Description)
+                .HasMaxLength(500);
+
+            builder.Property(x => x.SortOrder)
+                .HasDefaultValue(0);
+
+            builder.Property(x => x.IsActive)
+                .HasDefaultValue(true);
+
+            builder.Property(x => x.CreatedAtUtc)
+                .IsRequired();
+
+            builder.Property(x => x.UpdatedAtUtc)
+                .IsRequired(false);
+        }
+    }
+}
+'@
+
+# =========================
+# Database Seed Data
+# =========================
+
+Write-Utf8File (Join-Path $infraSeedPath "SellerCategorySeed.cs") @'
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using ZansiHustle.Domain.SellerCategories;
+using ZansiHustle.Infrastructure.Data;
+
+namespace ZansiHustle.Infrastructure.Data.Seed
+{
+    public static class SellerCategorySeed
+    {
+        public static async Task SeedAsync(IServiceProvider serviceProvider)
+        {
+            using var scope = serviceProvider.CreateScope();
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var logger = scope.ServiceProvider.GetRequiredService<ILogger<IServiceProvider>>();
+
+            try
+            {
+                if (await context.SellerCategories.AnyAsync())
+                {
+                    logger.LogInformation("Seller categories already seeded.");
+                    return;
+                }
+
+                logger.LogInformation("Seeding seller categories and subcategories...");
+
+                var categories = GetCategoryData();
+                await context.SellerCategories.AddRangeAsync(categories);
+                await context.SaveChangesAsync();
+
+                logger.LogInformation("Successfully seeded {Count} seller categories with subcategories.", categories.Count);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "An error occurred while seeding seller categories.");
+                throw;
+            }
+        }
+
+        private static List<SellerCategory> GetCategoryData()
+        {
+            var now = DateTime.UtcNow;
+            var order = 0;
+
+            return new List<SellerCategory>
+            {
+                new SellerCategory
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "Beauty & Personal Care",
+                    Slug = "beauty-personal-care",
+                    Description = "Hair, nails, makeup, skincare, and beauty services",
+                    SortOrder = order++,
+                    IsActive = true,
+                    CreatedAtUtc = now,
+                    Subcategories = new List<SellerSubcategory>
+                    {
+                        CreateSubcategory("Barbers", "barbers", order++, now),
+                        CreateSubcategory("Hair Stylists", "hair-stylists", order++, now),
+                        CreateSubcategory("Braiders", "braiders", order++, now),
+                        CreateSubcategory("Nail Technicians", "nail-technicians", order++, now),
+                        CreateSubcategory("Makeup Artists", "makeup-artists", order++, now),
+                        CreateSubcategory("Beauty Salons", "beauty-salons", order++, now),
+                        CreateSubcategory("Lash Technicians", "lash-technicians", order++, now),
+                        CreateSubcategory("Waxing Specialists", "waxing-specialists", order++, now),
+                        CreateSubcategory("Skincare Specialists", "skincare-specialists", order++, now),
+                        CreateSubcategory("Massage Therapists", "massage-therapists", order++, now),
+                        CreateSubcategory("Mobile Beauty Services", "mobile-beauty-services", order++, now),
+                        CreateSubcategory("Bridal Beauty Services", "bridal-beauty-services", order++, now),
+                        CreateSubcategory("Men's Grooming", "mens-grooming", order++, now),
+                        CreateSubcategory("Wig Installation", "wig-installation", order++, now),
+                        CreateSubcategory("Wig Sales", "wig-sales", order++, now),
+                        CreateSubcategory("Hair Product Sellers", "hair-product-sellers", order++, now),
+                        CreateSubcategory("Beauty Product Sellers", "beauty-product-sellers", order++, now),
+                        CreateSubcategory("Tattoo Artists", "tattoo-artists", order++, now),
+                        CreateSubcategory("Piercing Services", "piercing-services", order++, now)
+                    }
+                },
+                new SellerCategory
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "Food & Dining",
+                    Slug = "food-dining",
+                    Description = "Restaurants, catering, meal prep, and food vendors",
+                    SortOrder = order++,
+                    IsActive = true,
+                    CreatedAtUtc = now,
+                    Subcategories = new List<SellerSubcategory>
+                    {
+                        CreateSubcategory("Restaurants", "restaurants", order++, now),
+                        CreateSubcategory("Fast Food", "fast-food", order++, now),
+                        CreateSubcategory("Takeaways", "takeaways", order++, now),
+                        CreateSubcategory("Shisanyama", "shisanyama", order++, now),
+                        CreateSubcategory("Catering", "catering", order++, now),
+                        CreateSubcategory("Home Cooks", "home-cooks", order++, now),
+                        CreateSubcategory("Meal Prep Services", "meal-prep-services", order++, now),
+                        CreateSubcategory("Private Chefs", "private-chefs", order++, now),
+                        CreateSubcategory("Bakers", "bakers", order++, now),
+                        CreateSubcategory("Cake Makers", "cake-makers", order++, now),
+                        CreateSubcategory("Dessert Sellers", "dessert-sellers", order++, now),
+                        CreateSubcategory("Street Food Vendors", "street-food-vendors", order++, now),
+                        CreateSubcategory("Snack Sellers", "snack-sellers", order++, now),
+                        CreateSubcategory("Fruit & Veg Sellers", "fruit-veg-sellers", order++, now),
+                        CreateSubcategory("Grocery Stores", "grocery-stores", order++, now),
+                        CreateSubcategory("Spaza Shops", "spaza-shops", order++, now),
+                        CreateSubcategory("Butcheries", "butcheries", order++, now),
+                        CreateSubcategory("Coffee Vendors", "coffee-vendors", order++, now),
+                        CreateSubcategory("Beverage Sellers", "beverage-sellers", order++, now)
+                    }
+                },
+                new SellerCategory
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "Fashion & Apparel",
+                    Slug = "fashion-apparel",
+                    Description = "Clothing, shoes, accessories, and tailoring",
+                    SortOrder = order++,
+                    IsActive = true,
+                    CreatedAtUtc = now,
+                    Subcategories = new List<SellerSubcategory>
+                    {
+                        CreateSubcategory("Clothing", "clothing", order++, now),
+                        CreateSubcategory("Fashion Boutiques", "fashion-boutiques", order++, now),
+                        CreateSubcategory("Streetwear Sellers", "streetwear-sellers", order++, now),
+                        CreateSubcategory("Shoe Sellers", "shoe-sellers", order++, now),
+                        CreateSubcategory("Sneaker Resellers", "sneaker-resellers", order++, now),
+                        CreateSubcategory("Tailoring", "tailoring", order++, now),
+                        CreateSubcategory("Dressmakers", "dressmakers", order++, now),
+                        CreateSubcategory("Alterations", "alterations", order++, now),
+                        CreateSubcategory("Traditional Wear", "traditional-wear", order++, now),
+                        CreateSubcategory("Kids Clothing", "kids-clothing", order++, now),
+                        CreateSubcategory("Women's Fashion", "womens-fashion", order++, now),
+                        CreateSubcategory("Men's Fashion", "mens-fashion", order++, now),
+                        CreateSubcategory("Uniform Suppliers", "uniform-suppliers", order++, now),
+                        CreateSubcategory("Bags & Handbags", "bags-handbags", order++, now),
+                        CreateSubcategory("Accessories", "accessories", order++, now),
+                        CreateSubcategory("Jewellery", "jewellery", order++, now),
+                        CreateSubcategory("Watch Sellers", "watch-sellers", order++, now),
+                        CreateSubcategory("Fabric Sellers", "fabric-sellers", order++, now),
+                        CreateSubcategory("Thrift / Pre-Owned Clothing", "thrift-clothing", order++, now)
+                    }
+                },
+                new SellerCategory
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "Home Services",
+                    Slug = "home-services",
+                    Description = "Cleaning, gardening, handyman, and home maintenance",
+                    SortOrder = order++,
+                    IsActive = true,
+                    CreatedAtUtc = now,
+                    Subcategories = new List<SellerSubcategory>
+                    {
+                        CreateSubcategory("Cleaners", "cleaners", order++, now),
+                        CreateSubcategory("Deep Cleaning", "deep-cleaning", order++, now),
+                        CreateSubcategory("Laundry Services", "laundry-services", order++, now),
+                        CreateSubcategory("Ironing Services", "ironing-services", order++, now),
+                        CreateSubcategory("Home Organising", "home-organising", order++, now),
+                        CreateSubcategory("Garden Services", "garden-services", order++, now),
+                        CreateSubcategory("Landscaping", "landscaping", order++, now),
+                        CreateSubcategory("Pest Control", "pest-control", order++, now),
+                        CreateSubcategory("Pool Cleaning", "pool-cleaning", order++, now),
+                        CreateSubcategory("Carpet Cleaning", "carpet-cleaning", order++, now),
+                        CreateSubcategory("Window Cleaning", "window-cleaning", order++, now),
+                        CreateSubcategory("Upholstery Cleaning", "upholstery-cleaning", order++, now),
+                        CreateSubcategory("Waste Removal", "waste-removal", order++, now),
+                        CreateSubcategory("Moving Help", "moving-help", order++, now),
+                        CreateSubcategory("Handyman Services", "handyman-services", order++, now),
+                        CreateSubcategory("Home Cooking Services", "home-cooking-services", order++, now),
+                        CreateSubcategory("Elderly Assistance", "elderly-assistance", order++, now),
+                        CreateSubcategory("Home Care Services", "home-care-services", order++, now)
+                    }
+                },
+                new SellerCategory
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "Repairs & Trades",
+                    Slug = "repairs-trades",
+                    Description = "Electricians, plumbers, builders, and repair services",
+                    SortOrder = order++,
+                    IsActive = true,
+                    CreatedAtUtc = now,
+                    Subcategories = new List<SellerSubcategory>
+                    {
+                        CreateSubcategory("Repair Services", "repair-services", order++, now),
+                        CreateSubcategory("Electricians", "electricians", order++, now),
+                        CreateSubcategory("Plumbers", "plumbers", order++, now),
+                        CreateSubcategory("Builders", "builders", order++, now),
+                        CreateSubcategory("Painters", "painters", order++, now),
+                        CreateSubcategory("Tilers", "tilers", order++, now),
+                        CreateSubcategory("Carpenters", "carpenters", order++, now),
+                        CreateSubcategory("Welders", "welders", order++, now),
+                        CreateSubcategory("Roofing Services", "roofing-services", order++, now),
+                        CreateSubcategory("Ceiling Installers", "ceiling-installers", order++, now),
+                        CreateSubcategory("Flooring Installers", "flooring-installers", order++, now),
+                        CreateSubcategory("Appliance Repair", "appliance-repair", order++, now),
+                        CreateSubcategory("TV Repair", "tv-repair", order++, now),
+                        CreateSubcategory("Phone Repair", "phone-repair", order++, now),
+                        CreateSubcategory("Laptop Repair", "laptop-repair", order++, now),
+                        CreateSubcategory("Fridge Repair", "fridge-repair", order++, now),
+                        CreateSubcategory("Aircon Services", "aircon-services", order++, now),
+                        CreateSubcategory("Generator Repair", "generator-repair", order++, now),
+                        CreateSubcategory("Borehole Services", "borehole-services", order++, now),
+                        CreateSubcategory("Gate Motor Repair", "gate-motor-repair", order++, now),
+                        CreateSubcategory("Locksmiths", "locksmiths", order++, now)
+                    }
+                },
+                new SellerCategory
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "Electronics & Tech",
+                    Slug = "electronics-tech",
+                    Description = "Phones, laptops, gadgets, and tech services",
+                    SortOrder = order++,
+                    IsActive = true,
+                    CreatedAtUtc = now,
+                    Subcategories = new List<SellerSubcategory>
+                    {
+                        CreateSubcategory("Electronics", "electronics", order++, now),
+                        CreateSubcategory("Phone Sellers", "phone-sellers", order++, now),
+                        CreateSubcategory("Laptop Sellers", "laptop-sellers", order++, now),
+                        CreateSubcategory("Computer Accessories", "computer-accessories", order++, now),
+                        CreateSubcategory("Gaming Consoles", "gaming-consoles", order++, now),
+                        CreateSubcategory("TV & Audio", "tv-audio", order++, now),
+                        CreateSubcategory("Camera Equipment", "camera-equipment", order++, now),
+                        CreateSubcategory("Smart Devices", "smart-devices", order++, now),
+                        CreateSubcategory("Phone Accessories", "phone-accessories", order++, now),
+                        CreateSubcategory("Tech Repairs", "tech-repairs", order++, now),
+                        CreateSubcategory("Software Setup", "software-setup", order++, now),
+                        CreateSubcategory("IT Support", "it-support", order++, now),
+                        CreateSubcategory("WiFi Installation", "wifi-installation", order++, now),
+                        CreateSubcategory("CCTV Installation", "cctv-installation", order++, now),
+                        CreateSubcategory("Solar Installation", "solar-installation", order++, now),
+                        CreateSubcategory("Data & Airtime Sellers", "data-airtime-sellers", order++, now)
+                    }
+                },
+                new SellerCategory
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "Health & Wellness",
+                    Slug = "health-wellness",
+                    Description = "Fitness, nutrition, therapy, and wellness services",
+                    SortOrder = order++,
+                    IsActive = true,
+                    CreatedAtUtc = now,
+                    Subcategories = new List<SellerSubcategory>
+                    {
+                        CreateSubcategory("Health & Wellness", "health-wellness", order++, now),
+                        CreateSubcategory("Personal Trainers", "personal-trainers", order++, now),
+                        CreateSubcategory("Fitness Coaches", "fitness-coaches", order++, now),
+                        CreateSubcategory("Gym Instructors", "gym-instructors", order++, now),
+                        CreateSubcategory("Dieticians", "dieticians", order++, now),
+                        CreateSubcategory("Nutrition Coaches", "nutrition-coaches", order++, now),
+                        CreateSubcategory("Counsellors", "counsellors", order++, now),
+                        CreateSubcategory("Therapists", "therapists", order++, now),
+                        CreateSubcategory("Wellness Coaches", "wellness-coaches", order++, now),
+                        CreateSubcategory("Yoga Instructors", "yoga-instructors", order++, now),
+                        CreateSubcategory("Pilates Instructors", "pilates-instructors", order++, now),
+                        CreateSubcategory("Mobile Clinics", "mobile-clinics", order++, now),
+                        CreateSubcategory("Home Nursing", "home-nursing", order++, now),
+                        CreateSubcategory("Caregivers", "caregivers", order++, now),
+                        CreateSubcategory("Wellness Product Sellers", "wellness-product-sellers", order++, now),
+                        CreateSubcategory("Supplement Retailers", "supplement-retailers", order++, now),
+                        CreateSubcategory("Physiotherapy Services", "physiotherapy-services", order++, now)
+                    }
+                },
+                new SellerCategory
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "Education & Tutoring",
+                    Slug = "education-tutoring",
+                    Description = "Tutoring, coaching, lessons, and skills training",
+                    SortOrder = order++,
+                    IsActive = true,
+                    CreatedAtUtc = now,
+                    Subcategories = new List<SellerSubcategory>
+                    {
+                        CreateSubcategory("Education & Tutoring", "education-tutoring", order++, now),
+                        CreateSubcategory("Academic Tutors", "academic-tutors", order++, now),
+                        CreateSubcategory("Homework Assistance", "homework-assistance", order++, now),
+                        CreateSubcategory("Exam Prep Tutors", "exam-prep-tutors", order++, now),
+                        CreateSubcategory("University Tutors", "university-tutors", order++, now),
+                        CreateSubcategory("Language Tutors", "language-tutors", order++, now),
+                        CreateSubcategory("Coding Tutors", "coding-tutors", order++, now),
+                        CreateSubcategory("Computer Lessons", "computer-lessons", order++, now),
+                        CreateSubcategory("Driving Schools", "driving-schools", order++, now),
+                        CreateSubcategory("Music Lessons", "music-lessons", order++, now),
+                        CreateSubcategory("Art Lessons", "art-lessons", order++, now),
+                        CreateSubcategory("Sports Coaching", "sports-coaching", order++, now),
+                        CreateSubcategory("Skills Training", "skills-training", order++, now),
+                        CreateSubcategory("Business Coaching", "business-coaching", order++, now),
+                        CreateSubcategory("Early Childhood Learning", "early-childhood-learning", order++, now),
+                        CreateSubcategory("Special Needs Support", "special-needs-support", order++, now)
+                    }
+                },
+                new SellerCategory
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "Other",
+                    Slug = "other",
+                    Description = "Miscellaneous categories that don't fit elsewhere",
+                    SortOrder = 999,
+                    IsActive = true,
+                    CreatedAtUtc = now,
+                    Subcategories = new List<SellerSubcategory>
+                    {
+                        CreateSubcategory("Other", "other", 0, now)
+                    }
+                }
+            };
+        }
+
+        private static SellerSubcategory CreateSubcategory(string name, string slug, int sortOrder, DateTime createdAt)
+        {
+            return new SellerSubcategory
+            {
+                Id = Guid.NewGuid(),
+                Name = name,
+                Slug = slug,
+                Description = null,
+                SortOrder = sortOrder,
+                IsActive = true,
+                CreatedAtUtc = createdAt
+            };
+        }
+    }
+}
+'@
+
+# =========================
+# API Controller
+# =========================
+
+Write-Utf8File (Join-Path $apiControllersPath "SellerCategoriesController.cs") @'
+using System;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using ZansiHustle.Application.TeamMembers;
-using ZansiHustle.Application.TeamMembers.Dtos;
+using ZansiHustle.Application.SellerCategories;
+using ZansiHustle.Application.SellerCategories.Dtos;
 using ZansiHustle.Shared.Results;
 
 namespace ZansiHustle.API.Controllers
 {
     /// <summary>
-    /// Exposes endpoints for team member management using the Users table.
+    /// Exposes endpoints for managing seller categories and subcategories.
     /// </summary>
     [ApiController]
-    [Route("api/[controller]")]
     [Authorize]
-    public class TeamMembersController : ControllerBase
+    [Route("api/[controller]")]
+    public class SellerCategoriesController : BaseController
     {
-        private readonly ITeamMemberService _teamMemberService;
+        private readonly ISellerCategoryService _sellerCategoryService;
 
-        public TeamMembersController(ITeamMemberService teamMemberService)
+        public SellerCategoriesController(ISellerCategoryService sellerCategoryService)
         {
-            _teamMemberService = teamMemberService;
+            _sellerCategoryService = sellerCategoryService;
         }
 
+        /// <summary>
+        /// Gets all seller categories with their subcategories.
+        /// </summary>
         [HttpGet]
-        [ProducesResponseType(typeof(Result<System.Collections.Generic.List<TeamMemberDto>>), StatusCodes.Status200OK)]
-        public async Task<IActionResult> GetAll()
+        [AllowAnonymous]
+        [ProducesResponseType(typeof(Result<List<SellerCategoryDto>>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetAll([FromQuery] bool activeOnly = false)
         {
-            var result = await _teamMemberService.GetAllAsync();
-            return Ok(result);
+            var result = await _sellerCategoryService.GetAllAsync(activeOnly);
+            return ToActionResult(result);
         }
 
-        [HttpGet("{id}")]
-        [ProducesResponseType(typeof(Result<TeamMemberDto>), StatusCodes.Status200OK)]
-        public async Task<IActionResult> GetById(string id)
+        /// <summary>
+        /// Gets a seller category by its identifier.
+        /// </summary>
+        [HttpGet("{id:guid}")]
+        [AllowAnonymous]
+        [ProducesResponseType(typeof(Result<SellerCategoryDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetById(Guid id)
         {
-            var result = await _teamMemberService.GetByIdAsync(id);
-            return Ok(result);
+            var result = await _sellerCategoryService.GetByIdAsync(id);
+            return ToActionResult(result);
         }
 
+        /// <summary>
+        /// Creates a new seller category.
+        /// </summary>
         [HttpPost]
-        [ProducesResponseType(typeof(Result<TeamMemberDto>), StatusCodes.Status200OK)]
-        public async Task<IActionResult> Create([FromBody] CreateTeamMemberRequestDto request)
+        [Authorize(Roles = "Admin,SuperAdmin,TeamManager")]
+        [ProducesResponseType(typeof(Result<SellerCategoryDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> Create([FromBody] CreateSellerCategoryRequestDto request)
         {
-            var result = await _teamMemberService.CreateAsync(request);
-            return Ok(result);
+            var result = await _sellerCategoryService.CreateAsync(request);
+            return ToActionResult(result);
         }
 
-        [HttpPut("{id}")]
-        [ProducesResponseType(typeof(Result<TeamMemberDto>), StatusCodes.Status200OK)]
-        public async Task<IActionResult> Update(string id, [FromBody] UpdateTeamMemberRequestDto request)
+        /// <summary>
+        /// Updates an existing seller category.
+        /// </summary>
+        [HttpPut("{id:guid}")]
+        [Authorize(Roles = "Admin,SuperAdmin,TeamManager")]
+        [ProducesResponseType(typeof(Result<SellerCategoryDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> Update(Guid id, [FromBody] UpdateSellerCategoryRequestDto request)
         {
-            var result = await _teamMemberService.UpdateAsync(id, request);
-            return Ok(result);
+            var result = await _sellerCategoryService.UpdateAsync(id, request);
+            return ToActionResult(result);
         }
 
-        [HttpDelete("{id}")]
+        /// <summary>
+        /// Deletes a seller category.
+        /// </summary>
+        [HttpDelete("{id:guid}")]
+        [Authorize(Roles = "Admin,SuperAdmin,TeamManager")]
         [ProducesResponseType(typeof(Result), StatusCodes.Status200OK)]
-        public async Task<IActionResult> Delete(string id)
+        public async Task<IActionResult> Delete(Guid id)
         {
-            var result = await _teamMemberService.DeleteAsync(id);
-            return Ok(result);
+            var result = await _sellerCategoryService.DeleteAsync(id);
+            return ToActionResult(result);
+        }
+
+        /// <summary>
+        /// Creates a new subcategory under a seller category.
+        /// </summary>
+        [HttpPost("subcategories")]
+        [Authorize(Roles = "Admin,SuperAdmin,TeamManager")]
+        [ProducesResponseType(typeof(Result<SellerSubcategoryDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> CreateSubcategory([FromBody] CreateSellerSubcategoryRequestDto request)
+        {
+            var result = await _sellerCategoryService.CreateSubcategoryAsync(request);
+            return ToActionResult(result);
+        }
+
+        /// <summary>
+        /// Updates an existing subcategory.
+        /// </summary>
+        [HttpPut("subcategories/{id:guid}")]
+        [Authorize(Roles = "Admin,SuperAdmin,TeamManager")]
+        [ProducesResponseType(typeof(Result<SellerSubcategoryDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> UpdateSubcategory(Guid id, [FromBody] UpdateSellerSubcategoryRequestDto request)
+        {
+            var result = await _sellerCategoryService.UpdateSubcategoryAsync(id, request);
+            return ToActionResult(result);
+        }
+
+        /// <summary>
+        /// Deletes a subcategory.
+        /// </summary>
+        [HttpDelete("subcategories/{id:guid}")]
+        [Authorize(Roles = "Admin,SuperAdmin,TeamManager")]
+        [ProducesResponseType(typeof(Result), StatusCodes.Status200OK)]
+        public async Task<IActionResult> DeleteSubcategory(Guid id)
+        {
+            var result = await _sellerCategoryService.DeleteSubcategoryAsync(id);
+            return ToActionResult(result);
         }
     }
 }
-"@
+'@
 
-# -------------------------------------------------------------------
-# 5. Write files
-# -------------------------------------------------------------------
-Write-FileUtf8 -Path (Join-Path $appTeamMembersDtosDir "TeamMemberDto.cs") -Content $teamMemberDto
-Write-FileUtf8 -Path (Join-Path $appTeamMembersDtosDir "CreateTeamMemberRequestDto.cs") -Content $createTeamMemberRequestDto
-Write-FileUtf8 -Path (Join-Path $appTeamMembersDtosDir "UpdateTeamMemberRequestDto.cs") -Content $updateTeamMemberRequestDto
-Write-FileUtf8 -Path (Join-Path $appTeamMembersDir "ITeamMemberService.cs") -Content $iTeamMemberService
-Write-FileUtf8 -Path (Join-Path $appTeamMembersDir "TeamMemberService.cs") -Content $teamMemberService
-Write-FileUtf8 -Path (Join-Path $apiControllersDir "TeamMembersController.cs") -Content $teamMembersController
+# =========================
+# Patch AppDbContext
+# =========================
 
-# -------------------------------------------------------------------
-# 6. Update ServiceExtensions
-# -------------------------------------------------------------------
-Replace-InFile -Path $serviceExtensionsPath `
-    -Pattern 'using ZansiHustle\.Application\.TeamMembers;\s*' `
-    -Replacement 'using ZansiHustle.Application.TeamMembers;' 
+if ($PatchAppDbContext) {
+    $dbContextPath = Join-Path $rootPath "ZansiHustle.Infrastructure\Data\AppDbContext.cs"
+    
+    if (Test-Path $dbContextPath) {
+        $content = Get-Content $dbContextPath -Raw
+        
+        # Check if DbSets already exist
+        if ($content -notmatch "DbSet<SellerCategory>") {
+            $dbSetInsert = @'
 
-Replace-InFile -Path $serviceExtensionsPath `
-    -Pattern '(using ZansiHustle\.Application\.Users;\s*)' `
-    -Replacement "`$1`r`nusing ZansiHustle.Application.TeamMembers;`r`n"
+        public DbSet<SellerCategory> SellerCategories { get; set; }
+        public DbSet<SellerSubcategory> SellerSubcategories { get; set; }
+'@
+            
+            $content = $content -replace '(public class AppDbContext.*?{.*?)(public DbSet)', "`$1$dbSetInsert`n`$2"
+        }
+        
+        # Check if configurations are applied
+        if ($content -notmatch "ApplyConfiguration\(new SellerCategoryConfiguration") {
+            $configInsert = @'
+            
+            modelBuilder.ApplyConfiguration(new SellerCategoryConfiguration());
+            modelBuilder.ApplyConfiguration(new SellerSubcategoryConfiguration());
+'@
+            
+            $content = $content -replace '(protected override void OnModelCreating.*?{.*?)(base\.OnModelCreating)', "`$1$configInsert`n`n            `$2"
+        }
+        
+        Write-Utf8File $dbContextPath $content
+        Write-Host "Updated AppDbContext with SellerCategories and SellerSubcategories" -ForegroundColor Yellow
+    }
+}
 
-Replace-InFile -Path $serviceExtensionsPath `
-    -Pattern '(services\.AddScoped<IUserSettingsService,\s*UserSettingsService>\(\);\s*)' `
-    -Replacement "`$1`r`n        services.AddScoped<ITeamMemberService, TeamMemberService>();"
+# =========================
+# Patch Service Extensions
+# =========================
 
-Write-Info "Done."
-Write-Warn "Next:"
-Write-Warn "1. Ensure User entity has TeamPortalEnabled/AdminPortalEnabled/FinanceAccess/Department/Notes/JoinedDateUtc/CreatedAtUtc/UpdatedAtUtc."
-Write-Warn "2. Run dotnet build."
-Write-Warn "3. If User is missing any field above, either add them or trim the DTO/service mapping."
-Write-Warn "4. Optional: secure controller with role policies."
+if ($PatchServiceExtensions) {
+    $serviceExtensionsPath = Join-Path $rootPath "ZansiHustle.Infrastructure\ServiceExtensions.cs"
+    
+    if (Test-Path $serviceExtensionsPath) {
+        $content = Get-Content $serviceExtensionsPath -Raw
+        
+        # Check if services are already registered
+        if ($content -notmatch "ISellerCategoryRepository") {
+            $serviceInsert = @'
+            
+            // Seller Categories
+            services.AddScoped<ISellerCategoryRepository, SellerCategoryRepository>();
+            services.AddScoped<ISellerCategoryService, SellerCategoryService>();
+'@
+            
+            $content = $content -replace '(public static IServiceCollection AddInfrastructure.*?{.*?)(return services;)', "`$1$serviceInsert`n`n            `$2"
+        }
+        
+        Write-Utf8File $serviceExtensionsPath $content
+        Write-Host "Updated ServiceExtensions with Seller Categories services" -ForegroundColor Yellow
+    }
+}
+
+Write-Host "`n========================================" -ForegroundColor Cyan
+Write-Host "Seller Categories setup complete!" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Next steps:" -ForegroundColor Yellow
+Write-Host "1. Run: dotnet ef migrations add AddSellerCategories" -ForegroundColor White
+Write-Host "2. Run: dotnet ef database update" -ForegroundColor White
+Write-Host "3. The seed data will run automatically on app startup" -ForegroundColor White
+Write-Host ""

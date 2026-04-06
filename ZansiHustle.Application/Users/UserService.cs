@@ -102,4 +102,22 @@ public class UserService : IUserService
             return Result.Failure(ErrorCodes.Exception, "Failed to deactivate user.");
         }
     }
+
+    /// <inheritdoc />
+    public async Task<Result<Guid?>> SearchByNameAsync(string searchTerm)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(searchTerm))
+                return Result<Guid?>.Success(null);
+
+            var userId = await _userRepository.SearchByNameAsync(searchTerm);
+            return Result<Guid?>.Success(userId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to search users by name: {SearchTerm}", searchTerm);
+            return Result<Guid?>.Failure(ErrorCodes.Exception, "Failed to search users.");
+        }
+    }
 }

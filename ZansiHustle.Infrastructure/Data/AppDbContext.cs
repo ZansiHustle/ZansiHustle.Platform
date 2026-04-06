@@ -10,6 +10,7 @@ using ZansiHustle.Domain.Identity;
 using ZansiHustle.Domain.Influencers;
 using ZansiHustle.Domain.Merchants;
 using ZansiHustle.Domain.Podcasts;
+using ZansiHustle.Domain.SellerCategories;
 using ZansiHustle.Domain.SellerLeads;
 
 namespace ZansiHustle.Infrastructure.Data;
@@ -96,5 +97,8 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     public DbSet<BudgetTransaction> BudgetTransactions { get; set; }
 
     public DbSet<Merchant> Merchants => Set<Merchant>();
+
+    public DbSet<SellerCategory> SellerCategories => Set<SellerCategory>();
+    public DbSet<SellerSubcategory> SellerSubcategories => Set<SellerSubcategory>();
 
 }

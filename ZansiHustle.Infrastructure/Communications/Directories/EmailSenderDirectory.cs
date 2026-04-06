@@ -26,7 +26,7 @@ public static class EmailSenderDirectory
         public const string Host = HOST_SENDER;
         public const int Port = HOST_PORT;
         public const string Username = $"support@{HOST_DOMAIN}";
-        public const string Password = "CHANGE_ME";
+        public const string Password = "$upportZan$1";
         public const string FromEmail = $"support@{HOST_DOMAIN}";
         public const string FromName = "ZansiHustle Support";
         public const bool EnableSsl = HOST_ENABLE_SSL;
@@ -37,7 +37,7 @@ public static class EmailSenderDirectory
         public const string Host = HOST_SENDER;
         public const int Port = HOST_PORT;
         public const string Username = $"noreply@{HOST_DOMAIN}";
-        public const string Password = "CHANGE_ME";
+        public const string Password = "Zan$1Noreply";
         public const string FromEmail = $"noreply@{HOST_DOMAIN}";
         public const string FromName = "ZansiHustle";
         public const bool EnableSsl = HOST_ENABLE_SSL;
@@ -48,7 +48,7 @@ public static class EmailSenderDirectory
         public const string Host = HOST_SENDER;
         public const int Port = HOST_PORT;
         public const string Username = $"security@{HOST_DOMAIN}";
-        public const string Password = "CHANGE_ME";
+        public const string Password = "$ecurityZans1";
         public const string FromEmail = $"security@{HOST_DOMAIN}";
         public const string FromName = "ZansiHustle Security";
         public const bool EnableSsl = HOST_ENABLE_SSL;
@@ -59,7 +59,7 @@ public static class EmailSenderDirectory
         public const string Host = HOST_SENDER;
         public const int Port = HOST_PORT;
         public const string Username = $"payments@{HOST_DOMAIN}";
-        public const string Password = "CHANGE_ME";
+        public const string Password = "Payment$Zan$1#ustle";
         public const string FromEmail = $"payments@{HOST_DOMAIN}";
         public const string FromName = "ZansiHustle Payments";
         public const bool EnableSsl = HOST_ENABLE_SSL;

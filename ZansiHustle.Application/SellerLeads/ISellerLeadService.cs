@@ -14,6 +14,12 @@ namespace ZansiHustle.Application.SellerLeads
         Task<Result<List<SellerLeadListItemDto>>> GetAllAsync();
         Task<Result<SellerLeadDetailsDto>> GetByIdAsync(Guid id);
         Task<Result<SellerLeadDetailsDto>> CreateAsync(CreateSellerLeadRequestDto request);
+
+        /// <summary>
+        /// Creates a new seller lead from public website submission.
+        /// </summary>
+        Task<Result<SellerLeadDetailsDto>> CreatePublicAsync(CreatePublicSellerLeadRequestDto request);
+        
         Task<Result<SellerLeadDetailsDto>> UpdateAsync(Guid id, UpdateSellerLeadRequestDto request);
         Task<Result<SellerLeadDetailsDto>> ReviewAsync(Guid id, ReviewSellerLeadRequestDto request);
         Task<Result<SellerLeadDetailsDto>> VerifyAsync(Guid id, VerifySellerLeadRequestDto request);

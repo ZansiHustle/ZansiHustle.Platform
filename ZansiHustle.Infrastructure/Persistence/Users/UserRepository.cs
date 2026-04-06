@@ -68,4 +68,45 @@ public class UserRepository : IUserRepository
     {
         return await _dbContext.Users.AnyAsync(x => x.Id == userId);
     }
+
+    /// <inheritdoc />
+    public async Task<Guid?> SearchByNameAsync(string searchTerm)
+    {
+        if (string.IsNullOrWhiteSpace(searchTerm))
+            return null;
+
+        var normalizedSearch = searchTerm.Trim().ToLowerInvariant();
+        var searchParts = normalizedSearch.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        var query = _dbContext.Users.AsNoTracking();
+
+        if (searchParts.Length == 1)
+        {
+            // Single term - search in FirstName or LastName
+            var singleTerm = searchParts[0];
+            query = query.Where(u => u.FirstName.ToLower().Contains(singleTerm) ||
+                                      u.LastName.ToLower().Contains(singleTerm));
+        }
+        else
+        {
+            // Multiple terms - try to match first name and last name
+            var firstNameTerm = searchParts[0];
+            var lastNameTerm = string.Join(" ", searchParts.Skip(1));
+
+            query = query.Where(u => (u.FirstName.ToLower().Contains(firstNameTerm) &&
+                                       u.LastName.ToLower().Contains(lastNameTerm)) ||
+                                      u.FirstName.ToLower().Contains(normalizedSearch) ||
+                                      u.LastName.ToLower().Contains(normalizedSearch) ||
+                                      (u.FirstName + " " + u.LastName).ToLower().Contains(normalizedSearch));
+        }
+
+        // Only return active users who could be agents (Marketplace Growth Associates)
+        // You can filter by role if you have role information
+        var results = await query
+            .OrderBy(u => u.FirstName)
+            .ThenBy(u => u.LastName)
+            .FirstOrDefaultAsync();
+
+        return results?.Id ?? null;
+    }
 }

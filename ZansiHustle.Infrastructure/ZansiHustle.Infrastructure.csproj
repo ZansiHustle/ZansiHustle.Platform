@@ -26,4 +26,8 @@
     <ProjectReference Include="..\ZansiHustle.Shared\ZansiHustle.Shared.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Data\Seed\" />
+  </ItemGroup>
+
 </Project>

@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using ZansiHustle.Application.Common.Interfaces.Shared;
+using ZansiHustle.Application.Communication.Email.Interfaces;
 using ZansiHustle.Application.Persistence.SellerLeads;
 using ZansiHustle.Application.Persistence.Users;
 using ZansiHustle.Application.SellerLeads.Dtos;
+using ZansiHustle.Application.Users;
 using ZansiHustle.Domain.SellerLeads;
 using ZansiHustle.Shared.Enums.SellerLeads;
 using ZansiHustle.Shared.Results;
@@ -20,15 +22,19 @@ namespace ZansiHustle.Application.SellerLeads
         private readonly ISellerLeadRepository _sellerLeadRepository;
         private readonly IUserRepository _userRepository;
         private readonly ICurrentUserService _currentUserService;
-
+        private readonly IUserService _userService;
+        private readonly IMerchantEmailService _merchantEmailService;
         /// <summary>
         /// Creates a new instance of the <see cref="SellerLeadService"/> class.
         /// </summary>
-        public SellerLeadService(ISellerLeadRepository sellerLeadRepository, IUserRepository agentRepository, ICurrentUserService currentUserService)
+        public SellerLeadService(ISellerLeadRepository sellerLeadRepository, IUserRepository agentRepository, ICurrentUserService currentUserService, IUserService userService,
+                                 IMerchantEmailService merchantEmailService)
         {
             _sellerLeadRepository = sellerLeadRepository;
             _userRepository = agentRepository;
             _currentUserService = currentUserService;
+            _userService = userService;
+            _merchantEmailService = merchantEmailService;
         }
 
         /// <inheritdoc />
@@ -126,6 +132,111 @@ namespace ZansiHustle.Application.SellerLeads
                 }
 
                 var createdEntity = await _sellerLeadRepository.GetByIdAsync(entity.Id) ?? entity;
+
+                return Result<SellerLeadDetailsDto>.Success(MapToDetailsDto(createdEntity), "Seller lead created successfully.");
+            }
+            catch (Exception ex)
+            {
+                return Result<SellerLeadDetailsDto>.Failure($"An error occurred while creating the seller lead. {ex.Message}");
+            }
+        }
+
+        /// <inheritdoc />
+        public async Task<Result<SellerLeadDetailsDto>> CreatePublicAsync(CreatePublicSellerLeadRequestDto request)
+        {
+            try
+            {
+                if (request is null)
+                {
+                    return Result<SellerLeadDetailsDto>.Failure("Request is required.");
+                }
+
+                if (string.IsNullOrWhiteSpace(request.ContactName))
+                {
+                    return Result<SellerLeadDetailsDto>.Failure("Contact name is required.");
+                }
+
+                if (string.IsNullOrWhiteSpace(request.PhoneNumber))
+                {
+                    return Result<SellerLeadDetailsDto>.Failure("Phone number is required.");
+                }
+
+                // Look up referrer user if provided
+                Guid? assignedUserId = null;
+                string referrerNotes = string.Empty;
+
+                if (!string.IsNullOrWhiteSpace(request.ReferrerName))
+                {
+                    var searchResult = await _userService.SearchByNameAsync(request.ReferrerName);
+
+                    if (searchResult.IsSuccess && searchResult.Data != null && searchResult.Data != null)
+                    {
+                        assignedUserId = searchResult.Data;
+                        referrerNotes = $"Referred by: {request.ReferrerName}";
+                    }
+                    else
+                    {
+                        referrerNotes = $"Referred by: {request.ReferrerName}";
+                    }
+                }
+
+                var entity = new SellerLead
+                {
+                    Id = Guid.NewGuid(),
+                    Code = $"SLD-{DateTime.UtcNow:yyyyMMddHHmmssfff}",
+                    ContactName = request.ContactName.Trim(),
+                    BusinessName = string.IsNullOrWhiteSpace(request.BusinessName) ? request.ContactName.Trim() : request.BusinessName.Trim(),
+                    LeadType = request.LeadType,
+                    Category = request.Category?.Trim(),
+                    Subcategory = request.Subcategory?.Trim(),
+                    PhoneNumber = request.PhoneNumber?.Trim(),
+                    Email = request.Email?.Trim(),
+                    Province = request.Province?.Trim(),
+                    City = request.City?.Trim(),
+                    SocialHandleOrLink = request.SocialHandleOrLink?.Trim(),
+                    SourceType = request.SourceType ?? "website_become_hustler",
+                    AssignedUserId = null, // No user assigned for public submissions
+                    Notes = request.Notes?.Trim(),
+                    SubmittedAtUtc = DateTime.UtcNow,
+                    CreatedAtUtc = DateTime.UtcNow,
+                    VerificationStatus = VerificationStatus.Pending,
+                    ApprovalStatus = ApprovalStatus.Pending
+                };
+
+                // Add referrer info to notes if provided
+                if (!string.IsNullOrWhiteSpace(request.ReferrerName))
+                {
+                    entity.Notes = string.IsNullOrWhiteSpace(entity.Notes) ? $"Referred by: {request.ReferrerName}" : $"{entity.Notes} | Referred by: {request.ReferrerName}";
+                }
+
+                await _sellerLeadRepository.AddAsync(entity);
+                var saved = await _sellerLeadRepository.SaveChangesAsync();
+
+                if (!saved)
+                {
+                    return Result<SellerLeadDetailsDto>.Failure("Failed to create seller lead.");
+                }
+
+                var createdEntity = await _sellerLeadRepository.GetByIdAsync(entity.Id) ?? entity;
+
+                _ = Task.Run(async () =>
+                {
+                    // Send VIP welcome email to the lead (if email provided)
+                    if (!string.IsNullOrWhiteSpace(entity.Email))
+                    {
+                        var firstName = entity.ContactName.Split(' ')[0];
+                        var emailResult = await _merchantEmailService.SendLeadWelcomeEmailAsync(entity.Email, firstName, entity.BusinessName);
+                    }
+
+                    // Send internal notification to team
+                    var notificationResult = await _merchantEmailService.SendNewLeadNotificationAsync(
+                        entity.ContactName,
+                        entity.PhoneNumber ?? "Not provided",
+                        entity.Email,
+                        entity.Category,
+                        entity.Province,
+                        request.ReferrerName);
+                });
 
                 return Result<SellerLeadDetailsDto>.Success(MapToDetailsDto(createdEntity), "Seller lead created successfully.");
             }

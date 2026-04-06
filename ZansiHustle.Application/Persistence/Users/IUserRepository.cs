@@ -36,4 +36,9 @@ public interface IUserRepository
     /// Checks whether a user exists.
     /// </summary>
     Task<bool> ExistsAsync(Guid userId);
+
+    /// <summary>
+    /// Searches for users by name (first name, last name, or full name).
+    /// </summary>
+    Task<Guid?> SearchByNameAsync(string searchTerm);
 }

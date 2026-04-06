@@ -1,9 +1,10 @@
-﻿using System;
-using System.Threading.Tasks;
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System;
+using System.Threading.Tasks;
 using ZansiHustle.Application.SellerLeads;
 using ZansiHustle.Application.SellerLeads.Dtos;
+using ZansiHustle.Shared.Results;
 
 namespace ZansiHustle.API.Controllers
 {
@@ -54,6 +55,19 @@ namespace ZansiHustle.API.Controllers
         public async Task<IActionResult> Create([FromBody] CreateSellerLeadRequestDto request)
         {
             var result = await _sellerLeadService.CreateAsync(request);
+
+            return Ok(result);
+        }
+
+        /// <summary>
+        /// Creates a new seller lead from public website (no authentication required).
+        /// </summary>
+        [HttpPost("public")]
+        [AllowAnonymous]
+        [ProducesResponseType(typeof(Result<SellerLeadDetailsDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> CreatePublic([FromBody] CreatePublicSellerLeadRequestDto request)
+        {
+            var result = await _sellerLeadService.CreatePublicAsync(request);
 
             return Ok(result);
         }
