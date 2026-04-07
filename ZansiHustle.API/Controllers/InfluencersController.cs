@@ -48,7 +48,14 @@ namespace ZansiHustle.API.Controllers
         public async Task<IActionResult> Update(Guid id, [FromBody] UpdateInfluencerRequestDto request)
         {
             var result = await _influencerService.UpdateAsync(id, request);
-            return Ok(result);
+
+            // Ensure consistent response format
+            if (!result.IsSuccess)
+            {
+                return Ok(new { isSuccess = false, message = result.Message, code = result.Code, data = (object)null });
+            }
+
+            return Ok(new { isSuccess = true, message = result.Message, data = result.Data });
         }
 
         [HttpPut("{id:guid}/status")]

@@ -29,6 +29,15 @@ public class UserRepository : IUserRepository
     }
 
     /// <inheritdoc />
+    public async Task<List<User>> GetByIDsAsync(List<Guid> userIds)
+    {
+        return await _dbContext.Users
+            .AsNoTracking()
+            .Where(x => userIds.Contains(x.Id))
+            .ToListAsync();
+    }
+
+    /// <inheritdoc />
     public async Task<User?> GetByEmailAsync(string email)
     {
         var normalizedEmail = email.Trim().ToLowerInvariant();

@@ -1,9 +1,14 @@
-﻿using System;
+﻿using Microsoft.EntityFrameworkCore;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using ZansiHustle.Application.Common.Interfaces.Shared;
 using ZansiHustle.Application.Influencers.Dtos;
 using ZansiHustle.Application.Persistence.Influencers;
+using ZansiHustle.Application.SellerLeads.Dtos;
+using ZansiHustle.Application.Users;
+using ZansiHustle.Domain.Identity;
 using ZansiHustle.Domain.Influencers;
 using ZansiHustle.Shared.Results;
 
@@ -15,13 +20,17 @@ namespace ZansiHustle.Application.Influencers
     public class InfluencerService : IInfluencerService
     {
         private readonly IInfluencerRepository _influencerRepository;
+        private readonly IUserService _userServ;
+        private readonly ICurrentUserService _currentUserService;
 
         /// <summary>
         /// Creates a new instance of the <see cref="InfluencerService"/> class.
         /// </summary>
-        public InfluencerService(IInfluencerRepository influencerRepository)
+        public InfluencerService(IInfluencerRepository influencerRepository, IUserService userServ, ICurrentUserService currentUserService)
         {
             _influencerRepository = influencerRepository;
+            _userServ = userServ;
+            _currentUserService = currentUserService;
         }
 
         /// <inheritdoc />
@@ -30,7 +39,28 @@ namespace ZansiHustle.Application.Influencers
             try
             {
                 var influencers = await _influencerRepository.GetAllAsync();
-                var data = influencers.Select(MapToListItemDto).ToList();
+
+                // Get all unique user IDs from influencers
+                var userIds = influencers
+                    .Where(x => x.AddedByUserId.HasValue)
+                    .Select(x => x.AddedByUserId.Value)
+                    .Distinct()
+                    .ToList();
+
+                // Fetch all users in one batch
+                var users = await _userServ.GetByIDsAsync(userIds);
+                Dictionary<Guid, User> userDict = new Dictionary<Guid, User>();
+
+                if (userIds.Any())
+                {
+                    var usersResult = await _userServ.GetByIDsAsync(userIds);
+                    if (usersResult.IsSuccess && usersResult.Data != null)
+                    {
+                        userDict = usersResult.Data.ToDictionary(u => u.Id, u => u);
+                    }
+                }
+
+                var data = influencers.Select(influencer => MapToListItemDto(influencer, userDict)).ToList();
 
                 return Result<List<InfluencerListItemDto>>.Success(data, "Influencers retrieved successfully.");
             }
@@ -75,6 +105,11 @@ namespace ZansiHustle.Application.Influencers
                     return Result<InfluencerDetailsDto>.Failure("Full name is required.");
                 }
 
+                if (!_currentUserService.UserId.HasValue)
+                {
+                    return Result<InfluencerDetailsDto>.Failure("Authenticated user was not found.");
+                }
+
                 var entity = new Influencer
                 {
                     Id = Guid.NewGuid(),
@@ -87,7 +122,7 @@ namespace ZansiHustle.Application.Influencers
                     Email = request.Email?.Trim(),
                     PhoneNumber = request.PhoneNumber?.Trim(),
                     Notes = request.Notes?.Trim(),
-                    AddedByUserId = request.AddedByUserId,
+                    AddedByUserId = _currentUserService.UserId,
                     CreatedAtUtc = DateTime.UtcNow
                 };
 
@@ -138,13 +173,15 @@ namespace ZansiHustle.Application.Influencers
                     return Result<InfluencerDetailsDto>.Failure("Full name is required.");
                 }
 
-                var influencer = await _influencerRepository.GetByIdAsync(id);
+                // Get the existing entity WITH tracking
+                var influencer = await _influencerRepository.GetByIdForUpdateAsync(id);
 
                 if (influencer is null)
                 {
                     return Result<InfluencerDetailsDto>.Failure("Influencer not found.");
                 }
 
+                // Update simple properties
                 influencer.FullName = request.FullName.Trim();
                 influencer.Niche = request.Niche?.Trim();
                 influencer.Province = request.Province?.Trim();
@@ -155,24 +192,49 @@ namespace ZansiHustle.Application.Influencers
                 influencer.Notes = request.Notes?.Trim();
                 influencer.UpdatedAtUtc = DateTime.UtcNow;
 
-                influencer.PlatformAccounts.Clear();
+                // Update platform accounts - UPDATE existing, don't clear and recreate
+                var requestAccounts = request.PlatformAccounts.ToDictionary(a => a.Platform);
 
-                foreach (var account in request.PlatformAccounts)
+                // Remove accounts not in request
+                var accountsToRemove = influencer.PlatformAccounts
+                    .Where(a => !requestAccounts.ContainsKey(a.Platform))
+                    .ToList();
+
+                foreach (var account in accountsToRemove)
                 {
-                    influencer.PlatformAccounts.Add(new InfluencerPlatformAccount
-                    {
-                        Id = Guid.NewGuid(),
-                        InfluencerId = influencer.Id,
-                        Platform = account.Platform,
-                        Handle = account.Handle?.Trim(),
-                        Url = account.Url?.Trim(),
-                        FollowersCount = account.FollowersCount,
-                        CreatedAtUtc = DateTime.UtcNow
-                    });
+                    _influencerRepository.RemovePlatformAccount(account);
                 }
 
-                _influencerRepository.Update(influencer);
+                // Update or add accounts
+                foreach (var requestAccount in request.PlatformAccounts)
+                {
+                    var existingAccount = influencer.PlatformAccounts
+                        .FirstOrDefault(a => a.Platform == requestAccount.Platform);
 
+                    if (existingAccount != null)
+                    {
+                        // Update existing
+                        existingAccount.Handle = requestAccount.Handle?.Trim();
+                        existingAccount.Url = requestAccount.Url?.Trim();
+                        existingAccount.FollowersCount = requestAccount.FollowersCount;
+                    }
+                    else
+                    {
+                        // Add new
+                        influencer.PlatformAccounts.Add(new InfluencerPlatformAccount
+                        {
+                            Id = Guid.NewGuid(),
+                            InfluencerId = influencer.Id,
+                            Platform = requestAccount.Platform,
+                            Handle = requestAccount.Handle?.Trim(),
+                            Url = requestAccount.Url?.Trim(),
+                            FollowersCount = requestAccount.FollowersCount,
+                            CreatedAtUtc = DateTime.UtcNow
+                        });
+                    }
+                }
+
+                // Just call SaveChangesAsync - EF tracks everything
                 var saved = await _influencerRepository.SaveChangesAsync();
 
                 if (!saved)
@@ -181,8 +243,11 @@ namespace ZansiHustle.Application.Influencers
                 }
 
                 var updatedEntity = await _influencerRepository.GetByIdAsync(influencer.Id) ?? influencer;
-
                 return Result<InfluencerDetailsDto>.Success(MapToDetailsDto(updatedEntity), "Influencer updated successfully.");
+            }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                return Result<InfluencerDetailsDto>.Failure("The influencer was modified by another user. Please refresh and try again.");
             }
             catch (Exception ex)
             {
@@ -256,11 +321,11 @@ namespace ZansiHustle.Application.Influencers
             }
         }
 
-        private static InfluencerListItemDto MapToListItemDto(Influencer influencer)
+        private static InfluencerListItemDto MapToListItemDto(Influencer influencer, Dictionary<Guid, User> userDict)
         {
             var accounts = influencer.PlatformAccounts.Select(MapPlatformAccountDto).ToList();
 
-            return new InfluencerListItemDto
+            var dto = new InfluencerListItemDto
             {
                 Id = influencer.Id,
                 Code = influencer.Code,
@@ -274,8 +339,15 @@ namespace ZansiHustle.Application.Influencers
                 Status = influencer.Status,
                 TotalFollowers = influencer.PlatformAccounts.Sum(x => x.FollowersCount),
                 PlatformAccounts = accounts,
+                AddedByUserId = influencer.AddedByUserId,
                 CreatedAtUtc = influencer.CreatedAtUtc
             };
+
+            if (influencer.AddedByUserId.HasValue && userDict.TryGetValue(influencer.AddedByUserId.Value, out var user))
+            {
+                dto.AddedByUserFullname = $"{user.FirstName} {user.LastName}".Trim();
+            }
+            return dto;
         }
 
         private static InfluencerDetailsDto MapToDetailsDto(Influencer influencer)

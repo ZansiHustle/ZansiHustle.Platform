@@ -13,6 +13,8 @@ public interface IUserService
     /// </summary>
     Task<Result<User>> GetByIdAsync(Guid userId);
 
+    public Task<Result<List<User>>> GetByIDsAsync(List<Guid> userIds);
+
     /// <summary>
     /// Gets all users.
     /// </summary>

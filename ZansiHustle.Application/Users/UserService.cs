@@ -39,6 +39,23 @@ public class UserService : IUserService
         }
     }
 
+    public async Task<Result<List<User>>> GetByIDsAsync(List<Guid> userIds)
+    {
+        try
+        {
+            var user = await _userRepository.GetByIDsAsync(userIds);
+            if (user == null)
+                return Result<List<User>>.Failure(ErrorCodes.NotFound, "User not found.");
+
+            return Result<List<User>>.Success(user);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get user {UserId}.", userIds);
+            return Result<List<User>>.Failure(ErrorCodes.Exception, "Failed to load user.");
+        }
+    }
+
     /// <inheritdoc />
     public async Task<Result<List<User>>> GetAllAsync()
     {

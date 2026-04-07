@@ -100,5 +100,49 @@ namespace ZansiHustle.Infrastructure.Persistence.Influencers
         {
             return await _context.SaveChangesAsync() > 0;
         }
+
+        public async Task<bool> SaveChangesTrackingAsync()
+        {
+            // Handle concurrency by detaching any tracked entities that might cause issues
+            var entries = _context.ChangeTracker.Entries()
+                .Where(e => e.State == EntityState.Modified || e.State == EntityState.Deleted)
+                .ToList();
+
+            foreach (var entry in entries)
+            {
+                if (entry.Entity is Influencer influencer)
+                {
+                    // Reload the entity to get fresh data
+                    await entry.ReloadAsync();
+                }
+            }
+
+            return await _context.SaveChangesAsync() > 0;
+        }
+
+        public async Task<Influencer?> GetByIdNoTrackingAsync(Guid id)
+        {
+            return await _context.Influencers
+                .AsNoTracking()
+                .Include(x => x.PlatformAccounts)
+                .FirstOrDefaultAsync(x => x.Id == id);
+        }
+
+        public void DetachEntity(Influencer entity)
+        {
+            _context.Entry(entity).State = EntityState.Detached;
+        }
+
+        public async Task<Influencer?> GetByIdForUpdateAsync(Guid id)
+        {
+            return await _context.Influencers
+                .Include(x => x.PlatformAccounts)
+                .FirstOrDefaultAsync(x => x.Id == id);
+        }
+
+        public void RemovePlatformAccount(InfluencerPlatformAccount account)
+        {
+            _context.InfluencerPlatformAccounts.Remove(account);
+        }
     }
 }

@@ -60,5 +60,13 @@ namespace ZansiHustle.Application.Persistence.Influencers
         /// </summary>
         /// <returns>True if one or more records were affected; otherwise false.</returns>
         Task<bool> SaveChangesAsync();
+
+        Task<bool> SaveChangesTrackingAsync();
+
+        Task<Influencer?> GetByIdNoTrackingAsync(Guid id);
+        void DetachEntity(Influencer entity);
+
+        Task<Influencer?> GetByIdForUpdateAsync(Guid id);
+        void RemovePlatformAccount(InfluencerPlatformAccount account);
     }
 }

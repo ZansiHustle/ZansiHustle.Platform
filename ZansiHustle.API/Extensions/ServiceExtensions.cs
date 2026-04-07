@@ -122,7 +122,7 @@ public static class ServiceExtensions
     /// </summary>
     public static IServiceCollection AddDatabaseServices(this IServiceCollection services, IConfiguration configuration)
     {
-        const bool IS_LIVE = false;
+        const bool IS_LIVE = true;
         const string UAT_DB = "UATConnection";
         const string LIVE_DB = "LiveConnection";
 
@@ -300,7 +300,9 @@ public static class ServiceExtensions
                         .WithOrigins(
                             "http://localhost:5173",
                             "https://localhost:5173",
-                            "https://portal.zansihustle.com"
+                            "https://portal.zansihustle.com",
+                            "https://www.zansihustle.com",
+                            "https://www.zansihustle.co.za"
                         )
                         .AllowAnyHeader()
                         .AllowAnyMethod()

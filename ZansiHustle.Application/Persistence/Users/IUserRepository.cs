@@ -12,6 +12,7 @@ public interface IUserRepository
     /// </summary>
     Task<User?> GetByIdAsync(Guid userId);
 
+    public Task<List<User>> GetByIDsAsync(List<Guid> userIds);
     /// <summary>
     /// Gets a user by email address.
     /// </summary>

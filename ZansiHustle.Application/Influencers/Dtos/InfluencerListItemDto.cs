@@ -21,6 +21,8 @@ namespace ZansiHustle.Application.Influencers.Dtos
         public InfluencerStatus Status { get; set; }
         public long TotalFollowers { get; set; }
         public List<InfluencerPlatformAccountDto> PlatformAccounts { get; set; } = new();
+        public Guid? AddedByUserId { get; set; }
+        public string? AddedByUserFullname { get; set; }
         public DateTime CreatedAtUtc { get; set; }
     }
 }

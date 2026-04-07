@@ -195,8 +195,8 @@ namespace ZansiHustle.Application.SellerLeads
                     City = request.City?.Trim(),
                     SocialHandleOrLink = request.SocialHandleOrLink?.Trim(),
                     SourceType = request.SourceType ?? "website_become_hustler",
-                    AssignedUserId = null, // No user assigned for public submissions
-                    Notes = request.Notes?.Trim(),
+                    AssignedUserId = assignedUserId, // No user assigned for public submissions
+                    Notes = referrerNotes,
                     SubmittedAtUtc = DateTime.UtcNow,
                     CreatedAtUtc = DateTime.UtcNow,
                     VerificationStatus = VerificationStatus.Pending,
@@ -478,6 +478,10 @@ namespace ZansiHustle.Application.SellerLeads
 
         private static SellerLeadListItemDto MapToListItemDto(SellerLead sellerLead)
         {
+            var assignedName = "n/a";
+            if (sellerLead.SourceType == "website_become_hustler") assignedName = "Website-Lead";
+            if (sellerLead.AssignedUser != null) assignedName = $"{sellerLead.AssignedUser?.FirstName} {sellerLead.AssignedUser?.FirstName}";
+            
             return new SellerLeadListItemDto
             {
                 Id = sellerLead.Id,
@@ -490,7 +494,7 @@ namespace ZansiHustle.Application.SellerLeads
                 City = sellerLead.City,
                 SourceType = sellerLead.SourceType,
                 AssignedUserId = sellerLead.AssignedUserId,
-                AssignedUserName = $"{sellerLead.AssignedUser?.FirstName} {sellerLead.AssignedUser?.FirstName}",
+                AssignedUserName = assignedName,
                 VerificationStatus = sellerLead.VerificationStatus,
                 ApprovalStatus = sellerLead.ApprovalStatus,
                 SubmittedAtUtc = sellerLead.SubmittedAtUtc

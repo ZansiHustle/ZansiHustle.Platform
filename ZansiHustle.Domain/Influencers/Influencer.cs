@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using ZansiHustle.Shared.Enums.Influencers;
 
 namespace ZansiHustle.Domain.Influencers
@@ -20,6 +21,9 @@ namespace ZansiHustle.Domain.Influencers
         public Guid? AddedByUserId { get; set; }
         public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
         public DateTime? UpdatedAtUtc { get; set; }
+
+        [Timestamp]
+        public byte[] RowVersion { get; set; }
 
         public virtual ICollection<InfluencerPlatformAccount> PlatformAccounts { get; set; } = new List<InfluencerPlatformAccount>();
     }
