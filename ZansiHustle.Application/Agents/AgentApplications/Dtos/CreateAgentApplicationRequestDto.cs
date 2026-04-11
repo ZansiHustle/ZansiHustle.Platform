@@ -1,4 +1,4 @@
-﻿namespace ZansiHustle.Application.AgentApplications.Dtos
+﻿namespace ZansiHustle.Application.Agents.AgentApplications.Dtos
 {
     /// <summary>
     /// Request model used to create a new user application.

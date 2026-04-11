@@ -1,6 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using ZansiHustle.Domain.AgentApplications;
+using ZansiHustle.Domain.Agents.AgentApplications;
 
 namespace ZansiHustle.Infrastructure.Data.Configurations.AgentApplications
 {

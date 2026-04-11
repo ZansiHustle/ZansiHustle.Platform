@@ -1,7 +1,7 @@
 ﻿using System;
 using ZansiHustle.Shared.Enums.AgentApplications;
 
-namespace ZansiHustle.Domain.AgentApplications
+namespace ZansiHustle.Domain.Agents.AgentApplications
 {
     public class AgentApplication
     {

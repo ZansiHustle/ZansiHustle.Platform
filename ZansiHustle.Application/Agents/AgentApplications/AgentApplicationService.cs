@@ -2,13 +2,13 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using ZansiHustle.Application.AgentApplications.Dtos;
+using ZansiHustle.Application.Agents.AgentApplications.Dtos;
 using ZansiHustle.Application.Persistence.AgentApplications;
-using ZansiHustle.Domain.AgentApplications;
+using ZansiHustle.Domain.Agents.AgentApplications;
 using ZansiHustle.Shared.Enums.AgentApplications;
 using ZansiHustle.Shared.Results;
 
-namespace ZansiHustle.Application.AgentApplications
+namespace ZansiHustle.Application.Agents.AgentApplications
 {
     /// <summary>
     /// Provides business logic for user application operations.

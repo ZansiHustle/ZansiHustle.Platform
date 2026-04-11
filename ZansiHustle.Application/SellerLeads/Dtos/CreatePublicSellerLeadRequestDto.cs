@@ -68,6 +68,8 @@ namespace ZansiHustle.Application.SellerLeads.Dtos
         /// </summary>
         public string? ReferrerName { get; set; }
 
+        public string? ReferrerId { get; set; }
+
         /// <summary>
         /// Additional notes about offering.
         /// </summary>

@@ -4,7 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using ZansiHustle.Application.Persistence.AgentApplications;
-using ZansiHustle.Domain.AgentApplications;
+using ZansiHustle.Domain.Agents.AgentApplications;
 using ZansiHustle.Infrastructure.Data;
 
 namespace ZansiHustle.Infrastructure.Persistence.AgentApplications

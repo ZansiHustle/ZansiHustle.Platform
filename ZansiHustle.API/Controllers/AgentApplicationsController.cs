@@ -1,8 +1,8 @@
 ﻿using System;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
-using ZansiHustle.Application.AgentApplications;
-using ZansiHustle.Application.AgentApplications.Dtos;
+using ZansiHustle.Application.Agents.AgentApplications;
+using ZansiHustle.Application.Agents.AgentApplications.Dtos;
 
 namespace ZansiHustle.API.Controllers
 {

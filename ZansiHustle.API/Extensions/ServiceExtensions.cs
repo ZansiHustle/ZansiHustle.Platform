@@ -7,7 +7,8 @@ using System;
 using System.Text;
 using ZansiHustle.API.Middleware;
 using ZansiHustle.API.Services;
-using ZansiHustle.Application.AgentApplications;
+using ZansiHustle.Application.Agents.AgentApplications;
+using ZansiHustle.Application.Agents.AgentMappings;
 using ZansiHustle.Application.Auth;
 using ZansiHustle.Application.BudgetTransactions;
 using ZansiHustle.Application.Campaigns;
@@ -277,6 +278,7 @@ public static class ServiceExtensions
         services.AddScoped<IMarketingDashboardService, MarketingDashboardService>();
         services.AddScoped<IMerchantService, MerchantService>();
         services.AddScoped<ISellerCategoryService, SellerCategoryService>();
+        services.AddScoped<IAgentMappingService, AgentMappingService>();
 
         return services;
     }

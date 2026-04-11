@@ -1,10 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using ZansiHustle.Application.AgentApplications.Dtos;
+using ZansiHustle.Application.Agents.AgentApplications.Dtos;
 using ZansiHustle.Shared.Results;
 
-namespace ZansiHustle.Application.AgentApplications
+namespace ZansiHustle.Application.Agents.AgentApplications
 {
     /// <summary>
     /// Service contract for user application operations.

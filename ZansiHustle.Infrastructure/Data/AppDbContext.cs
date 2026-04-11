@@ -2,7 +2,7 @@
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using System.Reflection;
-using ZansiHustle.Domain.AgentApplications;
+using ZansiHustle.Domain.Agents.AgentApplications;
 using ZansiHustle.Domain.BudgetTransactions;
 using ZansiHustle.Domain.Campaigns;
 using ZansiHustle.Domain.ContentTasks;

@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using ZansiHustle.Application.Agents.AgentMappings;
 using ZansiHustle.Application.Common.Interfaces.Shared;
 using ZansiHustle.Application.Communication.Email.Interfaces;
 using ZansiHustle.Application.Persistence.SellerLeads;
@@ -24,17 +25,19 @@ namespace ZansiHustle.Application.SellerLeads
         private readonly ICurrentUserService _currentUserService;
         private readonly IUserService _userService;
         private readonly IMerchantEmailService _merchantEmailService;
+        private readonly IAgentMappingService _agentMappingService;
         /// <summary>
         /// Creates a new instance of the <see cref="SellerLeadService"/> class.
         /// </summary>
         public SellerLeadService(ISellerLeadRepository sellerLeadRepository, IUserRepository agentRepository, ICurrentUserService currentUserService, IUserService userService,
-                                 IMerchantEmailService merchantEmailService)
+                                 IMerchantEmailService merchantEmailService, IAgentMappingService agentMappingService)
         {
             _sellerLeadRepository = sellerLeadRepository;
             _userRepository = agentRepository;
             _currentUserService = currentUserService;
             _userService = userService;
             _merchantEmailService = merchantEmailService;
+            _agentMappingService = agentMappingService;
         }
 
         /// <inheritdoc />
@@ -165,18 +168,48 @@ namespace ZansiHustle.Application.SellerLeads
                 Guid? assignedUserId = null;
                 string referrerNotes = string.Empty;
 
-                if (!string.IsNullOrWhiteSpace(request.ReferrerName))
+                // Check if referrerId is provided (affiliate code)
+                if (!string.IsNullOrWhiteSpace(request.ReferrerId))
                 {
-                    var searchResult = await _userService.SearchByNameAsync(request.ReferrerName);
-
-                    if (searchResult.IsSuccess && searchResult.Data != null && searchResult.Data != null)
+                    // Try to parse as GUID directly first
+                    if (Guid.TryParse(request.ReferrerId, out var directUserId))
                     {
-                        assignedUserId = searchResult.Data;
-                        referrerNotes = $"Referred by: {request.ReferrerName}";
+                        assignedUserId = directUserId;
+                        referrerNotes = $"Referred by User ID: {request.ReferrerId}";
+                       // _logger.LogInformation("Referrer ID {ReferrerId} used directly as User ID", request.ReferrerId);
                     }
                     else
                     {
-                        referrerNotes = $"Referred by: {request.ReferrerName}";
+                        // Use the agent mapping
+                        var agentMapping = await _agentMappingService.GetByAffiliateCodeAsync(request.ReferrerId);
+
+                        if (agentMapping != null)
+                        {
+                            assignedUserId = agentMapping.UserId;
+                            referrerNotes = $"Referred by Agent Code: {request.ReferrerId} (Agent: {agentMapping.UserFullName})";
+                            //_logger.LogInformation("Referrer code {ReferrerId} mapped to user {UserId}",
+                                //request.ReferrerId, agentMapping.UserId);
+                        }
+                        else
+                        {
+                            referrerNotes = $"Referred by Agent Code: {request.ReferrerId} (No mapping found)";
+                            //_logger.LogWarning("No mapping found for referrer code: {ReferrerId}", request.ReferrerId);
+                        }
+                    }
+                }
+                // Fall back to name search if no referrerId provided
+                else if (!string.IsNullOrWhiteSpace(request.ReferrerName))
+                {
+                    var searchResult = await _userService.SearchByNameAsync(request.ReferrerName);
+
+                    if (searchResult.IsSuccess && searchResult.Data != null)
+                    {
+                        assignedUserId = searchResult.Data;
+                        referrerNotes = $"Referred by: {request.ReferrerName} (Matched to user: {request.ReferrerName})";
+                    }
+                    else
+                    {
+                        referrerNotes = $"Referred by: {request.ReferrerName} (No matching user found)";
                     }
                 }
 
@@ -195,19 +228,14 @@ namespace ZansiHustle.Application.SellerLeads
                     City = request.City?.Trim(),
                     SocialHandleOrLink = request.SocialHandleOrLink?.Trim(),
                     SourceType = request.SourceType ?? "website_become_hustler",
-                    AssignedUserId = assignedUserId, // No user assigned for public submissions
-                    Notes = referrerNotes,
+                    AssignedUserId = assignedUserId,
+                    Notes = BuildNotes(request.Notes, referrerNotes),
                     SubmittedAtUtc = DateTime.UtcNow,
                     CreatedAtUtc = DateTime.UtcNow,
+                    UpdatedAtUtc = null,
                     VerificationStatus = VerificationStatus.Pending,
                     ApprovalStatus = ApprovalStatus.Pending
                 };
-
-                // Add referrer info to notes if provided
-                if (!string.IsNullOrWhiteSpace(request.ReferrerName))
-                {
-                    entity.Notes = string.IsNullOrWhiteSpace(entity.Notes) ? $"Referred by: {request.ReferrerName}" : $"{entity.Notes} | Referred by: {request.ReferrerName}";
-                }
 
                 await _sellerLeadRepository.AddAsync(entity);
                 var saved = await _sellerLeadRepository.SaveChangesAsync();
@@ -219,31 +247,51 @@ namespace ZansiHustle.Application.SellerLeads
 
                 var createdEntity = await _sellerLeadRepository.GetByIdAsync(entity.Id) ?? entity;
 
+                // Send emails asynchronously (don't await)
                 _ = Task.Run(async () =>
                 {
-                    // Send VIP welcome email to the lead (if email provided)
-                    if (!string.IsNullOrWhiteSpace(entity.Email))
+                    try
                     {
-                        var firstName = entity.ContactName.Split(' ')[0];
-                        var emailResult = await _merchantEmailService.SendLeadWelcomeEmailAsync(entity.Email, firstName, entity.BusinessName);
-                    }
+                        if (!string.IsNullOrWhiteSpace(entity.Email))
+                        {
+                            var firstName = entity.ContactName.Split(' ')[0];
+                            await _merchantEmailService.SendLeadWelcomeEmailAsync(entity.Email, firstName, entity.BusinessName);
+                        }
 
-                    // Send internal notification to team
-                    var notificationResult = await _merchantEmailService.SendNewLeadNotificationAsync(
-                        entity.ContactName,
-                        entity.PhoneNumber ?? "Not provided",
-                        entity.Email,
-                        entity.Category,
-                        entity.Province,
-                        request.ReferrerName);
+                        await _merchantEmailService.SendNewLeadNotificationAsync(
+                            entity.ContactName,
+                            entity.PhoneNumber ?? "Not provided",
+                            entity.Email,
+                            entity.Category,
+                            entity.Province,
+                            request.ReferrerName ?? request.ReferrerId);
+                    }
+                    catch (Exception ex)
+                    {
+                        //_logger.LogError(ex, "Failed to send emails for lead {LeadId}", entity.Id);
+                    }
                 });
 
                 return Result<SellerLeadDetailsDto>.Success(MapToDetailsDto(createdEntity), "Seller lead created successfully.");
             }
             catch (Exception ex)
             {
-                return Result<SellerLeadDetailsDto>.Failure($"An error occurred while creating the seller lead. {ex.Message}");
+                var innerMessage = ex.InnerException?.Message ?? ex.Message;
+                return Result<SellerLeadDetailsDto>.Failure($"An error occurred while creating the seller lead. {innerMessage}");
             }
+        }
+
+        private string BuildNotes(string? userNotes, string? referrerNotes)
+        {
+            var notes = new List<string>();
+
+            if (!string.IsNullOrWhiteSpace(userNotes))
+                notes.Add(userNotes.Trim());
+
+            if (!string.IsNullOrWhiteSpace(referrerNotes))
+                notes.Add(referrerNotes);
+
+            return notes.Any() ? string.Join(" | ", notes) : string.Empty;
         }
 
         /// <inheritdoc />
@@ -480,7 +528,7 @@ namespace ZansiHustle.Application.SellerLeads
         {
             var assignedName = "n/a";
             if (sellerLead.SourceType == "website_become_hustler") assignedName = "Website-Lead";
-            if (sellerLead.AssignedUser != null) assignedName = $"{sellerLead.AssignedUser?.FirstName} {sellerLead.AssignedUser?.FirstName}";
+            if (sellerLead.AssignedUser != null) assignedName = $"{sellerLead.AssignedUser?.FirstName} {sellerLead.AssignedUser?.LastName}";
             
             return new SellerLeadListItemDto
             {
