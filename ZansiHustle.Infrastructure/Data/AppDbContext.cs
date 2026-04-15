@@ -8,7 +8,10 @@ using ZansiHustle.Domain.Campaigns;
 using ZansiHustle.Domain.ContentTasks;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Domain.Influencers;
+using ZansiHustle.Domain.Listings;
 using ZansiHustle.Domain.Merchants;
+using ZansiHustle.Domain.Orders;
+using ZansiHustle.Domain.Payments;
 using ZansiHustle.Domain.Podcasts;
 using ZansiHustle.Domain.SellerCategories;
 using ZansiHustle.Domain.SellerLeads;
@@ -101,4 +104,11 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     public DbSet<SellerCategory> SellerCategories => Set<SellerCategory>();
     public DbSet<SellerSubcategory> SellerSubcategories => Set<SellerSubcategory>();
 
+    public DbSet<Listing> Listings => Set<Listing>();
+
+    public DbSet<Order> Orders => Set<Order>();
+    public DbSet<OrderItem> OrderItems => Set<OrderItem>();
+
+    public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<PaymentEvent> PaymentEvents => Set<PaymentEvent>();
 }

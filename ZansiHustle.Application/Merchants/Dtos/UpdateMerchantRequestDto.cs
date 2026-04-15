@@ -1,9 +1,11 @@
-﻿using ZansiHustle.Shared.Enums.Merchants;
+using System;
+using ZansiHustle.Shared.Enums.Merchants;
 
 namespace ZansiHustle.Application.Merchants.Dtos
 {
     /// <summary>
-    /// Request model used to update a merchant.
+    /// Admin-facing request model used to update a merchant.
+    /// Mobile sellers use <see cref="UpdateMyMerchantRequestDto"/> instead.
     /// </summary>
     public class UpdateMerchantRequestDto
     {
@@ -11,6 +13,8 @@ namespace ZansiHustle.Application.Merchants.Dtos
         public string? Description { get; set; }
         public MerchantType Type { get; set; }
         public MerchantStatus Status { get; set; }
+        public Guid? SellerCategoryId { get; set; }
+        public Guid? SellerSubcategoryId { get; set; }
         public string? ContactEmail { get; set; }
         public string? ContactPhoneNumber { get; set; }
         public string? Province { get; set; }

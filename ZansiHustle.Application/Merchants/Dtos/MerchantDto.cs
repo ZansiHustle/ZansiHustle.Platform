@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using ZansiHustle.Shared.Enums.Merchants;
 
 namespace ZansiHustle.Application.Merchants.Dtos
@@ -10,6 +10,7 @@ namespace ZansiHustle.Application.Merchants.Dtos
     {
         public Guid Id { get; set; }
         public string Code { get; set; } = string.Empty;
+        public string Slug { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public string? Description { get; set; }
         public MerchantType Type { get; set; }
@@ -17,6 +18,13 @@ namespace ZansiHustle.Application.Merchants.Dtos
         public MerchantKycStatus KycStatus { get; set; }
         public bool IsPayoutEligible { get; set; }
         public Guid? OwnerUserId { get; set; }
+
+        public Guid? SellerCategoryId { get; set; }
+        public string? SellerCategoryName { get; set; }
+
+        public Guid? SellerSubcategoryId { get; set; }
+        public string? SellerSubcategoryName { get; set; }
+
         public string? ContactEmail { get; set; }
         public string? ContactPhoneNumber { get; set; }
         public string? Province { get; set; }
@@ -27,6 +35,7 @@ namespace ZansiHustle.Application.Merchants.Dtos
         public string? BannerUrl { get; set; }
         public int FollowersCount { get; set; }
         public decimal? Rating { get; set; }
+        public int ReviewCount { get; set; }
         public int TotalOrders { get; set; }
         public decimal TotalRevenue { get; set; }
         public DateTime CreatedAtUtc { get; set; }

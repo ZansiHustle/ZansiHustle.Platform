@@ -1,10 +1,11 @@
-﻿using System;
+using System;
 using ZansiHustle.Shared.Enums.Merchants;
 
 namespace ZansiHustle.Application.Merchants.Dtos
 {
     /// <summary>
-    /// Request model used to create a merchant.
+    /// Admin-facing request model used to create a merchant on behalf of a user.
+    /// Mobile sellers use <see cref="CreateMyMerchantRequestDto"/> instead.
     /// </summary>
     public class CreateMerchantRequestDto
     {
@@ -12,6 +13,8 @@ namespace ZansiHustle.Application.Merchants.Dtos
         public string? Description { get; set; }
         public MerchantType Type { get; set; }
         public Guid? OwnerUserId { get; set; }
+        public Guid? SellerCategoryId { get; set; }
+        public Guid? SellerSubcategoryId { get; set; }
         public string? ContactEmail { get; set; }
         public string? ContactPhoneNumber { get; set; }
         public string? Province { get; set; }

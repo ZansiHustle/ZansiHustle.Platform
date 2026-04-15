@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -16,9 +16,6 @@ namespace ZansiHustle.Infrastructure.Persistence.Merchants
     {
         private readonly AppDbContext _context;
 
-        /// <summary>
-        /// Creates a new instance of the <see cref="MerchantRepository"/> class.
-        /// </summary>
         public MerchantRepository(AppDbContext context)
         {
             _context = context;
@@ -29,6 +26,20 @@ namespace ZansiHustle.Infrastructure.Persistence.Merchants
         {
             return await _context.Merchants
                 .AsNoTracking()
+                .Include(x => x.SellerCategory)
+                .Include(x => x.SellerSubcategory)
+                .OrderByDescending(x => x.CreatedAtUtc)
+                .ToListAsync();
+        }
+
+        /// <inheritdoc />
+        public async Task<List<Merchant>> GetByOwnerAsync(Guid ownerUserId)
+        {
+            return await _context.Merchants
+                .AsNoTracking()
+                .Include(x => x.SellerCategory)
+                .Include(x => x.SellerSubcategory)
+                .Where(x => x.OwnerUserId == ownerUserId)
                 .OrderByDescending(x => x.CreatedAtUtc)
                 .ToListAsync();
         }
@@ -36,33 +47,60 @@ namespace ZansiHustle.Infrastructure.Persistence.Merchants
         /// <inheritdoc />
         public async Task<Merchant?> GetByIdAsync(Guid id)
         {
-            return await _context.Merchants.FirstOrDefaultAsync(x => x.Id == id);
+            return await _context.Merchants
+                .Include(x => x.SellerCategory)
+                .Include(x => x.SellerSubcategory)
+                .FirstOrDefaultAsync(x => x.Id == id);
         }
 
         /// <inheritdoc />
         public async Task<Merchant?> GetByCodeAsync(string code)
         {
             if (string.IsNullOrWhiteSpace(code))
-            {
                 return null;
-            }
 
             var normalizedCode = code.Trim();
 
-            return await _context.Merchants.FirstOrDefaultAsync(x => x.Code == normalizedCode);
+            return await _context.Merchants
+                .Include(x => x.SellerCategory)
+                .Include(x => x.SellerSubcategory)
+                .FirstOrDefaultAsync(x => x.Code == normalizedCode);
+        }
+
+        /// <inheritdoc />
+        public async Task<Merchant?> GetBySlugAsync(string slug)
+        {
+            if (string.IsNullOrWhiteSpace(slug))
+                return null;
+
+            var normalized = slug.Trim().ToLowerInvariant();
+
+            return await _context.Merchants
+                .Include(x => x.SellerCategory)
+                .Include(x => x.SellerSubcategory)
+                .FirstOrDefaultAsync(x => x.Slug == normalized);
         }
 
         /// <inheritdoc />
         public async Task<bool> ExistsByCodeAsync(string code)
         {
             if (string.IsNullOrWhiteSpace(code))
-            {
                 return false;
-            }
 
             var normalizedCode = code.Trim();
 
             return await _context.Merchants.AnyAsync(x => x.Code == normalizedCode);
+        }
+
+        /// <inheritdoc />
+        public async Task<bool> ExistsBySlugAsync(string slug)
+        {
+            if (string.IsNullOrWhiteSpace(slug))
+                return false;
+
+            var normalized = slug.Trim().ToLowerInvariant();
+
+            return await _context.Merchants.AnyAsync(x => x.Slug == normalized);
         }
 
         /// <inheritdoc />

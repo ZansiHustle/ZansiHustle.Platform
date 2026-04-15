@@ -37,11 +37,18 @@ builder.Services.AddApiServices();
 // 7. COMMUNICATION SERVICES
 // ============================================================================
 builder.Services.AddEmailServices(builder.Configuration);
+builder.Services.AddTwilioCommunications(builder.Configuration);
+builder.Services.AddOtpServices(builder.Configuration);
 
 // ============================================================================
 // 8. MARKETING & OPERATIONS SERVICES
 // ============================================================================
 builder.Services.AddMarketingAndOperationsServices();
+
+// ============================================================================
+// 8a. PAYMENTS (Paystack)
+// ============================================================================
+builder.Services.AddPaystackPayments(builder.Configuration);
 
 // ============================================================================
 // 9. FRONT-END CORS

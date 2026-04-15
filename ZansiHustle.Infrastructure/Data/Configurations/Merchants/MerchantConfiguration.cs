@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using ZansiHustle.Domain.Merchants;
 
@@ -9,10 +9,6 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Merchants
     /// </summary>
     public class MerchantConfiguration : IEntityTypeConfiguration<Merchant>
     {
-        /// <summary>
-        /// Configures the entity.
-        /// </summary>
-        /// <param name="builder">The entity type builder.</param>
         public void Configure(EntityTypeBuilder<Merchant> builder)
         {
             builder.ToTable("Merchants");
@@ -20,6 +16,7 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Merchants
             builder.HasKey(x => x.Id);
 
             builder.HasIndex(x => x.Code).IsUnique();
+            builder.HasIndex(x => x.Slug).IsUnique();
             builder.HasIndex(x => x.Name);
             builder.HasIndex(x => x.Type);
             builder.HasIndex(x => x.Status);
@@ -30,10 +27,16 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Merchants
             builder.HasIndex(x => x.Province);
             builder.HasIndex(x => x.City);
             builder.HasIndex(x => x.IsPayoutEligible);
+            builder.HasIndex(x => x.SellerCategoryId);
+            builder.HasIndex(x => x.SellerSubcategoryId);
 
             builder.Property(x => x.Code)
                 .IsRequired()
                 .HasMaxLength(50);
+
+            builder.Property(x => x.Slug)
+                .IsRequired()
+                .HasMaxLength(200);
 
             builder.Property(x => x.Name)
                 .IsRequired()
@@ -86,6 +89,21 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Merchants
 
             builder.Property(x => x.CreatedAtUtc)
                 .IsRequired();
+
+            builder.HasOne(x => x.SellerCategory)
+                .WithMany()
+                .HasForeignKey(x => x.SellerCategoryId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            // NoAction avoids SQL Server's "multiple cascade paths" error: deleting
+            // a SellerCategory already cascades into its SellerSubcategories, which
+            // would otherwise re-enter Merchants via this FK. The application layer
+            // is responsible for null-ing out or reassigning a merchant's subcategory
+            // before removing either parent row.
+            builder.HasOne(x => x.SellerSubcategory)
+                .WithMany()
+                .HasForeignKey(x => x.SellerSubcategoryId)
+                .OnDelete(DeleteBehavior.NoAction);
         }
     }
 }

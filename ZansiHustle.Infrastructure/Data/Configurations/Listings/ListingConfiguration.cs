@@ -1,0 +1,155 @@
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using ZansiHustle.Domain.Listings;
+
+namespace ZansiHustle.Infrastructure.Data.Configurations.Listings
+{
+    /// <summary>
+    /// EF Core mapping for <see cref="Listing"/>.
+    /// String arrays (Images, DeliveryOptions, Availability, BookingMethods) are
+    /// persisted as JSON in nvarchar(max) columns.
+    /// </summary>
+    public class ListingConfiguration : IEntityTypeConfiguration<Listing>
+    {
+        private static readonly ValueConverter<List<string>, string> NonNullListConverter = new(
+            v => JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+            v => string.IsNullOrEmpty(v)
+                ? new List<string>()
+                : JsonSerializer.Deserialize<List<string>>(v, (JsonSerializerOptions?)null) ?? new List<string>());
+
+        private static readonly ValueConverter<List<string>?, string?> NullableListConverter = new(
+            v => v == null ? null : JsonSerializer.Serialize(v, (JsonSerializerOptions?)null),
+            v => string.IsNullOrEmpty(v)
+                ? null
+                : JsonSerializer.Deserialize<List<string>>(v, (JsonSerializerOptions?)null));
+
+        private static readonly ValueComparer<List<string>> NonNullListComparer = new(
+            (a, b) => (a == null && b == null) || (a != null && b != null && a.SequenceEqual(b)),
+            v => v == null ? 0 : v.Aggregate(0, (h, s) => System.HashCode.Combine(h, s)),
+            v => v == null ? new List<string>() : v.ToList());
+
+        private static readonly ValueComparer<List<string>?> NullableListComparer = new(
+            (a, b) => (a == null && b == null) || (a != null && b != null && a.SequenceEqual(b)),
+            v => v == null ? 0 : v.Aggregate(0, (h, s) => System.HashCode.Combine(h, s)),
+            v => v == null ? null : v.ToList());
+
+        public void Configure(EntityTypeBuilder<Listing> builder)
+        {
+            builder.ToTable("Listings");
+
+            builder.HasKey(x => x.Id);
+
+            builder.HasIndex(x => x.Code).IsUnique();
+            builder.HasIndex(x => x.Slug).IsUnique();
+            builder.HasIndex(x => x.Type);
+            builder.HasIndex(x => x.Status);
+            builder.HasIndex(x => x.MerchantId);
+            builder.HasIndex(x => x.SellerCategoryId);
+            builder.HasIndex(x => x.SellerSubcategoryId);
+            builder.HasIndex(x => x.Price);
+            builder.HasIndex(x => x.City);
+            builder.HasIndex(x => x.Province);
+            builder.HasIndex(x => x.CreatedAtUtc);
+            builder.HasIndex(x => x.IsFeatured);
+            builder.HasIndex(x => x.IsBoosted);
+
+            builder.Property(x => x.Code)
+                .IsRequired()
+                .HasMaxLength(60);
+
+            builder.Property(x => x.Slug)
+                .IsRequired()
+                .HasMaxLength(220);
+
+            builder.Property(x => x.Title)
+                .IsRequired()
+                .HasMaxLength(250);
+
+            builder.Property(x => x.Description)
+                .HasMaxLength(5000);
+
+            builder.Property(x => x.Price)
+                .HasPrecision(18, 2)
+                .IsRequired();
+
+            builder.Property(x => x.Currency)
+                .IsRequired()
+                .HasMaxLength(8);
+
+            builder.Property(x => x.Type)
+                .HasConversion<int>()
+                .IsRequired();
+
+            builder.Property(x => x.Status)
+                .HasConversion<int>()
+                .IsRequired();
+
+            builder.Property(x => x.Condition)
+                .HasConversion<int?>();
+
+            builder.Property(x => x.PricingModel)
+                .HasConversion<int?>();
+
+            builder.Property(x => x.Province)
+                .HasMaxLength(150);
+
+            builder.Property(x => x.City)
+                .HasMaxLength(150);
+
+            builder.Property(x => x.ServiceArea)
+                .HasMaxLength(250);
+
+            builder.Property(x => x.Turnaround)
+                .HasMaxLength(250);
+
+            builder.Property(x => x.Rating)
+                .HasPrecision(5, 2);
+
+            var imagesProperty = builder.Property(x => x.Images)
+                .HasColumnType("nvarchar(max)")
+                .IsRequired()
+                .HasConversion(NonNullListConverter);
+            imagesProperty.Metadata.SetValueComparer(NonNullListComparer);
+
+            var deliveryProperty = builder.Property(x => x.DeliveryOptions)
+                .HasColumnType("nvarchar(max)")
+                .HasConversion(NullableListConverter);
+            deliveryProperty.Metadata.SetValueComparer(NullableListComparer);
+
+            var availabilityProperty = builder.Property(x => x.Availability)
+                .HasColumnType("nvarchar(max)")
+                .HasConversion(NullableListConverter);
+            availabilityProperty.Metadata.SetValueComparer(NullableListComparer);
+
+            var bookingMethodsProperty = builder.Property(x => x.BookingMethods)
+                .HasColumnType("nvarchar(max)")
+                .HasConversion(NullableListConverter);
+            bookingMethodsProperty.Metadata.SetValueComparer(NullableListComparer);
+
+            builder.Property(x => x.CreatedAtUtc)
+                .IsRequired();
+
+            builder.HasOne(x => x.Merchant)
+                .WithMany()
+                .HasForeignKey(x => x.MerchantId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            builder.HasOne(x => x.SellerCategory)
+                .WithMany()
+                .HasForeignKey(x => x.SellerCategoryId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            // NoAction mirrors the Merchants config — avoids SQL Server's
+            // multiple-cascade-paths error on SellerCategory → SellerSubcategory.
+            builder.HasOne(x => x.SellerSubcategory)
+                .WithMany()
+                .HasForeignKey(x => x.SellerSubcategoryId)
+                .OnDelete(DeleteBehavior.NoAction);
+        }
+    }
+}

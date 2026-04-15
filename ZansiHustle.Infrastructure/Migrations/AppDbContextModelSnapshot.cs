@@ -153,7 +153,7 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.ToTable("UserTokens", (string)null);
                 });
 
-            modelBuilder.Entity("ZansiHustle.Domain.AgentApplications.AgentApplication", b =>
+            modelBuilder.Entity("ZansiHustle.Domain.Agents.AgentApplications.AgentApplication", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -753,6 +753,145 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.ToTable("InfluencerPlatformAccounts", (string)null);
                 });
 
+            modelBuilder.Entity("ZansiHustle.Domain.Listings.Listing", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Availability")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("BookingMethods")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("City")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("nvarchar(60)");
+
+                    b.Property<int?>("Condition")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("nvarchar(8)");
+
+                    b.Property<string>("DeliveryOptions")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(5000)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Images")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("IsBoosted")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsFeatured")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid>("MerchantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("Price")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<int?>("PricingModel")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Province")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
+
+                    b.Property<decimal?>("Rating")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<int>("ReviewCount")
+                        .HasColumnType("int");
+
+                    b.Property<Guid?>("SellerCategoryId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("SellerSubcategoryId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ServiceArea")
+                        .HasMaxLength(250)
+                        .HasColumnType("nvarchar(250)");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(220)
+                        .HasColumnType("nvarchar(220)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("Stock")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(250)
+                        .HasColumnType("nvarchar(250)");
+
+                    b.Property<string>("Turnaround")
+                        .HasMaxLength(250)
+                        .HasColumnType("nvarchar(250)");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("City");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.HasIndex("CreatedAtUtc");
+
+                    b.HasIndex("IsBoosted");
+
+                    b.HasIndex("IsFeatured");
+
+                    b.HasIndex("MerchantId");
+
+                    b.HasIndex("Price");
+
+                    b.HasIndex("Province");
+
+                    b.HasIndex("SellerCategoryId");
+
+                    b.HasIndex("SellerSubcategoryId");
+
+                    b.HasIndex("Slug")
+                        .IsUnique();
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("Type");
+
+                    b.ToTable("Listings", (string)null);
+                });
+
             modelBuilder.Entity("ZansiHustle.Domain.Merchants.Merchant", b =>
                 {
                     b.Property<Guid>("Id")
@@ -820,6 +959,20 @@ namespace ZansiHustle.Infrastructure.Migrations
                         .HasPrecision(5, 2)
                         .HasColumnType("decimal(5,2)");
 
+                    b.Property<int>("ReviewCount")
+                        .HasColumnType("int");
+
+                    b.Property<Guid?>("SellerCategoryId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("SellerSubcategoryId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
                     b.Property<int>("Status")
                         .HasColumnType("int");
 
@@ -861,11 +1014,320 @@ namespace ZansiHustle.Infrastructure.Migrations
 
                     b.HasIndex("Province");
 
+                    b.HasIndex("SellerCategoryId");
+
+                    b.HasIndex("SellerSubcategoryId");
+
+                    b.HasIndex("Slug")
+                        .IsUnique();
+
                     b.HasIndex("Status");
 
                     b.HasIndex("Type");
 
                     b.ToTable("Merchants", (string)null);
+                });
+
+            modelBuilder.Entity("ZansiHustle.Domain.Orders.Order", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("BuyerEmail")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("BuyerName")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("BuyerPhone")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<Guid>("BuyerUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("CancellationReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime?>("CancelledAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("nvarchar(60)");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("ConfirmedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("nvarchar(8)");
+
+                    b.Property<string>("DeliveryAddress")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<Guid>("MerchantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<int>("PaymentStatus")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("Subtotal")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("Total")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BuyerUserId");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.HasIndex("CreatedAtUtc");
+
+                    b.HasIndex("MerchantId");
+
+                    b.HasIndex("PaymentStatus");
+
+                    b.HasIndex("Status");
+
+                    b.ToTable("Orders", (string)null);
+                });
+
+            modelBuilder.Entity("ZansiHustle.Domain.Orders.OrderItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ImageSnapshot")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<decimal>("LineTotal")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<Guid?>("ListingId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("ListingType")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("int");
+
+                    b.Property<string>("TitleSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(250)
+                        .HasColumnType("nvarchar(250)");
+
+                    b.Property<decimal>("UnitPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ListingId");
+
+                    b.HasIndex("ListingType");
+
+                    b.HasIndex("OrderId");
+
+                    b.ToTable("OrderItems", (string)null);
+                });
+
+            modelBuilder.Entity("ZansiHustle.Domain.Payments.Payment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime?>("CancelledAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ChannelUsed")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("nvarchar(8)");
+
+                    b.Property<DateTime?>("FailedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("PaidAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<string>("ProviderAccessCode")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("ProviderAuthorizationUrl")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("ProviderReference")
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<string>("RawProviderMetadata")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("RefundedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.HasIndex("CreatedAtUtc");
+
+                    b.HasIndex("OrderId");
+
+                    b.HasIndex("Provider");
+
+                    b.HasIndex("ProviderReference")
+                        .IsUnique()
+                        .HasFilter("[ProviderReference] IS NOT NULL");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("Payments", (string)null);
+                });
+
+            modelBuilder.Entity("ZansiHustle.Domain.Payments.PaymentEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<Guid?>("PaymentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Processed")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("ProcessedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ProcessingError")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<string>("ProviderEventKey")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<string>("RawPayload")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime>("ReceivedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("SignatureHeader")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<bool>("SignatureValid")
+                        .HasColumnType("bit");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EventType");
+
+                    b.HasIndex("PaymentId");
+
+                    b.HasIndex("Provider");
+
+                    b.HasIndex("ProviderEventKey")
+                        .IsUnique();
+
+                    b.HasIndex("ReceivedAtUtc");
+
+                    b.ToTable("PaymentEvents", (string)null);
                 });
 
             modelBuilder.Entity("ZansiHustle.Domain.Podcasts.Podcast", b =>
@@ -1299,6 +1761,98 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.Navigation("Influencer");
                 });
 
+            modelBuilder.Entity("ZansiHustle.Domain.Listings.Listing", b =>
+                {
+                    b.HasOne("ZansiHustle.Domain.Merchants.Merchant", "Merchant")
+                        .WithMany()
+                        .HasForeignKey("MerchantId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("ZansiHustle.Domain.SellerCategories.SellerCategory", "SellerCategory")
+                        .WithMany()
+                        .HasForeignKey("SellerCategoryId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("ZansiHustle.Domain.SellerCategories.SellerSubcategory", "SellerSubcategory")
+                        .WithMany()
+                        .HasForeignKey("SellerSubcategoryId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.Navigation("Merchant");
+
+                    b.Navigation("SellerCategory");
+
+                    b.Navigation("SellerSubcategory");
+                });
+
+            modelBuilder.Entity("ZansiHustle.Domain.Merchants.Merchant", b =>
+                {
+                    b.HasOne("ZansiHustle.Domain.SellerCategories.SellerCategory", "SellerCategory")
+                        .WithMany()
+                        .HasForeignKey("SellerCategoryId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("ZansiHustle.Domain.SellerCategories.SellerSubcategory", "SellerSubcategory")
+                        .WithMany()
+                        .HasForeignKey("SellerSubcategoryId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.Navigation("SellerCategory");
+
+                    b.Navigation("SellerSubcategory");
+                });
+
+            modelBuilder.Entity("ZansiHustle.Domain.Orders.Order", b =>
+                {
+                    b.HasOne("ZansiHustle.Domain.Merchants.Merchant", "Merchant")
+                        .WithMany()
+                        .HasForeignKey("MerchantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Merchant");
+                });
+
+            modelBuilder.Entity("ZansiHustle.Domain.Orders.OrderItem", b =>
+                {
+                    b.HasOne("ZansiHustle.Domain.Listings.Listing", "Listing")
+                        .WithMany()
+                        .HasForeignKey("ListingId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("ZansiHustle.Domain.Orders.Order", "Order")
+                        .WithMany("Items")
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Listing");
+
+                    b.Navigation("Order");
+                });
+
+            modelBuilder.Entity("ZansiHustle.Domain.Payments.Payment", b =>
+                {
+                    b.HasOne("ZansiHustle.Domain.Orders.Order", "Order")
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Order");
+                });
+
+            modelBuilder.Entity("ZansiHustle.Domain.Payments.PaymentEvent", b =>
+                {
+                    b.HasOne("ZansiHustle.Domain.Payments.Payment", "Payment")
+                        .WithMany("Events")
+                        .HasForeignKey("PaymentId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Payment");
+                });
+
             modelBuilder.Entity("ZansiHustle.Domain.Podcasts.PodcastAdFormat", b =>
                 {
                     b.HasOne("ZansiHustle.Domain.Podcasts.Podcast", "Podcast")
@@ -1341,6 +1895,16 @@ namespace ZansiHustle.Infrastructure.Migrations
             modelBuilder.Entity("ZansiHustle.Domain.Influencers.Influencer", b =>
                 {
                     b.Navigation("PlatformAccounts");
+                });
+
+            modelBuilder.Entity("ZansiHustle.Domain.Orders.Order", b =>
+                {
+                    b.Navigation("Items");
+                });
+
+            modelBuilder.Entity("ZansiHustle.Domain.Payments.Payment", b =>
+                {
+                    b.Navigation("Events");
                 });
 
             modelBuilder.Entity("ZansiHustle.Domain.Podcasts.Podcast", b =>

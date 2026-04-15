@@ -41,17 +41,20 @@ public sealed class AuthService : IAuthService
         {
             var email = dto.Email.Trim().ToLowerInvariant();
             var user = await _userManager.Users.FirstOrDefaultAsync(x => x.Email == email);
-            
-            if (user == null || !user.IsActive || user.AccountStatus != AccountStatus.Active)
-                return Result<AuthTokenDto>.Failure(ErrorCodes.Unauthorized, "Invalid credentials.");
-            
+
+            if (user == null)
+                return Result<AuthTokenDto>.Failure(ErrorCodes.InvalidCredentials, "Invalid email or password.");
+
+            if (!user.IsActive || user.AccountStatus != AccountStatus.Active)
+                return Result<AuthTokenDto>.Failure(ErrorCodes.InactiveAccount, "Your account is not active. Please contact support.");
+
             var validPassword = await _userManager.CheckPasswordAsync(user, dto.Password);
             if (!validPassword)
-                return Result<AuthTokenDto>.Failure(ErrorCodes.Unauthorized, "Invalid credentials.");
-            /*
-            if (!user.EmailConfirmed)
-                return Result<AuthTokenDto>.Failure(ErrorCodes.Forbidden, "Please verify your email address before logging in.");
-            */
+                return Result<AuthTokenDto>.Failure(ErrorCodes.InvalidCredentials, "Invalid email or password.");
+
+            // v1: email verification is a soft signal (surfaced via CurrentUserDto.EmailConfirmed).
+            // Sensitive flows (seller activation, payouts, KYC) gate on EmailConfirmed in feature code.
+
             var token = await _jwtTokenGenerator.GenerateTokenAsync(user);
 
             _logger.LogInformation("User {UserId} logged in successfully.", user.Id);
@@ -73,7 +76,7 @@ public sealed class AuthService : IAuthService
             var existingUser = await _userManager.FindByEmailAsync(email);
 
             if (existingUser != null)
-                return Result<Guid>.Failure(ErrorCodes.Conflict, "Email address is already registered.");
+                return Result<Guid>.Failure(ErrorCodes.EmailTaken, "An account with this email already exists.");
 
             var user = new User
             {
@@ -92,7 +95,10 @@ public sealed class AuthService : IAuthService
             if (!createResult.Succeeded)
             {
                 var errors = string.Join("; ", createResult.Errors.Select(e => e.Description));
-                return Result<Guid>.Failure(ErrorCodes.BadRequest, $"Registration failed: {errors}");
+                var isPasswordIssue = createResult.Errors.Any(e =>
+                    e.Code.StartsWith("Password", StringComparison.OrdinalIgnoreCase));
+                var code = isPasswordIssue ? ErrorCodes.WeakPassword : ErrorCodes.BadRequest;
+                return Result<Guid>.Failure(code, errors);
             }
 
             var roleResult = await _userManager.AddToRolesAsync(user, dto.UserRoles.Select(x=>x.ToString()));
@@ -119,7 +125,7 @@ public sealed class AuthService : IAuthService
         {
             var tokens = await _jwtTokenGenerator.RefreshTokenAsync(refreshToken);
             if (tokens == null)
-                return Result<AuthTokenDto>.Failure(ErrorCodes.Unauthorized, "Invalid or expired refresh token.");
+                return Result<AuthTokenDto>.Failure(ErrorCodes.InvalidRefreshToken, "Your session has expired. Please sign in again.");
 
             return Result<AuthTokenDto>.Success(tokens, "Token refreshed successfully.");
         }
@@ -162,7 +168,7 @@ public sealed class AuthService : IAuthService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to send verification email to {Email}.", email);
-            return Result.Failure(ErrorCodes.Exception, "Failed to send verification email.");
+            return Result.Failure(ErrorCodes.EmailSendFailed, "Failed to send verification email.");
         }
     }
 
@@ -179,7 +185,7 @@ public sealed class AuthService : IAuthService
             if (!result.Succeeded)
             {
                 var errors = string.Join("; ", result.Errors.Select(x => x.Description));
-                return Result.Failure(ErrorCodes.BadRequest, $"Email verification failed: {errors}");
+                return Result.Failure(ErrorCodes.InvalidResetToken, $"Email verification failed. The link may have expired. {errors}");
             }
 
             var sendResult = await _emailService.SendEmailVerifiedConfirmationAsync(user.Email!, user.FirstName);
@@ -220,7 +226,7 @@ public sealed class AuthService : IAuthService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to send password reset email to {Email}.", email);
-            return Result.Failure(ErrorCodes.Exception, "Failed to send password reset email.");
+            return Result.Failure(ErrorCodes.EmailSendFailed, "Failed to send password reset email.");
         }
     }
 
@@ -237,7 +243,14 @@ public sealed class AuthService : IAuthService
             if (!result.Succeeded)
             {
                 var errors = string.Join("; ", result.Errors.Select(x => x.Description));
-                return Result.Failure(ErrorCodes.BadRequest, $"Password reset failed: {errors}");
+                var isPasswordIssue = result.Errors.Any(e =>
+                    e.Code.StartsWith("Password", StringComparison.OrdinalIgnoreCase));
+                var isTokenIssue = result.Errors.Any(e =>
+                    e.Code.Contains("Token", StringComparison.OrdinalIgnoreCase));
+                var code = isPasswordIssue
+                    ? ErrorCodes.WeakPassword
+                    : (isTokenIssue ? ErrorCodes.InvalidResetToken : ErrorCodes.BadRequest);
+                return Result.Failure(code, errors);
             }
 
             await _jwtTokenGenerator.RevokeAllRefreshTokensForUserAsync(user.Id);
@@ -263,7 +276,14 @@ public sealed class AuthService : IAuthService
             if (!result.Succeeded)
             {
                 var errors = string.Join("; ", result.Errors.Select(x => x.Description));
-                return Result.Failure(ErrorCodes.BadRequest, $"Password change failed: {errors}");
+                var isPasswordIssue = result.Errors.Any(e =>
+                    e.Code.StartsWith("Password", StringComparison.OrdinalIgnoreCase));
+                var isWrongCurrent = result.Errors.Any(e =>
+                    string.Equals(e.Code, "PasswordMismatch", StringComparison.OrdinalIgnoreCase));
+                var code = isWrongCurrent
+                    ? ErrorCodes.InvalidCredentials
+                    : (isPasswordIssue ? ErrorCodes.WeakPassword : ErrorCodes.BadRequest);
+                return Result.Failure(code, errors);
             }
 
             await _jwtTokenGenerator.RevokeAllRefreshTokensForUserAsync(user.Id);

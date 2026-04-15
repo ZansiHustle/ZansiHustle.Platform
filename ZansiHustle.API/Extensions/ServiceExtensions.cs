@@ -1,12 +1,14 @@
 ﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System;
 using System.Text;
 using ZansiHustle.API.Middleware;
 using ZansiHustle.API.Services;
+using ZansiHustle.Application.Admin.Seeding;
 using ZansiHustle.Application.Agents.AgentApplications;
 using ZansiHustle.Application.Agents.AgentMappings;
 using ZansiHustle.Application.Auth;
@@ -22,7 +24,11 @@ using ZansiHustle.Application.Communications.Email.Services;
 using ZansiHustle.Application.ContentTasks;
 using ZansiHustle.Application.Dashboard;
 using ZansiHustle.Application.Influencers;
+using ZansiHustle.Application.Listings;
 using ZansiHustle.Application.Merchants;
+using ZansiHustle.Application.Orders;
+using ZansiHustle.Application.Payments;
+using ZansiHustle.Application.Payments.Providers;
 using ZansiHustle.Application.Persistence.AgentApplications;
 using ZansiHustle.Application.Persistence.BudgetTransactions;
 using ZansiHustle.Application.Persistence.Campaigns;
@@ -30,7 +36,10 @@ using ZansiHustle.Application.Persistence.ContentTasks;
 using ZansiHustle.Application.Persistence.Dashboard;
 using ZansiHustle.Application.Persistence.Identity;
 using ZansiHustle.Application.Persistence.Influencers;
+using ZansiHustle.Application.Persistence.Listings;
 using ZansiHustle.Application.Persistence.Merchants;
+using ZansiHustle.Application.Persistence.Orders;
+using ZansiHustle.Application.Persistence.Payments;
 using ZansiHustle.Application.Persistence.Podcasts;
 using ZansiHustle.Application.Persistence.SellerCategories;
 using ZansiHustle.Application.Persistence.SellerLeads;
@@ -44,8 +53,19 @@ using ZansiHustle.Application.Users;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Infrastructure.Communications.Email.Mappers;
 using ZansiHustle.Infrastructure.Communications.Email.Providers.Smtp;
+using ZansiHustle.Infrastructure.Communications.Sms.Providers.Twilio;
+using ZansiHustle.Infrastructure.Communications.WhatsApp.Providers.Twilio;
+using ZansiHustle.Infrastructure.Communications.Twilio;
+using ZansiHustle.Application.Communications.Sms;
+using ZansiHustle.Application.Communications.Sms.Interfaces;
+using ZansiHustle.Application.Communications.WhatsApp;
+using ZansiHustle.Application.Communications.WhatsApp.Interfaces;
+using ZansiHustle.Application.Communications.Otp;
+using ZansiHustle.Application.Communications.Otp.Interfaces;
+using ZansiHustle.Infrastructure.Communications.Otp;
 using ZansiHustle.Infrastructure.Configuration;
 using ZansiHustle.Infrastructure.Data;
+using ZansiHustle.Infrastructure.Data.Seed;
 using ZansiHustle.Infrastructure.Identity;
 using ZansiHustle.Infrastructure.Persistence.AgentApplications;
 using ZansiHustle.Infrastructure.Persistence.BudgetTransactions;
@@ -53,12 +73,15 @@ using ZansiHustle.Infrastructure.Persistence.Campaigns;
 using ZansiHustle.Infrastructure.Persistence.ContentTasks;
 using ZansiHustle.Infrastructure.Persistence.Dashboard;
 using ZansiHustle.Infrastructure.Persistence.Influencers;
+using ZansiHustle.Infrastructure.Persistence.Listings;
 using ZansiHustle.Infrastructure.Persistence.Merchants;
+using ZansiHustle.Infrastructure.Persistence.Orders;
+using ZansiHustle.Infrastructure.Persistence.Payments;
+using ZansiHustle.Infrastructure.Payments.Paystack;
 using ZansiHustle.Infrastructure.Persistence.Podcasts;
 using ZansiHustle.Infrastructure.Persistence.SellerCategories;
 using ZansiHustle.Infrastructure.Persistence.SellerLeads;
 using ZansiHustle.Infrastructure.Persistence.Users;
-using ZansiHustle.Infrastructure.Services;
 
 namespace ZansiHustle.API.Extensions;
 
@@ -123,7 +146,7 @@ public static class ServiceExtensions
     /// </summary>
     public static IServiceCollection AddDatabaseServices(this IServiceCollection services, IConfiguration configuration)
     {
-        const bool IS_LIVE = true;
+        const bool IS_LIVE = false;
         const string UAT_DB = "UATConnection";
         const string LIVE_DB = "LiveConnection";
 
@@ -169,7 +192,9 @@ public static class ServiceExtensions
             options.Password.RequireUppercase = true;
             options.Password.RequireLowercase = true;
             options.User.RequireUniqueEmail = true;
-            options.SignIn.RequireConfirmedEmail = true;
+            // v1 policy: verification is soft (buyers can log in unverified; sensitive
+            // seller/KYC/payment flows are gated on EmailConfirmed in feature code).
+            options.SignIn.RequireConfirmedEmail = false;
             options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
             options.Lockout.MaxFailedAccessAttempts = 5;
         })
@@ -233,18 +258,75 @@ public static class ServiceExtensions
     public static IServiceCollection AddApiServices(this IServiceCollection services)
     {
         services.AddScoped<ICurrentUserService, CurrentUserService>();
+        services.AddScoped<IUatSeederService, UatSeederService>();
         return services;
     }
 
     public static IServiceCollection AddEmailServices(this IServiceCollection services, IConfiguration configuration)
     {
-        services.Configure<SmtpEmailOptions>(configuration.GetSection(SmtpEmailOptions.SectionName));
+        services.Configure<EmailSenderSettings>(configuration.GetSection(EmailSenderSettings.SectionName));
 
         services.AddScoped<IEmailProvider, SmtpEmailProvider>();
         services.AddScoped<IEmailService, EmailService>();
         services.AddScoped<IEmailSenderMapper, EmailSenderMapper>();
         services.AddScoped<ISupportEmailService, SupportEmailService>();
         services.AddScoped<IMerchantEmailService, MerchantEmailService>();
+        return services;
+    }
+
+    /// <summary>
+    /// Registers Twilio-backed SMS and WhatsApp providers plus application services.
+    /// Credentials are read from the "Twilio" configuration section. Providers
+    /// fail with <c>PROVIDER_NOT_CONFIGURED</c> at call time when credentials
+    /// are missing, so the app still starts in environments without Twilio.
+    /// </summary>
+    public static IServiceCollection AddTwilioCommunications(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<TwilioSettings>(configuration.GetSection(TwilioSettings.SectionName));
+
+        services.AddSingleton<ITwilioClientProvider, TwilioClientProvider>();
+
+        // SMS
+        services.AddScoped<ISmsProvider, TwilioSmsProvider>();
+        services.AddScoped<ISmsService, SmsService>();
+
+        // WhatsApp
+        services.AddScoped<IWhatsAppProvider, TwilioWhatsAppProvider>();
+        services.AddScoped<IWhatsAppTemplateCatalog, TwilioWhatsAppTemplateCatalog>();
+        services.AddScoped<IWhatsAppService, WhatsAppService>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the Paystack-backed payment provider + application service.
+    /// The HTTP client is typed so base URL + bearer auth are injected once and
+    /// never leak into callers. Fails gracefully at call time with
+    /// <c>PROVIDER_NOT_CONFIGURED</c> when credentials are missing.
+    /// </summary>
+    public static IServiceCollection AddPaystackPayments(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<PaystackSettings>(configuration.GetSection(PaystackSettings.SectionName));
+
+        services.AddHttpClient<IPaystackClient, PaystackClient>((sp, client) =>
+        {
+            var settings = sp.GetRequiredService<IOptions<PaystackSettings>>().Value;
+            PaystackClient.ConfigureHttpClient(client, settings);
+        });
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the channel-agnostic OTP service and the in-memory session store.
+    /// Replace <see cref="InMemoryOtpStore"/> with a Redis/SQL implementation
+    /// when scaling horizontally.
+    /// </summary>
+    public static IServiceCollection AddOtpServices(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<OtpSettings>(configuration.GetSection(OtpSettings.SectionName));
+        services.AddSingleton<IOtpStore, InMemoryOtpStore>();
+        services.AddScoped<IOtpService, OtpService>();
         return services;
     }
 
@@ -265,6 +347,8 @@ public static class ServiceExtensions
         services.AddScoped<IMarketingDashboardRepository, MarketingDashboardRepository>();
         services.AddScoped<IMerchantRepository, MerchantRepository>();
         services.AddScoped<ISellerCategoryRepository, SellerCategoryRepository>();
+        services.AddScoped<IListingRepository, ListingRepository>();
+        services.AddScoped<IOrderRepository, OrderRepository>();
 
         // Services
         services.AddScoped<IAgentApplicationService, AgentApplicationService>();
@@ -279,6 +363,10 @@ public static class ServiceExtensions
         services.AddScoped<IMerchantService, MerchantService>();
         services.AddScoped<ISellerCategoryService, SellerCategoryService>();
         services.AddScoped<IAgentMappingService, AgentMappingService>();
+        services.AddScoped<IListingService, ListingService>();
+        services.AddScoped<IOrderService, OrderService>();
+        services.AddScoped<IPaymentRepository, PaymentRepository>();
+        services.AddScoped<IPaymentService, PaymentService>();
 
         return services;
     }
