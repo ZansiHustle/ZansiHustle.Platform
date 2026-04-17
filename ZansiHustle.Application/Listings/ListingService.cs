@@ -144,6 +144,9 @@ namespace ZansiHustle.Application.Listings
                 if (merchant.OwnerUserId != ownerUserId)
                     return Result<ListingDto>.Failure(ErrorCodes.Forbidden, "You do not have permission to add listings to this shop.");
 
+                if (merchant.Status != ZansiHustle.Shared.Enums.Merchants.MerchantStatus.Active)
+                    return Result<ListingDto>.Failure(ErrorCodes.Forbidden, "Your shop must be approved before you can publish listings.");
+
                 var categoryCheck = await ValidateCategoriesAsync(request.SellerCategoryId, request.SellerSubcategoryId);
 
                 if (!categoryCheck.IsSuccess)
@@ -223,6 +226,9 @@ namespace ZansiHustle.Application.Listings
                 if (listing.Merchant is null || listing.Merchant.OwnerUserId != ownerUserId)
                     return Result<ListingDto>.Failure(ErrorCodes.Forbidden, "You do not have permission to update this listing.");
 
+                if (listing.Merchant.Status != ZansiHustle.Shared.Enums.Merchants.MerchantStatus.Active)
+                    return Result<ListingDto>.Failure(ErrorCodes.Forbidden, "Your shop must be approved before you can update listings.");
+
                 var typeCheck = ValidateTypeShape(listing.Type, request.PricingModel, request.Stock);
 
                 if (!typeCheck.IsSuccess)
@@ -299,6 +305,9 @@ namespace ZansiHustle.Application.Listings
 
                 if (listing.Merchant is null || listing.Merchant.OwnerUserId != ownerUserId)
                     return Result.Failure(ErrorCodes.Forbidden, "You do not have permission to delete this listing.");
+
+                if (listing.Merchant.Status != ZansiHustle.Shared.Enums.Merchants.MerchantStatus.Active)
+                    return Result.Failure(ErrorCodes.Forbidden, "Your shop must be approved before you can delete listings.");
 
                 _listingRepository.Delete(listing);
                 var saved = await _listingRepository.SaveChangesAsync();

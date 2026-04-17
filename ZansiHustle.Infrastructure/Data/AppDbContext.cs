@@ -6,6 +6,7 @@ using ZansiHustle.Domain.Agents.AgentApplications;
 using ZansiHustle.Domain.BudgetTransactions;
 using ZansiHustle.Domain.Campaigns;
 using ZansiHustle.Domain.ContentTasks;
+using ZansiHustle.Domain.Events;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Domain.Influencers;
 using ZansiHustle.Domain.Listings;
@@ -111,4 +112,8 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
 
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<PaymentEvent> PaymentEvents => Set<PaymentEvent>();
+
+    public DbSet<EventPlan> EventPlans => Set<EventPlan>();
+    public DbSet<EventPlanItem> EventPlanItems => Set<EventPlanItem>();
+    public DbSet<EventTypeTemplate> EventTypeTemplates => Set<EventTypeTemplate>();
 }

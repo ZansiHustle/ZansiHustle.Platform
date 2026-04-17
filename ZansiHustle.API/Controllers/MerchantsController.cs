@@ -164,6 +164,28 @@ namespace ZansiHustle.API.Controllers
         }
 
         /// <summary>
+        /// Approves a merchant (admin). Sets status to Active so the seller can operate.
+        /// </summary>
+        [HttpPost("{id:guid}/approve")]
+        [ProducesResponseType(typeof(Result<MerchantDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> Approve(Guid id)
+        {
+            var result = await _merchantService.ApproveAsync(id);
+            return ToActionResult(result);
+        }
+
+        /// <summary>
+        /// Rejects a merchant (admin). Sets status to Suspended; optional reason included in the response message.
+        /// </summary>
+        [HttpPost("{id:guid}/reject")]
+        [ProducesResponseType(typeof(Result<MerchantDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> Reject(Guid id, [FromBody] RejectMerchantRequestDto? request)
+        {
+            var result = await _merchantService.RejectAsync(id, request?.Reason);
+            return ToActionResult(result);
+        }
+
+        /// <summary>
         /// Verifies merchant KYC (admin).
         /// </summary>
         [HttpPost("{id:guid}/verify-kyc")]

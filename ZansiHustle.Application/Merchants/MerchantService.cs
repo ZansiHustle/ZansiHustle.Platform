@@ -203,6 +203,63 @@ namespace ZansiHustle.Application.Merchants
         }
 
         /// <inheritdoc />
+        public async Task<Result<MerchantDto>> ApproveAsync(Guid id)
+        {
+            try
+            {
+                var merchant = await _merchantRepository.GetByIdAsync(id);
+
+                if (merchant is null)
+                    return Result<MerchantDto>.Failure(ErrorCodes.NotFound, "Merchant not found.");
+
+                if (merchant.Status == MerchantStatus.Active)
+                    return Result<MerchantDto>.Success(MapToDto(merchant), "Merchant already approved.");
+
+                merchant.Status = MerchantStatus.Active;
+                merchant.UpdatedAtUtc = DateTime.UtcNow;
+
+                _merchantRepository.Update(merchant);
+                var saved = await _merchantRepository.SaveChangesAsync();
+
+                if (!saved)
+                    return Result<MerchantDto>.Failure(ErrorCodes.Exception, "Failed to approve merchant.");
+
+                return Result<MerchantDto>.Success(MapToDto(merchant), "Merchant approved.");
+            }
+            catch (Exception ex)
+            {
+                return Result<MerchantDto>.Failure(ErrorCodes.Exception, $"An error occurred while approving the merchant. {ex.Message}");
+            }
+        }
+
+        /// <inheritdoc />
+        public async Task<Result<MerchantDto>> RejectAsync(Guid id, string? reason = null)
+        {
+            try
+            {
+                var merchant = await _merchantRepository.GetByIdAsync(id);
+
+                if (merchant is null)
+                    return Result<MerchantDto>.Failure(ErrorCodes.NotFound, "Merchant not found.");
+
+                merchant.Status = MerchantStatus.Suspended;
+                merchant.UpdatedAtUtc = DateTime.UtcNow;
+
+                _merchantRepository.Update(merchant);
+                var saved = await _merchantRepository.SaveChangesAsync();
+
+                if (!saved)
+                    return Result<MerchantDto>.Failure(ErrorCodes.Exception, "Failed to reject merchant.");
+
+                return Result<MerchantDto>.Success(MapToDto(merchant), string.IsNullOrWhiteSpace(reason) ? "Merchant rejected." : $"Merchant rejected: {reason}");
+            }
+            catch (Exception ex)
+            {
+                return Result<MerchantDto>.Failure(ErrorCodes.Exception, $"An error occurred while rejecting the merchant. {ex.Message}");
+            }
+        }
+
+        /// <inheritdoc />
         public async Task<Result<MerchantDto>> UpdatePayoutEligibilityAsync(Guid id, bool eligible)
         {
             try

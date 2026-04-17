@@ -216,6 +216,9 @@ namespace ZansiHustle.Application.Orders
                 if (!isBuyer && !isSeller)
                     return Result<OrderDto>.Failure(ErrorCodes.Forbidden, "You do not have permission to update this order.");
 
+                if (isSeller && !isBuyer && order.Merchant?.Status != ZansiHustle.Shared.Enums.Merchants.MerchantStatus.Active)
+                    return Result<OrderDto>.Failure(ErrorCodes.Forbidden, "Your shop must be approved before you can manage orders.");
+
                 var transitionCheck = ValidateTransition(order.Status, request.Status, isBuyer, isSeller);
                 if (!transitionCheck.IsSuccess)
                     return Result<OrderDto>.Failure(transitionCheck.Code, transitionCheck.Message);

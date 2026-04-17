@@ -17,6 +17,8 @@ namespace ZansiHustle.Application.Merchants
         Task<Result<MerchantDto>> UpdateAsync(Guid id, UpdateMerchantRequestDto request);
         Task<Result<MerchantDto>> VerifyKycAsync(Guid id);
         Task<Result<MerchantDto>> UpdatePayoutEligibilityAsync(Guid id, bool eligible);
+        Task<Result<MerchantDto>> ApproveAsync(Guid id);
+        Task<Result<MerchantDto>> RejectAsync(Guid id, string? reason = null);
         Task<Result> DeleteAsync(Guid id);
 
         // Seller self-service (owned shops) — ownership derived from JWT.

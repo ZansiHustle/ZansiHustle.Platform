@@ -23,6 +23,7 @@ using ZansiHustle.Application.Communications.Email.Mappers;
 using ZansiHustle.Application.Communications.Email.Services;
 using ZansiHustle.Application.ContentTasks;
 using ZansiHustle.Application.Dashboard;
+using ZansiHustle.Application.Events;
 using ZansiHustle.Application.Influencers;
 using ZansiHustle.Application.Listings;
 using ZansiHustle.Application.Merchants;
@@ -34,6 +35,7 @@ using ZansiHustle.Application.Persistence.BudgetTransactions;
 using ZansiHustle.Application.Persistence.Campaigns;
 using ZansiHustle.Application.Persistence.ContentTasks;
 using ZansiHustle.Application.Persistence.Dashboard;
+using ZansiHustle.Application.Persistence.Events;
 using ZansiHustle.Application.Persistence.Identity;
 using ZansiHustle.Application.Persistence.Influencers;
 using ZansiHustle.Application.Persistence.Listings;
@@ -72,6 +74,7 @@ using ZansiHustle.Infrastructure.Persistence.BudgetTransactions;
 using ZansiHustle.Infrastructure.Persistence.Campaigns;
 using ZansiHustle.Infrastructure.Persistence.ContentTasks;
 using ZansiHustle.Infrastructure.Persistence.Dashboard;
+using ZansiHustle.Infrastructure.Persistence.Events;
 using ZansiHustle.Infrastructure.Persistence.Influencers;
 using ZansiHustle.Infrastructure.Persistence.Listings;
 using ZansiHustle.Infrastructure.Persistence.Merchants;
@@ -349,6 +352,7 @@ public static class ServiceExtensions
         services.AddScoped<ISellerCategoryRepository, SellerCategoryRepository>();
         services.AddScoped<IListingRepository, ListingRepository>();
         services.AddScoped<IOrderRepository, OrderRepository>();
+        services.AddScoped<IEventPlanRepository, EventPlanRepository>();
 
         // Services
         services.AddScoped<IAgentApplicationService, AgentApplicationService>();
@@ -367,6 +371,7 @@ public static class ServiceExtensions
         services.AddScoped<IOrderService, OrderService>();
         services.AddScoped<IPaymentRepository, PaymentRepository>();
         services.AddScoped<IPaymentService, PaymentService>();
+        services.AddScoped<IEventPlanService, EventPlanService>();
 
         return services;
     }
@@ -443,6 +448,8 @@ public static class ServiceExtensions
 
             var roleManager = services.GetRequiredService<RoleManager<IdentityRole<Guid>>>();
             await IdentitySeeder.SeedRolesAsync(roleManager);
+
+            await EventTypeTemplateSeeder.SeedAsync(dbContext);
         }
         catch (Exception ex)
         {
