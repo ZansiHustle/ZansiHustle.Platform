@@ -7,6 +7,7 @@ using ZansiHustle.Domain.BudgetTransactions;
 using ZansiHustle.Domain.Campaigns;
 using ZansiHustle.Domain.ContentTasks;
 using ZansiHustle.Domain.Events;
+using ZansiHustle.Domain.Fundraising;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Domain.Influencers;
 using ZansiHustle.Domain.Listings;
@@ -116,4 +117,7 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     public DbSet<EventPlan> EventPlans => Set<EventPlan>();
     public DbSet<EventPlanItem> EventPlanItems => Set<EventPlanItem>();
     public DbSet<EventTypeTemplate> EventTypeTemplates => Set<EventTypeTemplate>();
+
+    public DbSet<Valuation> FundraisingValuations => Set<Valuation>();
+    public DbSet<Stakeholder> FundraisingStakeholders => Set<Stakeholder>();
 }
