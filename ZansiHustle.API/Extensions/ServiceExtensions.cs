@@ -409,6 +409,27 @@ public static class ServiceExtensions
         services.AddScoped<IEventPlanService, EventPlanService>();
         services.AddScoped<IFundraisingService, FundraisingService>();
 
+        // Standalone referral / affiliate system.
+        services.AddScoped<ZansiHustle.Application.Persistence.Referrals.IAffiliateProfileRepository,
+                           ZansiHustle.Infrastructure.Persistence.Referrals.AffiliateProfileRepository>();
+        services.AddScoped<ZansiHustle.Application.Persistence.Referrals.IUserReferralRepository,
+                           ZansiHustle.Infrastructure.Persistence.Referrals.UserReferralRepository>();
+        services.AddScoped<ZansiHustle.Application.Persistence.Referrals.IReferralClickRepository,
+                           ZansiHustle.Infrastructure.Persistence.Referrals.ReferralClickRepository>();
+        services.AddScoped<ZansiHustle.Application.Referrals.IReferralService,
+                           ZansiHustle.Application.Referrals.ReferralService>();
+
+        // Shared media / blob-metadata system. Storage adapter is the local
+        // filesystem in dev — swap to AzureBlobMediaStorageService in
+        // production by changing this single registration.
+        services.AddHttpContextAccessor();
+        services.AddScoped<ZansiHustle.Application.Persistence.Media.IMediaAssetRepository,
+                           ZansiHustle.Infrastructure.Persistence.Media.MediaAssetRepository>();
+        services.AddScoped<ZansiHustle.Application.Media.Storage.IMediaStorageService,
+                           ZansiHustle.API.Storage.LocalFilesystemMediaStorageService>();
+        services.AddScoped<ZansiHustle.Application.Media.IMediaService,
+                           ZansiHustle.Application.Media.MediaService>();
+
         return services;
     }
 

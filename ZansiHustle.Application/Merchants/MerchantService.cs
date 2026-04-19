@@ -21,12 +21,30 @@ namespace ZansiHustle.Application.Merchants
     {
         private readonly IMerchantRepository _merchantRepository;
         private readonly ISellerCategoryRepository _sellerCategoryRepository;
+        private readonly Application.Media.IMediaService _mediaService;
+        private readonly Application.Persistence.Media.IMediaAssetRepository _mediaRepo;
 
-        public MerchantService(IMerchantRepository merchantRepository, ISellerCategoryRepository sellerCategoryRepository)
+        public MerchantService(
+            IMerchantRepository merchantRepository,
+            ISellerCategoryRepository sellerCategoryRepository,
+            Application.Media.IMediaService mediaService,
+            Application.Persistence.Media.IMediaAssetRepository mediaRepo)
         {
             _merchantRepository = merchantRepository;
             _sellerCategoryRepository = sellerCategoryRepository;
+            _mediaService = mediaService;
+            _mediaRepo = mediaRepo;
         }
+
+        // Verification uploads required for self-registration. Used both at
+        // CreateMineAsync time (to fail-fast if a required upload is missing)
+        // and at VerifyKycAsync time (each must be Approved).
+        private static readonly Shared.Enums.Media.MediaPurpose[] RequiredVerificationPurposes =
+        {
+            Shared.Enums.Media.MediaPurpose.IdDocument,
+            Shared.Enums.Media.MediaPurpose.Portrait,
+            Shared.Enums.Media.MediaPurpose.VerificationProductSample,
+        };
 
         /// <inheritdoc />
         public async Task<Result<List<MerchantDto>>> GetAllAsync()
@@ -150,6 +168,9 @@ namespace ZansiHustle.Application.Merchants
                 merchant.SellerSubcategoryId = request.SellerSubcategoryId;
                 merchant.ContactEmail = request.ContactEmail?.Trim();
                 merchant.ContactPhoneNumber = request.ContactPhoneNumber?.Trim();
+                merchant.WhatsAppNumber = request.WhatsAppNumber?.Trim();
+                merchant.SocialHandle = request.SocialHandle?.Trim();
+                merchant.IdNumber = request.IdNumber?.Trim();
                 merchant.Province = request.Province?.Trim();
                 merchant.City = request.City?.Trim();
                 merchant.AddressLine1 = request.AddressLine1?.Trim();
@@ -183,6 +204,24 @@ namespace ZansiHustle.Application.Merchants
 
                 if (merchant is null)
                     return Result<MerchantDto>.Failure(ErrorCodes.NotFound, "Merchant not found.");
+
+                // KYC verify requires every required verification upload to
+                // be Approved. Admins approve uploads individually via the
+                // /api/media/{id}/review endpoint; this gate ensures KYC
+                // status flips ONLY when the document review is complete.
+                var media = await _mediaRepo.GetByOwnerAsync(
+                    Shared.Enums.Media.OwnerEntityType.Merchant, id);
+                foreach (var purpose in RequiredVerificationPurposes)
+                {
+                    var approved = media.Any(m =>
+                        m.Purpose == purpose &&
+                        m.Status == Shared.Enums.Media.MediaStatus.Approved);
+                    if (!approved)
+                    {
+                        return Result<MerchantDto>.Failure(ErrorCodes.BadRequest,
+                            $"Cannot verify KYC: required {purpose} upload is not yet approved.");
+                    }
+                }
 
                 merchant.KycStatus = MerchantKycStatus.Verified;
                 merchant.Status = MerchantStatus.Active;
@@ -334,8 +373,14 @@ namespace ZansiHustle.Application.Merchants
                 if (request is null)
                     return Result<MerchantDto>.Failure(ErrorCodes.BadRequest, "Request is required.");
 
-                if (string.IsNullOrWhiteSpace(request.Name))
-                    return Result<MerchantDto>.Failure(ErrorCodes.BadRequest, "Shop name is required.");
+                // Seller-first onboarding: a merchant record represents the
+                // seller account, not necessarily a published storefront. The
+                // shop name is therefore optional at creation — the seller can
+                // set it later when they actually open a storefront. Default
+                // to a placeholder so existing Name/Slug invariants hold.
+                var name = string.IsNullOrWhiteSpace(request.Name)
+                    ? BuildDefaultMerchantName(request.ContactEmail, request.ContactPhoneNumber)
+                    : request.Name.Trim();
 
                 var categoryCheck = await ValidateCategoriesAsync(request.SellerCategoryId, request.SellerSubcategoryId);
                 if (!categoryCheck.IsSuccess)
@@ -345,8 +390,8 @@ namespace ZansiHustle.Application.Merchants
                 {
                     Id = Guid.NewGuid(),
                     Code = GenerateCode(),
-                    Slug = await GenerateUniqueSlugAsync(request.Name),
-                    Name = request.Name.Trim(),
+                    Slug = await GenerateUniqueSlugAsync(name),
+                    Name = name,
                     Description = request.Description?.Trim(),
                     Type = request.Type,
                     OwnerUserId = ownerUserId,
@@ -354,9 +399,21 @@ namespace ZansiHustle.Application.Merchants
                     SellerSubcategoryId = request.SellerSubcategoryId,
                     ContactEmail = request.ContactEmail?.Trim(),
                     ContactPhoneNumber = request.ContactPhoneNumber?.Trim(),
+                    WhatsAppNumber = request.WhatsAppNumber?.Trim(),
+                    SocialHandle = request.SocialHandle?.Trim(),
+                    IdNumber = request.IdNumber?.Trim(),
+                    ReferralCode = string.IsNullOrWhiteSpace(request.ReferralCode) ? null : request.ReferralCode.Trim().ToUpperInvariant(),
                     Province = request.Province?.Trim(),
                     City = request.City?.Trim(),
                     AddressLine1 = request.AddressLine1?.Trim(),
+                    Suburb = request.Suburb?.Trim(),
+                    PostalCode = request.PostalCode?.Trim(),
+                    Country = request.Country?.Trim(),
+                    CountryCode = string.IsNullOrWhiteSpace(request.CountryCode) ? null : request.CountryCode.Trim().ToUpperInvariant(),
+                    Latitude = request.Latitude,
+                    Longitude = request.Longitude,
+                    GooglePlaceId = request.GooglePlaceId?.Trim(),
+                    FormattedAddress = request.FormattedAddress?.Trim(),
                     WebsiteUrl = request.WebsiteUrl?.Trim(),
                     LogoUrl = request.LogoUrl?.Trim(),
                     BannerUrl = request.BannerUrl?.Trim(),
@@ -370,11 +427,43 @@ namespace ZansiHustle.Application.Merchants
                     CreatedAtUtc = DateTime.UtcNow
                 };
 
+                // Validate required verification uploads BEFORE writing the
+                // Merchant row. Each required purpose must be present among
+                // the supplied media-asset ids; admin then approves them
+                // separately to flip KycStatus.
+                if (request.MediaAssetIds is { Count: > 0 })
+                {
+                    var assets = await _mediaRepo.GetByIdsAsync(request.MediaAssetIds);
+                    foreach (var purpose in RequiredVerificationPurposes)
+                    {
+                        var hit = assets.Any(a =>
+                            a.UploadedByUserId == ownerUserId &&
+                            a.Purpose == purpose);
+                        if (!hit)
+                        {
+                            return Result<MerchantDto>.Failure(ErrorCodes.BadRequest,
+                                $"Verification upload missing: {purpose}.");
+                        }
+                    }
+                }
+                else
+                {
+                    return Result<MerchantDto>.Failure(ErrorCodes.BadRequest,
+                        "Verification uploads are required (ID document, selfie, product sample).");
+                }
+
                 await _merchantRepository.AddAsync(entity);
                 var saved = await _merchantRepository.SaveChangesAsync();
 
                 if (!saved)
                     return Result<MerchantDto>.Failure(ErrorCodes.Exception, "Failed to create shop.");
+
+                // Re-parent the orphan uploads onto the new Merchant id so
+                // the admin Sellers drawer can fetch them by owner.
+                await _mediaService.AttachToOwnerAsync(
+                    request.MediaAssetIds,
+                    Shared.Enums.Media.OwnerEntityType.Merchant,
+                    entity.Id);
 
                 var reloaded = await _merchantRepository.GetByIdAsync(entity.Id);
                 return Result<MerchantDto>.Success(MapToDto(reloaded ?? entity), "Shop created successfully.");
@@ -415,9 +504,20 @@ namespace ZansiHustle.Application.Merchants
                 merchant.SellerSubcategoryId = request.SellerSubcategoryId;
                 merchant.ContactEmail = request.ContactEmail?.Trim();
                 merchant.ContactPhoneNumber = request.ContactPhoneNumber?.Trim();
+                merchant.WhatsAppNumber = request.WhatsAppNumber?.Trim();
+                merchant.SocialHandle = request.SocialHandle?.Trim();
+                merchant.IdNumber = request.IdNumber?.Trim();
                 merchant.Province = request.Province?.Trim();
                 merchant.City = request.City?.Trim();
                 merchant.AddressLine1 = request.AddressLine1?.Trim();
+                merchant.Suburb = request.Suburb?.Trim();
+                merchant.PostalCode = request.PostalCode?.Trim();
+                merchant.Country = request.Country?.Trim();
+                merchant.CountryCode = string.IsNullOrWhiteSpace(request.CountryCode) ? null : request.CountryCode.Trim().ToUpperInvariant();
+                merchant.Latitude = request.Latitude;
+                merchant.Longitude = request.Longitude;
+                merchant.GooglePlaceId = request.GooglePlaceId?.Trim();
+                merchant.FormattedAddress = request.FormattedAddress?.Trim();
                 merchant.WebsiteUrl = request.WebsiteUrl?.Trim();
                 merchant.LogoUrl = request.LogoUrl?.Trim();
                 merchant.BannerUrl = request.BannerUrl?.Trim();
@@ -557,6 +657,32 @@ namespace ZansiHustle.Application.Merchants
             return $"MER-{DateTime.UtcNow:yyyyMMddHHmmssfff}";
         }
 
+        // Used by the seller-first onboarding flow (CreateMineAsync) when the
+        // applicant hasn't picked a shop name yet. Derives a friendly
+        // placeholder from the contact email/phone so the seller record is
+        // still distinguishable in admin listings until they rename it.
+        private static string BuildDefaultMerchantName(string? email, string? phone)
+        {
+            if (!string.IsNullOrWhiteSpace(email))
+            {
+                var local = email.Trim().Split('@')[0];
+                if (!string.IsNullOrWhiteSpace(local))
+                {
+                    var firstWord = local.Split(new[] { '.', '_', '-' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+                    if (!string.IsNullOrWhiteSpace(firstWord))
+                    {
+                        var capitalised = char.ToUpperInvariant(firstWord[0]) + firstWord[1..].ToLowerInvariant();
+                        return $"{capitalised}'s Hustle";
+                    }
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(phone))
+                return $"Seller {phone.Trim()[^4..]}";
+
+            return $"Seller {DateTime.UtcNow:yyyyMMddHHmm}";
+        }
+
         private static MerchantDto MapToDto(Merchant merchant)
         {
             return new MerchantDto
@@ -577,9 +703,22 @@ namespace ZansiHustle.Application.Merchants
                 SellerSubcategoryName = merchant.SellerSubcategory?.Name,
                 ContactEmail = merchant.ContactEmail,
                 ContactPhoneNumber = merchant.ContactPhoneNumber,
+                WhatsAppNumber = merchant.WhatsAppNumber,
+                SocialHandle = merchant.SocialHandle,
+                IdNumber = merchant.IdNumber,
+                ReferralCode = merchant.ReferralCode,
+                ReferrerUserId = merchant.ReferrerUserId,
                 Province = merchant.Province,
                 City = merchant.City,
                 AddressLine1 = merchant.AddressLine1,
+                Suburb = merchant.Suburb,
+                PostalCode = merchant.PostalCode,
+                Country = merchant.Country,
+                CountryCode = merchant.CountryCode,
+                Latitude = merchant.Latitude,
+                Longitude = merchant.Longitude,
+                GooglePlaceId = merchant.GooglePlaceId,
+                FormattedAddress = merchant.FormattedAddress,
                 WebsiteUrl = merchant.WebsiteUrl,
                 LogoUrl = merchant.LogoUrl,
                 BannerUrl = merchant.BannerUrl,

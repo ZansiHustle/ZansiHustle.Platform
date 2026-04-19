@@ -27,9 +27,22 @@ namespace ZansiHustle.Application.Merchants.Dtos
 
         public string? ContactEmail { get; set; }
         public string? ContactPhoneNumber { get; set; }
+        public string? WhatsAppNumber { get; set; }
+        public string? SocialHandle { get; set; }
+        public string? IdNumber { get; set; }
+        public string? ReferralCode { get; set; }
+        public Guid? ReferrerUserId { get; set; }
         public string? Province { get; set; }
         public string? City { get; set; }
         public string? AddressLine1 { get; set; }
+        public string? Suburb { get; set; }
+        public string? PostalCode { get; set; }
+        public string? Country { get; set; }
+        public string? CountryCode { get; set; }
+        public decimal? Latitude { get; set; }
+        public decimal? Longitude { get; set; }
+        public string? GooglePlaceId { get; set; }
+        public string? FormattedAddress { get; set; }
         public string? WebsiteUrl { get; set; }
         public string? LogoUrl { get; set; }
         public string? BannerUrl { get; set; }

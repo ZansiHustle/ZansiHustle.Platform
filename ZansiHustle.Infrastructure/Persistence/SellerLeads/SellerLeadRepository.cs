@@ -36,6 +36,17 @@ namespace ZansiHustle.Infrastructure.Persistence.SellerLeads
         }
 
         /// <inheritdoc />
+        public async Task<List<SellerLead>> GetByUserIdAsync(Guid userId)
+        {
+            return await _context.SellerLeads
+                .AsNoTracking()
+                .Include(x => x.AssignedUser)
+                .Where(x => x.AssignedUserId == userId)
+                .OrderByDescending(x => x.SubmittedAtUtc)
+                .ToListAsync();
+        }
+
+        /// <inheritdoc />
         public async Task<SellerLead?> GetByIdAsync(Guid id)
         {
             return await _context.SellerLeads

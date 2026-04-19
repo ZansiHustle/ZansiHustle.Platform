@@ -40,9 +40,31 @@ namespace ZansiHustle.Domain.Merchants
         public string? ContactEmail { get; set; }
         public string? ContactPhoneNumber { get; set; }
 
+        // Onboarding fields promoted from the Description-stash workaround.
+        // Capturing these as first-class columns so admin queries / analytics
+        // / attribution reports can join on them directly.
+        public string? WhatsAppNumber { get; set; }
+        public string? SocialHandle { get; set; }
+        public string? IdNumber { get; set; }              // sensitive — TODO encrypt at rest
+        public string? ReferralCode { get; set; }
+        public Guid? ReferrerUserId { get; set; }          // optional resolved owner of the referral code
+
         public string? Province { get; set; }
         public string? City { get; set; }
         public string? AddressLine1 { get; set; }
+
+        // Structured address captured from Google Places Autocomplete.
+        // Province/City remain primary — these are supplementary fields the
+        // picker fills in so we can render maps, filter by suburb/postal,
+        // and run geo queries without re-geocoding later.
+        public string? Suburb { get; set; }
+        public string? PostalCode { get; set; }
+        public string? Country { get; set; }       // long name, e.g. "South Africa"
+        public string? CountryCode { get; set; }   // ISO-2 short name, e.g. "ZA"
+        public decimal? Latitude { get; set; }
+        public decimal? Longitude { get; set; }
+        public string? GooglePlaceId { get; set; }
+        public string? FormattedAddress { get; set; }
 
         public string? WebsiteUrl { get; set; }
         public string? LogoUrl { get; set; }

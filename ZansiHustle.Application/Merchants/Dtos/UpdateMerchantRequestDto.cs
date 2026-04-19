@@ -17,6 +17,9 @@ namespace ZansiHustle.Application.Merchants.Dtos
         public Guid? SellerSubcategoryId { get; set; }
         public string? ContactEmail { get; set; }
         public string? ContactPhoneNumber { get; set; }
+        public string? WhatsAppNumber { get; set; }
+        public string? SocialHandle { get; set; }
+        public string? IdNumber { get; set; }
         public string? Province { get; set; }
         public string? City { get; set; }
         public string? AddressLine1 { get; set; }

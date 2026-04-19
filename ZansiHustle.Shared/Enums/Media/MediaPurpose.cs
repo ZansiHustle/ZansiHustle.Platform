@@ -1,0 +1,30 @@
+namespace ZansiHustle.Shared.Enums.Media
+{
+    /// <summary>
+    /// Why this media exists. Each purpose maps deterministically to a default
+    /// Visibility tier (Private vs Public) and to whether it requires admin
+    /// review (e.g. IdDocument always needs review; ProductGallery never does).
+    /// Keep stable — purposes are stored as integers in the DB.
+    /// </summary>
+    public enum MediaPurpose
+    {
+        // ── Private verification ─────────────────────────────────────
+        IdDocument = 1,
+        Portrait = 2,
+        VerificationProductSample = 3,
+        VerificationOther = 4,
+
+        // ── Public listing / display ─────────────────────────────────
+        ProductGallery = 10,
+        ProductHero = 11,
+        ServiceGallery = 12,
+        ServiceHero = 13,
+
+        // ── Profile / brand ──────────────────────────────────────────
+        ShopLogo = 20,
+        ShopBanner = 21,
+        UserAvatar = 22,
+
+        Other = 99,
+    }
+}

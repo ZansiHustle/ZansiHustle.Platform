@@ -1200,6 +1200,101 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.ToTable("Listings", (string)null);
                 });
 
+            modelBuilder.Entity("ZansiHustle.Domain.Media.MediaAsset", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("DurationSeconds")
+                        .HasColumnType("int");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<long>("FileSizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("int");
+
+                    b.Property<Guid?>("OwnerEntityId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("OwnerEntityType")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Purpose")
+                        .HasColumnType("int");
+
+                    b.Property<string>("RejectionReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime?>("ReviewedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ReviewedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("int");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<string>("StorageContainer")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("StorageKey")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("nvarchar(400)");
+
+                    b.Property<string>("ThumbnailStorageKey")
+                        .HasMaxLength(400)
+                        .HasColumnType("nvarchar(400)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("UploadedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("UploadedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Visibility")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("StorageKey")
+                        .IsUnique();
+
+                    b.HasIndex("UploadedByUserId");
+
+                    b.HasIndex("OwnerEntityType", "OwnerEntityId");
+
+                    b.HasIndex("OwnerEntityType", "OwnerEntityId", "Purpose");
+
+                    b.ToTable("MediaAssets", (string)null);
+                });
+
             modelBuilder.Entity("ZansiHustle.Domain.Merchants.Merchant", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1231,6 +1326,14 @@ namespace ZansiHustle.Infrastructure.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
 
+                    b.Property<string>("Country")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("CountryCode")
+                        .HasMaxLength(2)
+                        .HasColumnType("nvarchar(2)");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
 
@@ -1241,15 +1344,35 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.Property<int>("FollowersCount")
                         .HasColumnType("int");
 
+                    b.Property<string>("FormattedAddress")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("GooglePlaceId")
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<string>("IdNumber")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
                     b.Property<bool>("IsPayoutEligible")
                         .HasColumnType("bit");
 
                     b.Property<int>("KycStatus")
                         .HasColumnType("int");
 
+                    b.Property<decimal?>("Latitude")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("decimal(9,6)");
+
                     b.Property<string>("LogoUrl")
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
+
+                    b.Property<decimal?>("Longitude")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("decimal(9,6)");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -1259,6 +1382,10 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.Property<Guid?>("OwnerUserId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("PostalCode")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
                     b.Property<string>("Province")
                         .HasMaxLength(150)
                         .HasColumnType("nvarchar(150)");
@@ -1266,6 +1393,13 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.Property<decimal?>("Rating")
                         .HasPrecision(5, 2)
                         .HasColumnType("decimal(5,2)");
+
+                    b.Property<string>("ReferralCode")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<Guid?>("ReferrerUserId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<int>("ReviewCount")
                         .HasColumnType("int");
@@ -1281,8 +1415,16 @@ namespace ZansiHustle.Infrastructure.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
+                    b.Property<string>("SocialHandle")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
                     b.Property<int>("Status")
                         .HasColumnType("int");
+
+                    b.Property<string>("Suburb")
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
 
                     b.Property<int>("TotalOrders")
                         .HasColumnType("int");
@@ -1301,6 +1443,10 @@ namespace ZansiHustle.Infrastructure.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
+                    b.Property<string>("WhatsAppNumber")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
                     b.HasKey("Id");
 
                     b.HasIndex("City");
@@ -1312,6 +1458,8 @@ namespace ZansiHustle.Infrastructure.Migrations
 
                     b.HasIndex("ContactPhoneNumber");
 
+                    b.HasIndex("GooglePlaceId");
+
                     b.HasIndex("IsPayoutEligible");
 
                     b.HasIndex("KycStatus");
@@ -1320,7 +1468,13 @@ namespace ZansiHustle.Infrastructure.Migrations
 
                     b.HasIndex("OwnerUserId");
 
+                    b.HasIndex("PostalCode");
+
                     b.HasIndex("Province");
+
+                    b.HasIndex("ReferralCode");
+
+                    b.HasIndex("ReferrerUserId");
 
                     b.HasIndex("SellerCategoryId");
 
@@ -1332,6 +1486,8 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.HasIndex("Status");
 
                     b.HasIndex("Type");
+
+                    b.HasIndex("Latitude", "Longitude");
 
                     b.ToTable("Merchants", (string)null);
                 });
@@ -1752,6 +1908,164 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.HasIndex("PodcastId");
 
                     b.ToTable("PodcastAdFormats", (string)null);
+                });
+
+            modelBuilder.Entity("ZansiHustle.Domain.Referrals.AffiliateProfile", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("ClickCount")
+                        .HasColumnType("int");
+
+                    b.Property<decimal?>("CommissionRate")
+                        .HasPrecision(6, 4)
+                        .HasColumnType("decimal(6,4)");
+
+                    b.Property<int>("ConversionCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("JoinCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("ReferralCode")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("nvarchar(60)");
+
+                    b.Property<string>("Tier")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsActive");
+
+                    b.HasIndex("ReferralCode")
+                        .IsUnique();
+
+                    b.HasIndex("UserId")
+                        .IsUnique();
+
+                    b.ToTable("AffiliateProfiles", (string)null);
+                });
+
+            modelBuilder.Entity("ZansiHustle.Domain.Referrals.ReferralClick", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AffiliateProfileId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("ClickedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("ConvertedUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("IpHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("LandingPath")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("ReferralCode")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("nvarchar(60)");
+
+                    b.Property<string>("UserAgent")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AffiliateProfileId");
+
+                    b.HasIndex("ClickedAtUtc");
+
+                    b.HasIndex("ReferralCode");
+
+                    b.ToTable("ReferralClicks", (string)null);
+                });
+
+            modelBuilder.Entity("ZansiHustle.Domain.Referrals.UserReferral", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AffiliateProfileId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("ConvertedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("JoinedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ReferralCodeUsed")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("nvarchar(60)");
+
+                    b.Property<int>("ReferralType")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("ReferredUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ReferrerUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("SourcePath")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AffiliateProfileId");
+
+                    b.HasIndex("ReferralCodeUsed");
+
+                    b.HasIndex("ReferrerUserId");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("ReferredUserId", "ReferralType")
+                        .IsUnique();
+
+                    b.ToTable("UserReferrals", (string)null);
                 });
 
             modelBuilder.Entity("ZansiHustle.Domain.SellerCategories.SellerCategory", b =>
@@ -2195,6 +2509,39 @@ namespace ZansiHustle.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Podcast");
+                });
+
+            modelBuilder.Entity("ZansiHustle.Domain.Referrals.AffiliateProfile", b =>
+                {
+                    b.HasOne("ZansiHustle.Domain.Identity.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("ZansiHustle.Domain.Referrals.ReferralClick", b =>
+                {
+                    b.HasOne("ZansiHustle.Domain.Referrals.AffiliateProfile", "AffiliateProfile")
+                        .WithMany()
+                        .HasForeignKey("AffiliateProfileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("AffiliateProfile");
+                });
+
+            modelBuilder.Entity("ZansiHustle.Domain.Referrals.UserReferral", b =>
+                {
+                    b.HasOne("ZansiHustle.Domain.Referrals.AffiliateProfile", "AffiliateProfile")
+                        .WithMany()
+                        .HasForeignKey("AffiliateProfileId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("AffiliateProfile");
                 });
 
             modelBuilder.Entity("ZansiHustle.Domain.SellerCategories.SellerSubcategory", b =>

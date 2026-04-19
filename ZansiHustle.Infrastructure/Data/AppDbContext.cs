@@ -11,10 +11,12 @@ using ZansiHustle.Domain.Fundraising;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Domain.Influencers;
 using ZansiHustle.Domain.Listings;
+using ZansiHustle.Domain.Media;
 using ZansiHustle.Domain.Merchants;
 using ZansiHustle.Domain.Orders;
 using ZansiHustle.Domain.Payments;
 using ZansiHustle.Domain.Podcasts;
+using ZansiHustle.Domain.Referrals;
 using ZansiHustle.Domain.SellerCategories;
 using ZansiHustle.Domain.SellerLeads;
 
@@ -120,4 +122,12 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
 
     public DbSet<Valuation> FundraisingValuations => Set<Valuation>();
     public DbSet<Stakeholder> FundraisingStakeholders => Set<Stakeholder>();
+
+    // ── Standalone referral / affiliate system ────────────────────────────
+    public DbSet<AffiliateProfile> AffiliateProfiles => Set<AffiliateProfile>();
+    public DbSet<UserReferral> UserReferrals => Set<UserReferral>();
+    public DbSet<ReferralClick> ReferralClicks => Set<ReferralClick>();
+
+    // ── Shared media / blob-metadata system ───────────────────────────────
+    public DbSet<MediaAsset> MediaAssets => Set<MediaAsset>();
 }

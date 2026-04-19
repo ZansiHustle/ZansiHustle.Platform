@@ -12,6 +12,14 @@ namespace ZansiHustle.Application.SellerLeads
     public interface ISellerLeadService
     {
         Task<Result<List<SellerLeadListItemDto>>> GetAllAsync();
+
+        /// <summary>
+        /// Returns the signed-in user's own seller leads, most recent first.
+        /// Used by the merchant portal to gate onboarding and surface
+        /// application status without admin-level access.
+        /// </summary>
+        Task<Result<List<SellerLeadDetailsDto>>> GetMineAsync();
+
         Task<Result<SellerLeadDetailsDto>> GetByIdAsync(Guid id);
         Task<Result<SellerLeadDetailsDto>> CreateAsync(CreateSellerLeadRequestDto request);
 

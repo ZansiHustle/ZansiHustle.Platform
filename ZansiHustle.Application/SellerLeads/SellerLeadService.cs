@@ -58,6 +58,27 @@ namespace ZansiHustle.Application.SellerLeads
         }
 
         /// <inheritdoc />
+        public async Task<Result<List<SellerLeadDetailsDto>>> GetMineAsync()
+        {
+            try
+            {
+                if (!_currentUserService.UserId.HasValue)
+                {
+                    return Result<List<SellerLeadDetailsDto>>.Failure("Authenticated user was not found.");
+                }
+
+                var leads = await _sellerLeadRepository.GetByUserIdAsync(_currentUserService.UserId.Value);
+                var data = leads.Select(MapToDetailsDto).ToList();
+
+                return Result<List<SellerLeadDetailsDto>>.Success(data, "Seller leads retrieved successfully.");
+            }
+            catch (Exception ex)
+            {
+                return Result<List<SellerLeadDetailsDto>>.Failure($"An error occurred while retrieving your seller leads. {ex.Message}");
+            }
+        }
+
+        /// <inheritdoc />
         public async Task<Result<SellerLeadDetailsDto>> GetByIdAsync(Guid id)
         {
             try
@@ -92,11 +113,10 @@ namespace ZansiHustle.Application.SellerLeads
                     return Result<SellerLeadDetailsDto>.Failure("Contact name is required.");
                 }
 
-                if (string.IsNullOrWhiteSpace(request.BusinessName))
-                {
-                    return Result<SellerLeadDetailsDto>.Failure("Business name is required.");
-                }
-
+                // BusinessName is optional under the seller-first onboarding model:
+                // the user becomes a seller account first, then later applies for a
+                // shop/storefront. When omitted, fall back to ContactName so the
+                // entity stays consistent with the public-create path above.
                 if (!_currentUserService.UserId.HasValue)
                 {
                     return Result<SellerLeadDetailsDto>.Failure("Authenticated user was not found.");
@@ -107,7 +127,9 @@ namespace ZansiHustle.Application.SellerLeads
                     Id = Guid.NewGuid(),
                     Code = $"SLD-{DateTime.UtcNow:yyyyMMddHHmmssfff}",
                     ContactName = request.ContactName.Trim(),
-                    BusinessName = request.BusinessName.Trim(),
+                    BusinessName = string.IsNullOrWhiteSpace(request.BusinessName)
+                        ? request.ContactName.Trim()
+                        : request.BusinessName.Trim(),
                     LeadType = request.LeadType,
                     Category = request.Category?.Trim(),
                     Subcategory = request.Subcategory?.Trim(),
@@ -309,11 +331,7 @@ namespace ZansiHustle.Application.SellerLeads
                     return Result<SellerLeadDetailsDto>.Failure("Contact name is required.");
                 }
 
-                if (string.IsNullOrWhiteSpace(request.BusinessName))
-                {
-                    return Result<SellerLeadDetailsDto>.Failure("Business name is required.");
-                }
-
+                // BusinessName is optional — see CreateAsync. Falls back to ContactName.
                 if (!_currentUserService.UserId.HasValue)
                 {
                     return Result<SellerLeadDetailsDto>.Failure("Authenticated user was not found.");
@@ -327,7 +345,9 @@ namespace ZansiHustle.Application.SellerLeads
                 }
 
                 sellerLead.ContactName = request.ContactName.Trim();
-                sellerLead.BusinessName = request.BusinessName.Trim();
+                sellerLead.BusinessName = string.IsNullOrWhiteSpace(request.BusinessName)
+                    ? request.ContactName.Trim()
+                    : request.BusinessName.Trim();
                 sellerLead.LeadType = request.LeadType;
                 sellerLead.Category = request.Category?.Trim();
                 sellerLead.Subcategory = request.Subcategory?.Trim();

@@ -63,6 +63,23 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Merchants
             builder.Property(x => x.ContactPhoneNumber)
                 .HasMaxLength(30);
 
+            builder.Property(x => x.WhatsAppNumber)
+                .HasMaxLength(30);
+
+            builder.Property(x => x.SocialHandle)
+                .HasMaxLength(300);
+
+            builder.Property(x => x.IdNumber)
+                .HasMaxLength(30);
+
+            builder.Property(x => x.ReferralCode)
+                .HasMaxLength(40);
+
+            // Indexed so attribution lookups (count merchants per referrer code
+            // / per agent user) stay cheap as the table grows.
+            builder.HasIndex(x => x.ReferralCode);
+            builder.HasIndex(x => x.ReferrerUserId);
+
             builder.Property(x => x.Province)
                 .HasMaxLength(150);
 
@@ -71,6 +88,23 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Merchants
 
             builder.Property(x => x.AddressLine1)
                 .HasMaxLength(300);
+
+            // Structured address — supplementary fields filled in by the
+            // Google Places picker (see AddressAutocomplete on the frontend).
+            builder.Property(x => x.Suburb).HasMaxLength(150);
+            builder.Property(x => x.PostalCode).HasMaxLength(20);
+            builder.Property(x => x.Country).HasMaxLength(100);
+            builder.Property(x => x.CountryCode).HasMaxLength(2);
+            builder.Property(x => x.GooglePlaceId).HasMaxLength(120);
+            builder.Property(x => x.FormattedAddress).HasMaxLength(500);
+            // DECIMAL(9,6) covers +/-180.000000 for lng and +/-90.000000 for
+            // lat at roughly 0.1m precision — plenty for map + search UX.
+            builder.Property(x => x.Latitude).HasPrecision(9, 6);
+            builder.Property(x => x.Longitude).HasPrecision(9, 6);
+
+            builder.HasIndex(x => x.PostalCode);
+            builder.HasIndex(x => new { x.Latitude, x.Longitude });
+            builder.HasIndex(x => x.GooglePlaceId);
 
             builder.Property(x => x.WebsiteUrl)
                 .HasMaxLength(500);

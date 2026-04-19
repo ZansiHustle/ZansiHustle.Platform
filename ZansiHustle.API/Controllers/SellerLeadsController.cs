@@ -38,6 +38,19 @@ namespace ZansiHustle.API.Controllers
         }
 
         /// <summary>
+        /// Gets the signed-in user's own seller leads (most recent first).
+        /// Used by the merchant portal to gate /merchant/onboarding and
+        /// surface "application pending" state.
+        /// </summary>
+        [HttpGet("mine")]
+        public async Task<IActionResult> GetMine()
+        {
+            var result = await _sellerLeadService.GetMineAsync();
+
+            return Ok(result);
+        }
+
+        /// <summary>
         /// Gets a seller lead by identifier.
         /// </summary>
         [HttpGet("{id:guid}")]

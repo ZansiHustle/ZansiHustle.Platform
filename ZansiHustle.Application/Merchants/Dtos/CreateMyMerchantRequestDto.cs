@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using ZansiHustle.Shared.Enums.Merchants;
 
 namespace ZansiHustle.Application.Merchants.Dtos
@@ -17,11 +18,35 @@ namespace ZansiHustle.Application.Merchants.Dtos
         public Guid? SellerSubcategoryId { get; set; }
         public string? ContactEmail { get; set; }
         public string? ContactPhoneNumber { get; set; }
+        public string? WhatsAppNumber { get; set; }
+        public string? SocialHandle { get; set; }
+        public string? IdNumber { get; set; }
+        public string? ReferralCode { get; set; }
         public string? Province { get; set; }
         public string? City { get; set; }
         public string? AddressLine1 { get; set; }
+
+        // Structured address from Google Places Autocomplete. All optional;
+        // Province/City above remain the primary fields. The picker fills
+        // everything in one go so the seller doesn't enter duplicate data.
+        public string? Suburb { get; set; }
+        public string? PostalCode { get; set; }
+        public string? Country { get; set; }
+        public string? CountryCode { get; set; }
+        public decimal? Latitude { get; set; }
+        public decimal? Longitude { get; set; }
+        public string? GooglePlaceId { get; set; }
+        public string? FormattedAddress { get; set; }
+
         public string? WebsiteUrl { get; set; }
         public string? LogoUrl { get; set; }
         public string? BannerUrl { get; set; }
+
+        /// <summary>
+        /// Ids of MediaAsset rows the client uploaded during onboarding
+        /// (ID document, portrait/selfie, product sample, etc.). The
+        /// service re-parents them onto the new Merchant.
+        /// </summary>
+        public List<Guid> MediaAssetIds { get; set; } = new();
     }
 }

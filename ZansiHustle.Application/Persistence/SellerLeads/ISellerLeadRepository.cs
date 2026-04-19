@@ -17,6 +17,14 @@ namespace ZansiHustle.Application.Persistence.SellerLeads
         Task<List<SellerLead>> GetAllAsync();
 
         /// <summary>
+        /// Gets seller leads associated with a specific user (most recent first).
+        /// Used by the merchant portal to detect whether the signed-in user has
+        /// already submitted a seller application.
+        /// </summary>
+        /// <param name="userId">The owning user's id.</param>
+        Task<List<SellerLead>> GetByUserIdAsync(Guid userId);
+
+        /// <summary>
         /// Gets a single seller lead by its unique identifier.
         /// </summary>
         /// <param name="id">The seller lead identifier.</param>
