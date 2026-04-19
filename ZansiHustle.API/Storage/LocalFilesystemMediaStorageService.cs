@@ -4,46 +4,98 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using ZansiHustle.Application.Media.Storage;
 
 namespace ZansiHustle.API.Storage
 {
     /// <summary>
-    /// Dev / test storage adapter. Files live under
-    /// {ContentRoot}/wwwroot/_media/{container}/{storageKey}.
+    /// Dev / test / UAT storage adapter.
     ///
-    /// "Signed" PUT/GET URLs are simply
-    ///     {host}/api/media/raw/{container}/{key}?sig={hmac}&exp={unix}
-    /// served by RawMediaController. This keeps the upload/download contract
-    /// identical to the cloud adapter so the frontend code is portable.
+    /// Path resolution (first match wins):
+    ///   1. Configuration "Media:LocalBasePath" — absolute path the host
+    ///      operator explicitly configured. Use this on UAT/Azure App
+    ///      Service to point at a guaranteed-writable location
+    ///      (e.g. D:\home\data\_media on App Service).
+    ///   2. {ContentRootPath}/App_Data/_media — the historical writable
+    ///      location under the deployed app. NOT served by the static-file
+    ///      pipeline, so private verification blobs aren't accidentally
+    ///      exposed.
+    ///
+    /// Why not wwwroot? It's often made read-only by CI/IIS and is also
+    /// served by the static-file middleware — neither property is desirable
+    /// for private uploads.
+    ///
+    /// Signed PUT/GET URLs point at RawMediaController and carry an HMAC
+    /// signature over (verb|container|key|expiry) so a GET signature can't
+    /// be replayed as a PUT.
     /// </summary>
     public class LocalFilesystemMediaStorageService : IMediaStorageService
     {
-        private readonly IHostEnvironment _env;
+        private readonly IWebHostEnvironment _env;
         private readonly IHttpContextAccessor _http;
+        private readonly IConfiguration _config;
+        private readonly ILogger<LocalFilesystemMediaStorageService> _logger;
         private readonly string _hmacKey;
 
         public LocalFilesystemMediaStorageService(
-            IHostEnvironment env, IHttpContextAccessor http, IConfiguration config)
+            IWebHostEnvironment env,
+            IHttpContextAccessor http,
+            IConfiguration config,
+            ILogger<LocalFilesystemMediaStorageService> logger)
         {
             _env = env;
             _http = http;
-            // Reuses the JWT signing key as a dev-only HMAC for URL signing.
-            // Replace with a dedicated key for any non-dev deployment that
-            // still uses the local adapter.
-            _hmacKey = config["JwtSettings:Key"] ?? "zh-local-media-dev-key";
+            _config = config;
+            _logger = logger;
+
+            // Prefer a dedicated signing key; fall back to JWT key so dev
+            // works out-of-the-box. When neither is set we still have a
+            // deterministic fallback so upload tickets always sign.
+            _hmacKey = config["Media:SigningKey"]
+                       ?? config["JwtSettings:Key"]
+                       ?? "zh-local-media-dev-key";
+
+            // Fail fast at startup if the configured media root isn't
+            // writable — much easier to diagnose than per-request 500s.
+            try
+            {
+                var root = GetMediaRoot();
+                Directory.CreateDirectory(root);
+                _logger.LogInformation("[Media] LocalFilesystemMediaStorageService base path: {Path}", root);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "[Media] Failed to initialise local media base path. Set Media:LocalBasePath in configuration to an absolute, writable directory.");
+                // Don't rethrow — we don't want the whole host to fail to
+                // start. Per-request calls will surface the concrete error
+                // instead (MediaService now wraps them with a clean message).
+            }
         }
 
         public Task<MediaUploadTicket> IssueUploadAsync(
             string container, string storageKey, string contentType, long maxSizeBytes, TimeSpan ttl)
         {
-            // Make sure the directory exists ahead of the upload. The signed
-            // PUT route writes into this path verbatim.
-            var dir = Path.Combine(GetMediaRoot(), container, Path.GetDirectoryName(storageKey) ?? "");
-            Directory.CreateDirectory(dir);
+            try
+            {
+                var dir = Path.Combine(GetMediaRoot(), container, Path.GetDirectoryName(storageKey) ?? string.Empty);
+                Directory.CreateDirectory(dir);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                _logger.LogError(ex, "[Media] Cannot create media directory (permission denied). Root: {Root}", GetMediaRoot());
+                throw new InvalidOperationException(
+                    "Media storage is not writable. Set Media:LocalBasePath to a writable directory.", ex);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Media] Failed to prepare media directory.");
+                throw;
+            }
 
             var expires = DateTime.UtcNow.Add(ttl);
             var url = BuildSignedUrl(container, storageKey, expires, "PUT");
@@ -78,7 +130,8 @@ namespace ZansiHustle.API.Storage
         public Task DeleteAsync(string container, string storageKey)
         {
             var path = Path.Combine(GetMediaRoot(), container, storageKey);
-            try { if (File.Exists(path)) File.Delete(path); } catch { /* swallow */ }
+            try { if (File.Exists(path)) File.Delete(path); }
+            catch (Exception ex) { _logger.LogWarning(ex, "[Media] Delete failed for {Path}", path); }
             return Task.CompletedTask;
         }
 
@@ -112,15 +165,25 @@ namespace ZansiHustle.API.Storage
 
         private string GetMediaRoot()
         {
-            var web = (_env as IWebHostEnvironment)?.WebRootPath
-                       ?? Path.Combine(_env.ContentRootPath, "wwwroot");
-            return Path.Combine(web, "_media");
+            // 1) Explicit host override — preferred on UAT / Azure App
+            //    Service where ContentRoot is read-only but a dedicated
+            //    writable path (e.g. D:\home\data\_media) exists.
+            var configured = _config["Media:LocalBasePath"];
+            if (!string.IsNullOrWhiteSpace(configured))
+                return configured.Trim();
+
+            // 2) App_Data under the deployed content root. Convention for
+            //    writable, non-served data across Windows/Linux hosts.
+            var contentRoot = _env.ContentRootPath;
+            if (string.IsNullOrWhiteSpace(contentRoot))
+                contentRoot = AppContext.BaseDirectory;
+            return Path.Combine(contentRoot, "App_Data", "_media");
         }
 
         private string ResolveHost()
         {
             var req = _http.HttpContext?.Request;
-            if (req is null) return "";
+            if (req is null) return string.Empty;
             return $"{req.Scheme}://{req.Host}";
         }
     }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using ZansiHustle.Application.Common.Interfaces.Shared;
 using ZansiHustle.Application.Media.Dtos;
 using ZansiHustle.Application.Media.Storage;
@@ -31,6 +32,7 @@ namespace ZansiHustle.Application.Media
         private readonly IMediaAssetRepository _repo;
         private readonly IMediaStorageService _storage;
         private readonly ICurrentUserService _currentUser;
+        private readonly ILogger<MediaService> _logger;
 
         // Per-purpose policy: container, visibility, max bytes, allowed MIMEs,
         // and whether the asset enters admin review after upload.
@@ -61,15 +63,19 @@ namespace ZansiHustle.Application.Media
         public MediaService(
             IMediaAssetRepository repo,
             IMediaStorageService storage,
-            ICurrentUserService currentUser)
+            ICurrentUserService currentUser,
+            ILogger<MediaService> logger)
         {
             _repo = repo;
             _storage = storage;
             _currentUser = currentUser;
+            _logger = logger;
         }
 
         public async Task<Result<IssueUploadResponseDto>> IssueUploadAsync(IssueUploadRequestDto request)
         {
+            // Validation returns Failure (never throws) so bad payloads
+            // become 400 instead of opaque 500s.
             if (request is null)
                 return Result<IssueUploadResponseDto>.Failure(ErrorCodes.BadRequest, "Request is required.");
             if (!_currentUser.UserId.HasValue)
@@ -93,83 +99,122 @@ namespace ZansiHustle.Application.Media
                 return Result<IssueUploadResponseDto>.Failure(ErrorCodes.BadRequest,
                     $"Content type '{request.ContentType}' is not allowed for this purpose.");
 
-            var assetId = Guid.NewGuid();
-            var ext = SafeExtensionFor(request.FileName, contentType);
-            // Storage key layout: {ownerType}/{ownerOrUserId}/{purpose}/{assetId}{ext}
-            // Keeps a flat prefix scan per-owner cheap; assetId guarantees uniqueness.
-            var ownerSegment = request.OwnerEntityId?.ToString("n") ?? $"u-{_currentUser.UserId.Value:n}";
-            var storageKey = $"{(int)request.OwnerEntityType}/{ownerSegment}/{(int)request.Purpose}/{assetId:n}{ext}";
-
-            var ticket = await _storage.IssueUploadAsync(
-                policy.Container, storageKey, contentType, policy.MaxBytes, TimeSpan.FromMinutes(15));
-
-            var entity = new MediaAsset
+            // Storage adapter + DB save can throw at runtime (permissions,
+            // disk full, DB constraint). Without this try/catch the endpoint
+            // returned an opaque 500 on UAT with no diagnostic — wrap so
+            // clients see a clean message AND the exception hits the log.
+            try
             {
-                Id = assetId,
-                OwnerEntityType = request.OwnerEntityType,
-                OwnerEntityId = request.OwnerEntityId,
-                UploadedByUserId = _currentUser.UserId.Value,
-                Kind = request.Kind,
-                Purpose = request.Purpose,
-                Visibility = policy.Visibility,
-                Status = MediaStatus.Pending,
-                StorageContainer = policy.Container,
-                StorageKey = storageKey,
-                FileName = request.FileName,
-                ContentType = contentType,
-                FileSizeBytes = request.FileSizeBytes,
-                CreatedAtUtc = DateTime.UtcNow,
-            };
-            await _repo.AddAsync(entity);
-            await _repo.SaveChangesAsync();
+                var assetId = Guid.NewGuid();
+                var ext = SafeExtensionFor(request.FileName, contentType);
+                // Storage key layout: {ownerType}/{ownerOrUserId}/{purpose}/{assetId}{ext}
+                // Keeps a flat prefix scan per-owner cheap; assetId guarantees uniqueness.
+                var ownerSegment = request.OwnerEntityId?.ToString("n") ?? $"u-{_currentUser.UserId.Value:n}";
+                var storageKey = $"{(int)request.OwnerEntityType}/{ownerSegment}/{(int)request.Purpose}/{assetId:n}{ext}";
 
-            return Result<IssueUploadResponseDto>.Success(new IssueUploadResponseDto
+                var ticket = await _storage.IssueUploadAsync(
+                    policy.Container, storageKey, contentType, policy.MaxBytes, TimeSpan.FromMinutes(15));
+
+                var entity = new MediaAsset
+                {
+                    Id = assetId,
+                    OwnerEntityType = request.OwnerEntityType,
+                    OwnerEntityId = request.OwnerEntityId,
+                    UploadedByUserId = _currentUser.UserId.Value,
+                    Kind = request.Kind,
+                    Purpose = request.Purpose,
+                    Visibility = policy.Visibility,
+                    Status = MediaStatus.Pending,
+                    StorageContainer = policy.Container,
+                    StorageKey = storageKey,
+                    FileName = request.FileName,
+                    ContentType = contentType,
+                    FileSizeBytes = request.FileSizeBytes,
+                    CreatedAtUtc = DateTime.UtcNow,
+                };
+                await _repo.AddAsync(entity);
+                await _repo.SaveChangesAsync();
+
+                return Result<IssueUploadResponseDto>.Success(new IssueUploadResponseDto
+                {
+                    MediaAssetId = assetId,
+                    UploadUrl = ticket.UploadUrl,
+                    Method = ticket.Method,
+                    Headers = ticket.Headers,
+                    ExpiresAtUtc = ticket.ExpiresAtUtc,
+                }, "Upload ticket issued.");
+            }
+            catch (Exception ex)
             {
-                MediaAssetId = assetId,
-                UploadUrl = ticket.UploadUrl,
-                Method = ticket.Method,
-                Headers = ticket.Headers,
-                ExpiresAtUtc = ticket.ExpiresAtUtc,
-            }, "Upload ticket issued.");
+                _logger.LogError(ex,
+                    "[Media] IssueUploadAsync failed for user {UserId} purpose {Purpose}",
+                    _currentUser.UserId, request.Purpose);
+                return Result<IssueUploadResponseDto>.Failure(ErrorCodes.Exception,
+                    $"Failed to issue upload ticket: {ex.Message}");
+            }
         }
 
         public async Task<Result<MediaAssetDto>> FinalizeAsync(Guid id)
         {
-            var asset = await _repo.GetByIdAsync(id);
-            if (asset is null)
-                return Result<MediaAssetDto>.Failure(ErrorCodes.NotFound, "Media asset not found.");
+            try
+            {
+                var asset = await _repo.GetByIdAsync(id);
+                if (asset is null)
+                    return Result<MediaAssetDto>.Failure(ErrorCodes.NotFound, "Media asset not found.");
 
-            if (!_currentUser.UserId.HasValue || asset.UploadedByUserId != _currentUser.UserId.Value)
-                return Result<MediaAssetDto>.Failure(ErrorCodes.Forbidden, "You did not upload this asset.");
+                if (!_currentUser.UserId.HasValue || asset.UploadedByUserId != _currentUser.UserId.Value)
+                    return Result<MediaAssetDto>.Failure(ErrorCodes.Forbidden, "You did not upload this asset.");
 
-            var exists = await _storage.ExistsAsync(asset.StorageContainer, asset.StorageKey);
-            if (!exists)
-                return Result<MediaAssetDto>.Failure(ErrorCodes.BadRequest, "Blob not found in storage. Did the upload complete?");
+                var exists = await _storage.ExistsAsync(asset.StorageContainer, asset.StorageKey);
+                if (!exists)
+                    return Result<MediaAssetDto>.Failure(ErrorCodes.BadRequest, "Blob not found in storage. Did the upload complete?");
 
-            var policy = Policies.GetValueOrDefault(asset.Purpose);
-            asset.Status = (policy?.RequiresReview ?? false) ? MediaStatus.PendingReview : MediaStatus.Uploaded;
-            asset.UploadedAtUtc = DateTime.UtcNow;
-            asset.UpdatedAtUtc = DateTime.UtcNow;
-            _repo.Update(asset);
-            await _repo.SaveChangesAsync();
+                var policy = Policies.GetValueOrDefault(asset.Purpose);
+                asset.Status = (policy?.RequiresReview ?? false) ? MediaStatus.PendingReview : MediaStatus.Uploaded;
+                asset.UploadedAtUtc = DateTime.UtcNow;
+                asset.UpdatedAtUtc = DateTime.UtcNow;
+                _repo.Update(asset);
+                await _repo.SaveChangesAsync();
 
-            return Result<MediaAssetDto>.Success(await ToDtoAsync(asset), "Finalized.");
+                return Result<MediaAssetDto>.Success(await ToDtoAsync(asset), "Finalized.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Media] FinalizeAsync failed for {Id}", id);
+                return Result<MediaAssetDto>.Failure(ErrorCodes.Exception, $"Failed to finalize media: {ex.Message}");
+            }
         }
 
         public async Task<Result<MediaAssetDto>> GetAsync(Guid id)
         {
-            var asset = await _repo.GetByIdAsync(id);
-            if (asset is null)
-                return Result<MediaAssetDto>.Failure(ErrorCodes.NotFound, "Media asset not found.");
-            return Result<MediaAssetDto>.Success(await ToDtoAsync(asset), "OK");
+            try
+            {
+                var asset = await _repo.GetByIdAsync(id);
+                if (asset is null)
+                    return Result<MediaAssetDto>.Failure(ErrorCodes.NotFound, "Media asset not found.");
+                return Result<MediaAssetDto>.Success(await ToDtoAsync(asset), "OK");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Media] GetAsync failed for {Id}", id);
+                return Result<MediaAssetDto>.Failure(ErrorCodes.Exception, $"Failed to load media: {ex.Message}");
+            }
         }
 
         public async Task<Result<List<MediaAssetDto>>> GetByOwnerAsync(OwnerEntityType ownerType, Guid ownerId)
         {
-            var assets = await _repo.GetByOwnerAsync(ownerType, ownerId);
-            var dtos = new List<MediaAssetDto>(assets.Count);
-            foreach (var a in assets) dtos.Add(await ToDtoAsync(a));
-            return Result<List<MediaAssetDto>>.Success(dtos, "OK");
+            try
+            {
+                var assets = await _repo.GetByOwnerAsync(ownerType, ownerId);
+                var dtos = new List<MediaAssetDto>(assets.Count);
+                foreach (var a in assets) dtos.Add(await ToDtoAsync(a));
+                return Result<List<MediaAssetDto>>.Success(dtos, "OK");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Media] GetByOwnerAsync failed for {OwnerType}/{OwnerId}", ownerType, ownerId);
+                return Result<List<MediaAssetDto>>.Failure(ErrorCodes.Exception, $"Failed to load media list: {ex.Message}");
+            }
         }
 
         public async Task<Result<MediaAssetDto>> ReviewAsync(Guid id, ReviewMediaRequestDto request)
@@ -179,19 +224,27 @@ namespace ZansiHustle.Application.Media
             if (!_currentUser.UserId.HasValue)
                 return Result<MediaAssetDto>.Failure(ErrorCodes.Unauthorized, "Authenticated user required.");
 
-            var asset = await _repo.GetByIdAsync(id);
-            if (asset is null)
-                return Result<MediaAssetDto>.Failure(ErrorCodes.NotFound, "Media asset not found.");
+            try
+            {
+                var asset = await _repo.GetByIdAsync(id);
+                if (asset is null)
+                    return Result<MediaAssetDto>.Failure(ErrorCodes.NotFound, "Media asset not found.");
 
-            asset.Status = request.Approved ? MediaStatus.Approved : MediaStatus.Rejected;
-            asset.ReviewedByUserId = _currentUser.UserId.Value;
-            asset.ReviewedAtUtc = DateTime.UtcNow;
-            asset.RejectionReason = request.Approved ? null : request.RejectionReason?.Trim();
-            asset.UpdatedAtUtc = DateTime.UtcNow;
-            _repo.Update(asset);
-            await _repo.SaveChangesAsync();
+                asset.Status = request.Approved ? MediaStatus.Approved : MediaStatus.Rejected;
+                asset.ReviewedByUserId = _currentUser.UserId.Value;
+                asset.ReviewedAtUtc = DateTime.UtcNow;
+                asset.RejectionReason = request.Approved ? null : request.RejectionReason?.Trim();
+                asset.UpdatedAtUtc = DateTime.UtcNow;
+                _repo.Update(asset);
+                await _repo.SaveChangesAsync();
 
-            return Result<MediaAssetDto>.Success(await ToDtoAsync(asset), request.Approved ? "Approved." : "Rejected.");
+                return Result<MediaAssetDto>.Success(await ToDtoAsync(asset), request.Approved ? "Approved." : "Rejected.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Media] ReviewAsync failed for {Id}", id);
+                return Result<MediaAssetDto>.Failure(ErrorCodes.Exception, $"Failed to review media: {ex.Message}");
+            }
         }
 
         public async Task<Result> AttachToOwnerAsync(
@@ -200,16 +253,24 @@ namespace ZansiHustle.Application.Media
             if (!_currentUser.UserId.HasValue)
                 return Result.Failure(ErrorCodes.Unauthorized, "Authenticated user required.");
 
-            var orphans = await _repo.GetOrphansForUserAsync(_currentUser.UserId.Value, mediaAssetIds);
-            foreach (var asset in orphans)
+            try
             {
-                asset.OwnerEntityType = ownerType;
-                asset.OwnerEntityId = ownerId;
-                asset.UpdatedAtUtc = DateTime.UtcNow;
-                _repo.Update(asset);
+                var orphans = await _repo.GetOrphansForUserAsync(_currentUser.UserId.Value, mediaAssetIds);
+                foreach (var asset in orphans)
+                {
+                    asset.OwnerEntityType = ownerType;
+                    asset.OwnerEntityId = ownerId;
+                    asset.UpdatedAtUtc = DateTime.UtcNow;
+                    _repo.Update(asset);
+                }
+                if (orphans.Count > 0) await _repo.SaveChangesAsync();
+                return Result.Success("Attached.");
             }
-            if (orphans.Count > 0) await _repo.SaveChangesAsync();
-            return Result.Success("Attached.");
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Media] AttachToOwnerAsync failed for {OwnerType}/{OwnerId}", ownerType, ownerId);
+                return Result.Failure(ErrorCodes.Exception, $"Failed to attach media: {ex.Message}");
+            }
         }
 
         // ── Helpers ───────────────────────────────────────────────────────
