@@ -32,6 +32,16 @@ namespace ZansiHustle.Application.Persistence.SellerLeads
         Task<SellerLead?> GetByIdAsync(Guid id);
 
         /// <summary>
+        /// Finds the seller lead that produced a given merchant, or failing
+        /// that, any lead submitted with the same email. Used by the seller
+        /// portal to fall back onto richer onboarding-form data when the
+        /// Merchant record's own fields are null (e.g. legacy onboarding
+        /// captured into SellerLead; Merchant created later without copying
+        /// every field).
+        /// </summary>
+        Task<SellerLead?> FindFallbackForMerchantAsync(Guid merchantId, string? email);
+
+        /// <summary>
         /// Gets a single seller lead by its unique business code.
         /// </summary>
         /// <param name="code">The seller lead code.</param>

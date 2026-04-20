@@ -4,10 +4,14 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using ZansiHustle.Application.Common.Interfaces.Shared;
+using ZansiHustle.Application.Media.Storage;
 using ZansiHustle.Application.Merchants.Dtos;
 using ZansiHustle.Application.Persistence.Merchants;
 using ZansiHustle.Application.Persistence.SellerCategories;
+using ZansiHustle.Application.Persistence.SellerLeads;
 using ZansiHustle.Domain.Merchants;
+using ZansiHustle.Domain.SellerLeads;
 using ZansiHustle.Shared.Enums.Merchants;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
@@ -23,17 +27,26 @@ namespace ZansiHustle.Application.Merchants
         private readonly ISellerCategoryRepository _sellerCategoryRepository;
         private readonly Application.Media.IMediaService _mediaService;
         private readonly Application.Persistence.Media.IMediaAssetRepository _mediaRepo;
+        private readonly IUserLookupService _userLookup;
+        private readonly ISellerLeadRepository _sellerLeadRepository;
+        private readonly IMediaStorageService _mediaStorage;
 
         public MerchantService(
             IMerchantRepository merchantRepository,
             ISellerCategoryRepository sellerCategoryRepository,
             Application.Media.IMediaService mediaService,
-            Application.Persistence.Media.IMediaAssetRepository mediaRepo)
+            Application.Persistence.Media.IMediaAssetRepository mediaRepo,
+            IUserLookupService userLookup,
+            ISellerLeadRepository sellerLeadRepository,
+            IMediaStorageService mediaStorage)
         {
             _merchantRepository = merchantRepository;
             _sellerCategoryRepository = sellerCategoryRepository;
             _mediaService = mediaService;
             _mediaRepo = mediaRepo;
+            _userLookup = userLookup;
+            _sellerLeadRepository = sellerLeadRepository;
+            _mediaStorage = mediaStorage;
         }
 
         // Verification uploads required for self-registration. Used both at
@@ -355,9 +368,36 @@ namespace ZansiHustle.Application.Merchants
             try
             {
                 var merchants = await _merchantRepository.GetByOwnerAsync(ownerUserId);
-                var data = merchants.Select(MapToDto).ToList();
 
-                return Result<List<MerchantDto>>.Success(data, "Shops retrieved successfully.");
+                // Fallback sources for fields that might be null on the Merchant
+                // row (earlier partial-PATCH bug, onboarding skipped, etc.):
+                //   1. User (Identity) — email, phone
+                //   2. SellerLead — the richer onboarding form: email, phone,
+                //      city, province, category (string), subcategory (string)
+                // Both are fetched once per request, not per merchant, since
+                // a user typically has one or two shops.
+                var user = await _userLookup.GetContactAsync(ownerUserId);
+
+                var mapped = new List<MerchantDto>(merchants.Count);
+                foreach (var m in merchants)
+                {
+                    // Lead lookup is per-merchant because ConvertedSellerId is
+                    // merchant-specific. The email fallback inside the repo
+                    // makes the query resilient when the formal conversion
+                    // wasn't performed (user re-onboarded under the same email).
+                    var lead = await _sellerLeadRepository
+                        .FindFallbackForMerchantAsync(m.Id, user?.Email);
+                    var dto = MapToDtoWithFallback(m, user, lead);
+                    // Refresh stored R2 URLs so logo/banner survive beyond the
+                    // original presigned TTL. Without this, URLs rot after
+                    // logout/login and images 403 — the exact symptom seen
+                    // in the post-shop-creation flow.
+                    dto.LogoUrl   = await RefreshStoredUrlAsync(dto.LogoUrl);
+                    dto.BannerUrl = await RefreshStoredUrlAsync(dto.BannerUrl);
+                    mapped.Add(dto);
+                }
+
+                return Result<List<MerchantDto>>.Success(mapped, "Shops retrieved successfully.");
             }
             catch (Exception ex)
             {
@@ -730,6 +770,108 @@ namespace ZansiHustle.Application.Merchants
                 CreatedAtUtc = merchant.CreatedAtUtc,
                 UpdatedAtUtc = merchant.UpdatedAtUtc
             };
+        }
+
+        /// <summary>
+        /// Overload of <see cref="MapToDto"/> that fills shop-profile holes
+        /// from richer sources in priority order:
+        ///   1. Merchant row itself (always wins when populated)
+        ///   2. SellerLead submitted during onboarding (the legacy
+        ///      rich-data form — still the source of truth for category /
+        ///      subcategory / province / city if those never made it onto
+        ///      the Merchant row)
+        ///   3. Identity User (email, phone from the auth account)
+        ///
+        /// Prevents a merchant record with minimal or clobbered data from
+        /// rendering as a wall of blanks in the seller portal. When the
+        /// backend starts consistently writing all onboarding fields onto
+        /// the Merchant row, the fallback branches quietly stop firing.
+        /// </summary>
+        private static MerchantDto MapToDtoWithFallback(
+            Merchant merchant,
+            UserContactInfo? user,
+            SellerLead? lead)
+        {
+            var dto = MapToDto(merchant);
+
+            // Lead-based fallbacks — covers the legacy onboarding flow where
+            // rich data lived on SellerLead and was never fully copied onto
+            // the Merchant row. Admin views already surface these fields
+            // correctly because the admin list shows leads and merchants
+            // side-by-side; this brings /merchant/shop to parity.
+            if (lead is not null)
+            {
+                if (string.IsNullOrWhiteSpace(dto.ContactEmail))           dto.ContactEmail           = lead.Email;
+                if (string.IsNullOrWhiteSpace(dto.ContactPhoneNumber))     dto.ContactPhoneNumber     = lead.PhoneNumber;
+                if (string.IsNullOrWhiteSpace(dto.Province))               dto.Province               = lead.Province;
+                if (string.IsNullOrWhiteSpace(dto.City))                   dto.City                   = lead.City;
+                if (string.IsNullOrWhiteSpace(dto.SellerCategoryName))     dto.SellerCategoryName     = lead.Category;
+                if (string.IsNullOrWhiteSpace(dto.SellerSubcategoryName))  dto.SellerSubcategoryName  = lead.Subcategory;
+                if (string.IsNullOrWhiteSpace(dto.SocialHandle))           dto.SocialHandle           = lead.SocialHandleOrLink;
+            }
+
+            // User-based fallbacks (weakest) — the auth account always has
+            // an email and usually a phone. Last resort when nothing else
+            // has filled the hole.
+            if (user is not null)
+            {
+                if (string.IsNullOrWhiteSpace(dto.ContactEmail))        dto.ContactEmail       = user.Email;
+                if (string.IsNullOrWhiteSpace(dto.ContactPhoneNumber))  dto.ContactPhoneNumber = user.PhoneNumber;
+            }
+
+            return dto;
+        }
+
+        /// <summary>
+        /// If a stored URL points at our R2 storage, extract the bucket +
+        /// key and re-issue a fresh read URL. This is the fix for shop
+        /// logo / banner images going 403 after the original presigned
+        /// TTL expires — the Merchant row still has the URL string, but
+        /// the signature in it is stale. We regenerate on every read so
+        /// images stay valid for at least the new TTL (7 days for public,
+        /// or permanent if Storage:R2:PublicBaseUrl is configured, per
+        /// IMediaStorageService.IssueReadUrlAsync).
+        ///
+        /// Non-R2 URLs (external CDNs, legacy mock images) pass through
+        /// unchanged. Malformed inputs pass through rather than throw.
+        /// </summary>
+        private async Task<string?> RefreshStoredUrlAsync(string? storedUrl)
+        {
+            if (string.IsNullOrWhiteSpace(storedUrl)) return storedUrl;
+            if (!storedUrl.Contains("r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase)
+                && !storedUrl.Contains("r2.dev", StringComparison.OrdinalIgnoreCase))
+                return storedUrl;
+
+            try
+            {
+                var uri = new Uri(storedUrl);
+                var path = uri.AbsolutePath.TrimStart('/');
+                var firstSlash = path.IndexOf('/');
+                if (firstSlash < 0) return storedUrl;
+
+                var bucket = path[..firstSlash];
+                var key    = path[(firstSlash + 1)..];
+
+                // Map the actual R2 bucket name back to the logical
+                // container MediaService uses. Anything containing
+                // "public" in the name maps to the public container;
+                // everything else is treated as private (a conservative
+                // default — a typo'd bucket name shouldn't leak a long
+                // public URL to a private asset).
+                var container = bucket.Contains("public", StringComparison.OrdinalIgnoreCase)
+                    ? "public"
+                    : "private";
+
+                var ttl = container == "public"
+                    ? TimeSpan.FromDays(7)
+                    : TimeSpan.FromMinutes(15);
+
+                return await _mediaStorage.IssueReadUrlAsync(container, key, ttl);
+            }
+            catch
+            {
+                return storedUrl;
+            }
         }
     }
 }

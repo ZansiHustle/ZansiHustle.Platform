@@ -282,6 +282,7 @@ public static class ServiceExtensions
     public static IServiceCollection AddApiServices(this IServiceCollection services)
     {
         services.AddScoped<ICurrentUserService, CurrentUserService>();
+        services.AddScoped<IUserLookupService, UserLookupService>();
         services.AddScoped<IUatSeederService, UatSeederService>();
         return services;
     }

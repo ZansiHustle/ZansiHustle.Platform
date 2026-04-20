@@ -287,9 +287,21 @@ namespace ZansiHustle.Application.Media
             string? readUrl = null;
             // Only resolve a read URL once the blob exists. Avoid signing
             // URLs to assets that haven't finished uploading yet.
+            //
+            // TTL choice: public-container assets (shop logo, shop banner,
+            // product imagery) are often persisted as URLs on other records
+            // (Merchant.LogoUrl, Listing image arrays), so a 15-minute
+            // signed URL rots the moment the user navigates away. Use
+            // 7 days — the SigV4 maximum — for public content. Private
+            // verification/KYC media stays at 15 minutes because admin
+            // review happens inside a single session and we don't want
+            // long-lived links to ID documents.
             if (a.Status != MediaStatus.Pending)
             {
-                readUrl = await _storage.IssueReadUrlAsync(a.StorageContainer, a.StorageKey, TimeSpan.FromMinutes(15));
+                var ttl = string.Equals(a.StorageContainer, "public", StringComparison.OrdinalIgnoreCase)
+                    ? TimeSpan.FromDays(7)
+                    : TimeSpan.FromMinutes(15);
+                readUrl = await _storage.IssueReadUrlAsync(a.StorageContainer, a.StorageKey, ttl);
             }
             return new MediaAssetDto
             {

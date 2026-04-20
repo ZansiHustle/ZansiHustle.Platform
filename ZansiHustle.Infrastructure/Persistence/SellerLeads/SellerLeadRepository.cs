@@ -47,6 +47,31 @@ namespace ZansiHustle.Infrastructure.Persistence.SellerLeads
         }
 
         /// <inheritdoc />
+        public async Task<SellerLead?> FindFallbackForMerchantAsync(Guid merchantId, string? email)
+        {
+            // Strongest signal: the admin conversion flow stamped this lead's
+            // ConvertedSellerId with the merchant it produced. Prefer that.
+            var byConverted = await _context.SellerLeads
+                .AsNoTracking()
+                .Where(x => x.ConvertedSellerId == merchantId)
+                .OrderByDescending(x => x.SubmittedAtUtc)
+                .FirstOrDefaultAsync();
+            if (byConverted != null) return byConverted;
+
+            // Fallback: any lead the same user submitted (identified by
+            // email). Fuzzy but covers the legacy case where a lead was
+            // never formally "converted" but the user later created a
+            // Merchant directly under the same email.
+            if (string.IsNullOrWhiteSpace(email)) return null;
+
+            return await _context.SellerLeads
+                .AsNoTracking()
+                .Where(x => x.Email != null && x.Email.ToLower() == email.ToLower())
+                .OrderByDescending(x => x.SubmittedAtUtc)
+                .FirstOrDefaultAsync();
+        }
+
+        /// <inheritdoc />
         public async Task<SellerLead?> GetByIdAsync(Guid id)
         {
             return await _context.SellerLeads
