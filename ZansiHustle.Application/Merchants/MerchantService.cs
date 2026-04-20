@@ -762,6 +762,14 @@ namespace ZansiHustle.Application.Merchants
                 WebsiteUrl = merchant.WebsiteUrl,
                 LogoUrl = merchant.LogoUrl,
                 BannerUrl = merchant.BannerUrl,
+                // Derived shop-existence signal. Any of these fields being
+                // populated means the merchant has moved past onboarding
+                // into shop presentation. Frontend reads this directly
+                // instead of re-deriving from individual fields.
+                HasShop =
+                    !string.IsNullOrWhiteSpace(merchant.Description) ||
+                    !string.IsNullOrWhiteSpace(merchant.LogoUrl) ||
+                    !string.IsNullOrWhiteSpace(merchant.BannerUrl),
                 FollowersCount = merchant.FollowersCount,
                 Rating = merchant.Rating,
                 ReviewCount = merchant.ReviewCount,
