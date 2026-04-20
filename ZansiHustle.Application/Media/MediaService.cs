@@ -34,6 +34,15 @@ namespace ZansiHustle.Application.Media
         private readonly ICurrentUserService _currentUser;
         private readonly ILogger<MediaService> _logger;
 
+        // IMPORTANT: these MIME arrays MUST be declared BEFORE the Policies
+        // dictionary. Static field initializers run in textual order, so
+        // putting Policies first left AllowedMimes=null at the moment each
+        // MediaPolicy was constructed — which then blew up as an
+        // ArgumentNullException at the first request.
+        private static readonly string[] ImagesOnly    = { "image/jpeg", "image/png", "image/webp", "image/gif" };
+        private static readonly string[] ImagesOrPdf   = { "image/jpeg", "image/png", "image/webp", "application/pdf" };
+        private static readonly string[] ImagesOrVideo = { "image/jpeg", "image/png", "image/webp", "video/mp4", "video/webm", "video/quicktime" };
+
         // Per-purpose policy: container, visibility, max bytes, allowed MIMEs,
         // and whether the asset enters admin review after upload.
         private static readonly Dictionary<MediaPurpose, MediaPolicy> Policies = new()
@@ -55,10 +64,6 @@ namespace ZansiHustle.Application.Media
 
             [MediaPurpose.Other]          = new("private", MediaVisibility.Private, 10_000_000, ImagesOrPdf, RequiresReview: false),
         };
-
-        private static readonly string[] ImagesOnly   = { "image/jpeg", "image/png", "image/webp", "image/gif" };
-        private static readonly string[] ImagesOrPdf  = { "image/jpeg", "image/png", "image/webp", "application/pdf" };
-        private static readonly string[] ImagesOrVideo = { "image/jpeg", "image/png", "image/webp", "video/mp4", "video/webm", "video/quicktime" };
 
         public MediaService(
             IMediaAssetRepository repo,
@@ -95,7 +100,10 @@ namespace ZansiHustle.Application.Media
                     $"File too large. Max for this purpose is {policy.MaxBytes / 1_000_000}MB.");
 
             var contentType = request.ContentType.ToLowerInvariant().Trim();
-            if (!policy.AllowedMimes.Contains(contentType))
+            // Belt-and-braces: if AllowedMimes somehow ends up null (static
+            // init regression, missing policy entry rehydrated from
+            // elsewhere), treat it as a clean 400 instead of throwing NRE.
+            if (policy.AllowedMimes is null || !policy.AllowedMimes.Contains(contentType))
                 return Result<IssueUploadResponseDto>.Failure(ErrorCodes.BadRequest,
                     $"Content type '{request.ContentType}' is not allowed for this purpose.");
 
