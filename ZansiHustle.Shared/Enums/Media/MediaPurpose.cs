@@ -13,6 +13,12 @@ namespace ZansiHustle.Shared.Enums.Media
         Portrait = 2,
         VerificationProductSample = 3,
         VerificationOther = 4,
+        /// <summary>
+        /// Bank confirmation letter / recent bank statement uploaded on the
+        /// seller's /merchant/bank page to speed up payout verification.
+        /// Same privacy + admin-review semantics as other verification docs.
+        /// </summary>
+        BankProof = 5,
 
         // ── Public listing / display ─────────────────────────────────
         ProductGallery = 10,

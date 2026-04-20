@@ -52,6 +52,11 @@ namespace ZansiHustle.Application.Media
             [MediaPurpose.Portrait]                  = new("private", MediaVisibility.Private,  6_000_000, ImagesOnly, RequiresReview: true),
             [MediaPurpose.VerificationProductSample] = new("private", MediaVisibility.Private, 10_000_000, ImagesOrVideo, RequiresReview: true),
             [MediaPurpose.VerificationOther]         = new("private", MediaVisibility.Private, 10_000_000, ImagesOrPdf, RequiresReview: true),
+            // Bank confirmation letter or statement — private, reviewable.
+            // Re-uses ImagesOrPdf because banks commonly hand out both scans
+            // and native PDFs. 10MB cap matches the rest of the verification
+            // bucket.
+            [MediaPurpose.BankProof]                 = new("private", MediaVisibility.Private, 10_000_000, ImagesOrPdf, RequiresReview: true),
 
             // ── Display (Public + no review) ──────────────────────────────
             [MediaPurpose.ProductGallery] = new("public", MediaVisibility.Public, 12_000_000, ImagesOrVideo, RequiresReview: false),
