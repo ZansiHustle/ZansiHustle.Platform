@@ -54,6 +54,16 @@ namespace ZansiHustle.Application.Merchants.Dtos
         /// value stays stable across devices/sessions.
         /// </summary>
         public bool HasShop { get; set; }
+
+        /// <summary>Bank / payout details.</summary>
+        public string? BankName { get; set; }
+        public string? BankAccountHolder { get; set; }
+        public string? BankAccountNumber { get; set; }
+        public string? BankAccountType { get; set; }
+        public string? BankBranchCode { get; set; }
+        public bool IsBankVerified { get; set; }
+        public DateTime? BankUpdatedAtUtc { get; set; }
+
         public int FollowersCount { get; set; }
         public decimal? Rating { get; set; }
         public int ReviewCount { get; set; }

@@ -25,6 +25,13 @@ namespace ZansiHustle.Application.Merchants
         Task<Result<List<MerchantDto>>> GetMineAsync(Guid ownerUserId);
         Task<Result<MerchantDto>> CreateMineAsync(Guid ownerUserId, CreateMyMerchantRequestDto request);
         Task<Result<MerchantDto>> UpdateMineAsync(Guid ownerUserId, Guid merchantId, UpdateMyMerchantRequestDto request);
+        /// <summary>
+        /// Update only the bank/payout details on a merchant the caller
+        /// owns. Keeps bank updates separate from profile updates so the
+        /// two paths never clobber each other. Any change resets
+        /// IsBankVerified → false so payouts pause until re-verification.
+        /// </summary>
+        Task<Result<MerchantDto>> UpdateMyBankAsync(Guid ownerUserId, Guid merchantId, UpdateMyBankRequestDto request);
         Task<Result> DeleteMineAsync(Guid ownerUserId, Guid merchantId);
     }
 }

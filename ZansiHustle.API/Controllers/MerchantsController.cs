@@ -137,6 +137,23 @@ namespace ZansiHustle.API.Controllers
         }
 
         /// <summary>
+        /// Updates bank / payout details on the current user's shop.
+        /// Separate endpoint so bank-only saves never clobber shop
+        /// profile fields (shop update is full-replace).
+        /// </summary>
+        [HttpPut("mine/{id:guid}/bank")]
+        [ProducesResponseType(typeof(Result<MerchantDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> UpdateMyBank(Guid id, [FromBody] UpdateMyBankRequestDto request)
+        {
+            var userId = _currentUserService.UserId;
+            if (!userId.HasValue)
+                return ToActionResult(Result<MerchantDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            var result = await _merchantService.UpdateMyBankAsync(userId.Value, id, request);
+            return ToActionResult(result);
+        }
+
+        /// <summary>
         /// Deletes a shop owned by the current authenticated user.
         /// </summary>
         [HttpDelete("mine/{id:guid}")]

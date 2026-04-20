@@ -70,6 +70,21 @@ namespace ZansiHustle.Domain.Merchants
         public string? LogoUrl { get; set; }
         public string? BannerUrl { get; set; }
 
+        // ── Bank / payout details ───────────────────────────────────
+        // Used by the seller portal's /merchant/bank page. A change to any
+        // of these fields resets IsBankVerified → false; payouts pause
+        // until compliance confirms the new account (micro-deposit or
+        // similar). AccountNumber is sensitive — TODO encrypt at rest
+        // (same open item as IdNumber above). For now stored as plain text
+        // on a row already gated behind owner-user authorization.
+        public string? BankName { get; set; }
+        public string? BankAccountHolder { get; set; }
+        public string? BankAccountNumber { get; set; }
+        public string? BankAccountType { get; set; }
+        public string? BankBranchCode { get; set; }
+        public bool IsBankVerified { get; set; }
+        public DateTime? BankUpdatedAtUtc { get; set; }
+
         public int FollowersCount { get; set; }
         public decimal? Rating { get; set; }
         public int ReviewCount { get; set; }

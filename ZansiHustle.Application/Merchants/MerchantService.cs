@@ -579,6 +579,63 @@ namespace ZansiHustle.Application.Merchants
         }
 
         /// <inheritdoc />
+        public async Task<Result<MerchantDto>> UpdateMyBankAsync(Guid ownerUserId, Guid merchantId, UpdateMyBankRequestDto request)
+        {
+            try
+            {
+                if (request is null)
+                    return Result<MerchantDto>.Failure(ErrorCodes.BadRequest, "Request is required.");
+
+                var merchant = await _merchantRepository.GetByIdAsync(merchantId);
+                if (merchant is null)
+                    return Result<MerchantDto>.Failure(ErrorCodes.NotFound, "Shop not found.");
+                if (merchant.OwnerUserId != ownerUserId)
+                    return Result<MerchantDto>.Failure(ErrorCodes.Forbidden, "You do not have permission to update this shop.");
+
+                // Detect whether any banking-relevant field actually changed
+                // before resetting verification. No-op saves (user opens the
+                // form and clicks Save without changing anything) should not
+                // blow away a verified status and pause their payouts.
+                var changed =
+                    !string.Equals(merchant.BankName ?? string.Empty,         (request.BankName ?? string.Empty).Trim(), StringComparison.Ordinal) ||
+                    !string.Equals(merchant.BankAccountHolder ?? string.Empty, (request.BankAccountHolder ?? string.Empty).Trim(), StringComparison.Ordinal) ||
+                    !string.Equals(merchant.BankAccountNumber ?? string.Empty, (request.BankAccountNumber ?? string.Empty).Trim(), StringComparison.Ordinal) ||
+                    !string.Equals(merchant.BankAccountType ?? string.Empty,   (request.BankAccountType ?? string.Empty).Trim(), StringComparison.Ordinal) ||
+                    !string.Equals(merchant.BankBranchCode ?? string.Empty,    (request.BankBranchCode ?? string.Empty).Trim(), StringComparison.Ordinal);
+
+                merchant.BankName          = request.BankName?.Trim();
+                merchant.BankAccountHolder = request.BankAccountHolder?.Trim();
+                merchant.BankAccountNumber = request.BankAccountNumber?.Trim();
+                merchant.BankAccountType   = request.BankAccountType?.Trim();
+                merchant.BankBranchCode    = request.BankBranchCode?.Trim();
+
+                if (changed)
+                {
+                    // Any real edit re-enters the compliance queue —
+                    // admin flips IsBankVerified back to true after check.
+                    merchant.IsBankVerified = false;
+                    merchant.BankUpdatedAtUtc = DateTime.UtcNow;
+                }
+
+                merchant.UpdatedAtUtc = DateTime.UtcNow;
+                _merchantRepository.Update(merchant);
+                var saved = await _merchantRepository.SaveChangesAsync();
+                if (!saved)
+                    return Result<MerchantDto>.Failure(ErrorCodes.Exception, "Failed to update bank details.");
+
+                var reloaded = await _merchantRepository.GetByIdAsync(merchant.Id);
+                return Result<MerchantDto>.Success(MapToDto(reloaded ?? merchant),
+                    changed
+                        ? "Bank details saved — re-verification in progress."
+                        : "Bank details saved.");
+            }
+            catch (Exception ex)
+            {
+                return Result<MerchantDto>.Failure(ErrorCodes.Exception, $"An error occurred while updating your bank details. {ex.Message}");
+            }
+        }
+
+        /// <inheritdoc />
         public async Task<Result> DeleteMineAsync(Guid ownerUserId, Guid merchantId)
         {
             try
@@ -762,6 +819,13 @@ namespace ZansiHustle.Application.Merchants
                 WebsiteUrl = merchant.WebsiteUrl,
                 LogoUrl = merchant.LogoUrl,
                 BannerUrl = merchant.BannerUrl,
+                BankName = merchant.BankName,
+                BankAccountHolder = merchant.BankAccountHolder,
+                BankAccountNumber = merchant.BankAccountNumber,
+                BankAccountType = merchant.BankAccountType,
+                BankBranchCode = merchant.BankBranchCode,
+                IsBankVerified = merchant.IsBankVerified,
+                BankUpdatedAtUtc = merchant.BankUpdatedAtUtc,
                 // Derived shop-existence signal. Any of these fields being
                 // populated means the merchant has moved past onboarding
                 // into shop presentation. Frontend reads this directly
