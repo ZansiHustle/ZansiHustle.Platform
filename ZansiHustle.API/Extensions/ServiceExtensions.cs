@@ -357,7 +357,7 @@ public static class ServiceExtensions
     /// <summary>
     /// Registers marketing and operations repositories and services.
     /// </summary>
-    public static IServiceCollection AddMarketingAndOperationsServices(this IServiceCollection services)
+    public static IServiceCollection AddMarketingAndOperationsServices(this IServiceCollection services, IConfiguration configuration)
     {
         // Repositories
         services.AddScoped<IAgentApplicationRepository, AgentApplicationRepository>();
@@ -419,14 +419,26 @@ public static class ServiceExtensions
         services.AddScoped<ZansiHustle.Application.Referrals.IReferralService,
                            ZansiHustle.Application.Referrals.ReferralService>();
 
-        // Shared media / blob-metadata system. Storage adapter is the local
-        // filesystem in dev — swap to AzureBlobMediaStorageService in
-        // production by changing this single registration.
+        // Shared media / blob-metadata system. Storage backend is chosen by
+        // config: if Storage:R2:AccountId is set we use Cloudflare R2, else
+        // we fall back to the local filesystem adapter so local dev still
+        // works out-of-the-box with no credentials.
         services.AddHttpContextAccessor();
         services.AddScoped<ZansiHustle.Application.Persistence.Media.IMediaAssetRepository,
                            ZansiHustle.Infrastructure.Persistence.Media.MediaAssetRepository>();
-        services.AddScoped<ZansiHustle.Application.Media.Storage.IMediaStorageService,
-                           ZansiHustle.API.Storage.LocalFilesystemMediaStorageService>();
+
+        var r2AccountId = configuration["Storage:R2:AccountId"];
+        if (!string.IsNullOrWhiteSpace(r2AccountId))
+        {
+            services.AddScoped<ZansiHustle.Application.Media.Storage.IMediaStorageService,
+                               ZansiHustle.API.Storage.R2MediaStorageService>();
+        }
+        else
+        {
+            services.AddScoped<ZansiHustle.Application.Media.Storage.IMediaStorageService,
+                               ZansiHustle.API.Storage.LocalFilesystemMediaStorageService>();
+        }
+
         services.AddScoped<ZansiHustle.Application.Media.IMediaService,
                            ZansiHustle.Application.Media.MediaService>();
 

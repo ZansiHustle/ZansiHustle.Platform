@@ -43,7 +43,7 @@ builder.Services.AddOtpServices(builder.Configuration);
 // ============================================================================
 // 8. MARKETING & OPERATIONS SERVICES
 // ============================================================================
-builder.Services.AddMarketingAndOperationsServices();
+builder.Services.AddMarketingAndOperationsServices(builder.Configuration);
 
 // ============================================================================
 // 8a. PAYMENTS (Paystack)
