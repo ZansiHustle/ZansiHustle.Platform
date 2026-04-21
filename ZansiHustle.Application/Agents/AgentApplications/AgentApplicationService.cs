@@ -111,6 +111,64 @@ namespace ZansiHustle.Application.Agents.AgentApplications
         }
 
         /// <inheritdoc />
+        public async Task<Result<AgentApplicationDetailsDto>> AdminCreateAsync(
+            CreateAgentApplicationRequestDto request,
+            AgentApplicationStatus initialStatus,
+            Guid? reviewedByUserId)
+        {
+            try
+            {
+                if (request is null)
+                {
+                    return Result<AgentApplicationDetailsDto>.Failure("Request is required.");
+                }
+                if (string.IsNullOrWhiteSpace(request.FullName))
+                {
+                    return Result<AgentApplicationDetailsDto>.Failure("Full name is required.");
+                }
+
+                var now = DateTime.UtcNow;
+                var entity = new AgentApplication
+                {
+                    Id = Guid.NewGuid(),
+                    Code = $"AAP-{now:yyyyMMddHHmmssfff}",
+                    FullName = request.FullName.Trim(),
+                    PhoneNumber = request.PhoneNumber?.Trim(),
+                    Email = request.Email?.Trim(),
+                    Province = request.Province?.Trim(),
+                    City = request.City?.Trim(),
+                    SocialHandle = request.SocialHandle?.Trim(),
+                    Notes = request.Notes?.Trim(),
+                    Status = initialStatus,
+                    SubmittedAtUtc = now,
+                    CreatedAtUtc = now,
+                };
+
+                // Mirror the review audit trail when admin creates an
+                // already-approved agent — keeps downstream analytics
+                // consistent with the "agent was approved by X at T" view.
+                if (initialStatus != AgentApplicationStatus.Pending)
+                {
+                    entity.ReviewedAtUtc = now;
+                    entity.ReviewedByUserId = reviewedByUserId;
+                }
+
+                await _agentApplicationRepository.AddAsync(entity);
+                var saved = await _agentApplicationRepository.SaveChangesAsync();
+                if (!saved)
+                {
+                    return Result<AgentApplicationDetailsDto>.Failure("Failed to create agent.");
+                }
+
+                return Result<AgentApplicationDetailsDto>.Success(MapToDetailsDto(entity), "Agent created successfully.");
+            }
+            catch (Exception ex)
+            {
+                return Result<AgentApplicationDetailsDto>.Failure($"An error occurred while creating the agent. {ex.Message}");
+            }
+        }
+
+        /// <inheritdoc />
         public async Task<Result<AgentApplicationDetailsDto>> ReviewAsync(Guid id, ReviewAgentApplicationRequestDto request)
         {
             try
