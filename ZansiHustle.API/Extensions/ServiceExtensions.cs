@@ -386,6 +386,8 @@ public static class ServiceExtensions
 
         // Services
         services.AddScoped<IAgentApplicationService, AgentApplicationService>();
+        services.AddScoped<ZansiHustle.Application.Agents.AgentProvisioning.IAgentProvisioningService,
+                           ZansiHustle.Application.Agents.AgentProvisioning.AgentProvisioningService>();
         services.AddScoped<ISellerLeadService, SellerLeadService>();
         services.AddScoped<IInfluencerService, InfluencerService>();
         services.AddScoped<IPodcastService, PodcastService>();
