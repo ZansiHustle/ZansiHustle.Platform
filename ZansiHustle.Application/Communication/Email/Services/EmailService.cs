@@ -98,6 +98,31 @@ public sealed class EmailService : IEmailService
         }
     }
 
+    public async Task<Result> SendPasswordResetOtpAsync(string toEmail, string firstName, string otpCode, int ttlMinutes, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var template = AuthEmailTemplates.BuildPasswordResetOtpEmail(firstName, otpCode, ttlMinutes);
+
+            var message = new EmailMessage
+            {
+                ToEmail = toEmail,
+                ToName = firstName,
+                Subject = template.Subject,
+                HtmlBody = template.HtmlBody,
+                PlainTextBody = template.PlainTextBody,
+                Sender = EmailSender.Security
+            };
+
+            return await _emailProvider.SendAsync(message, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to prepare password-reset OTP email for {Email}.", toEmail);
+            return Result.Failure(ErrorCodes.Exception, "Failed to send password reset email.");
+        }
+    }
+
     public async Task<Result> SendPasswordResetAsync(string toEmail, string firstName, string resetLink, CancellationToken cancellationToken = default)
     {
         try

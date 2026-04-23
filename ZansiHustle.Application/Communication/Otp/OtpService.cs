@@ -169,6 +169,16 @@ public sealed class OtpService : IOtpService
             case OtpChannel.Email:
             {
                 var displayName = string.IsNullOrWhiteSpace(request.DisplayName) ? "there" : request.DisplayName!;
+                // Pick purpose-specific email copy so the user sees
+                // language that matches why they're receiving the code
+                // (password reset vs generic verification). Falls back
+                // to the generic OTP template for anything we haven't
+                // authored dedicated copy for yet.
+                if (request.Purpose == OtpPurpose.PasswordReset)
+                {
+                    var ttlMinutes = (int)Math.Ceiling(_settings.TtlSeconds / 60.0);
+                    return await _emailService.SendPasswordResetOtpAsync(request.Destination, displayName, code, ttlMinutes, cancellationToken);
+                }
                 return await _emailService.SendOtpAsync(request.Destination, displayName, code, cancellationToken);
             }
             default:

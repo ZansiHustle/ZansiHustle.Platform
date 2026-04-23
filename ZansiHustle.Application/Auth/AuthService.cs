@@ -7,8 +7,11 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using ZansiHustle.Application.Auth.Dtos;
 using ZansiHustle.Application.Communications.Email.Interfaces;
+using ZansiHustle.Application.Communications.Otp.Interfaces;
+using ZansiHustle.Application.Communications.Otp.Models;
 using ZansiHustle.Application.Persistence.Identity;
 using ZansiHustle.Domain.Identity;
+using ZansiHustle.Shared.Enums.Communications;
 using ZansiHustle.Shared.Enums.User;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
@@ -24,13 +27,20 @@ public sealed class AuthService : IAuthService
     private readonly UserManager<User> _userManager;
     private readonly IJwtTokenGenerator _jwtTokenGenerator;
     private readonly IEmailService _emailService;
+    private readonly IOtpService _otpService;
     private readonly ILogger<AuthService> _logger;
 
-    public AuthService(UserManager<User> userManager, IJwtTokenGenerator jwtTokenGenerator, IEmailService emailService, ILogger<AuthService> logger)
+    public AuthService(
+        UserManager<User> userManager,
+        IJwtTokenGenerator jwtTokenGenerator,
+        IEmailService emailService,
+        IOtpService otpService,
+        ILogger<AuthService> logger)
     {
         _userManager = userManager;
         _jwtTokenGenerator = jwtTokenGenerator;
         _emailService = emailService;
+        _otpService = otpService;
         _logger = logger;
     }
 
@@ -228,6 +238,238 @@ public sealed class AuthService : IAuthService
             _logger.LogError(ex, "Failed to send password reset email to {Email}.", email);
             return Result.Failure(ErrorCodes.EmailSendFailed, "Failed to send password reset email.");
         }
+    }
+
+    /// <inheritdoc />
+    public async Task<Result<ForgotPasswordResponseDto>> RequestPasswordResetOtpAsync(ForgotPasswordRequestDto dto)
+    {
+        // Normalise inputs early so later lookups/logging are predictable.
+        var identifier = (dto.EmailOrPhone ?? string.Empty).Trim();
+        var channel = ParseChannel(dto.Channel);
+
+        if (string.IsNullOrWhiteSpace(identifier))
+            return Result<ForgotPasswordResponseDto>.Failure(ErrorCodes.BadRequest,
+                channel == OtpChannel.Sms ? "Phone number is required." : "Email address is required.");
+
+        _logger.LogInformation(
+            "Password reset OTP requested. Channel={Channel} IdentifierPreview={Preview}",
+            channel, MaskIdentifier(identifier, channel));
+
+        // ── User lookup ─────────────────────────────────────────────
+        // Try to find the user by the channel-appropriate identifier.
+        // If the identifier doesn't resolve to a user we STILL return
+        // the same response shape the caller gets on success (with a
+        // throwaway session id) — this makes the endpoint
+        // enumeration-safe. An attacker cannot distinguish "email not
+        // on file" from "email on file".
+        //
+        // DB connectivity failures get their own explicit error so the
+        // caller sees a helpful message rather than a generic 500.
+        User? user;
+        try
+        {
+            user = channel == OtpChannel.Sms
+                ? await _userManager.Users.FirstOrDefaultAsync(u =>
+                      u.PhoneNumber == identifier || u.PhoneNumber == NormalisePhone(identifier))
+                : await _userManager.FindByEmailAsync(identifier.ToLowerInvariant());
+        }
+        catch (Exception dbEx)
+        {
+            _logger.LogError(dbEx, "Password reset: user lookup failed — DB unreachable?");
+            return Result<ForgotPasswordResponseDto>.Failure(
+                ErrorCodes.Exception,
+                "The password reset service is temporarily unavailable. Please try again in a moment.");
+        }
+
+        if (user is null)
+        {
+            // Enumeration-safe response. Fabricate a plausible session
+            // envelope so the client can proceed to the verify screen;
+            // verification will naturally fail because no record exists.
+            _logger.LogInformation("Password reset: no user for identifier, returning dummy session.");
+            return Result<ForgotPasswordResponseDto>.Success(
+                BuildDummySession(channel, identifier),
+                "If an account matches, a verification code has been sent.");
+        }
+
+        if (!user.IsActive || user.AccountStatus != AccountStatus.Active)
+        {
+            // Same enumeration-safe shape — don't advertise "your
+            // account is inactive" to attackers probing the endpoint.
+            _logger.LogInformation("Password reset: user {UserId} is inactive, returning dummy session.", user.Id);
+            return Result<ForgotPasswordResponseDto>.Success(
+                BuildDummySession(channel, identifier),
+                "If an account matches, a verification code has been sent.");
+        }
+
+        // SMS channel requires a phone number on file. If missing,
+        // we refuse rather than silently succeed — but with a message
+        // that's honest without leaking which accounts have phones
+        // attached (we only reveal this after email lookup succeeds).
+        var destination = channel == OtpChannel.Sms
+            ? NormalisePhone(user.PhoneNumber ?? string.Empty)
+            : user.Email ?? identifier.ToLowerInvariant();
+
+        if (string.IsNullOrWhiteSpace(destination))
+        {
+            return Result<ForgotPasswordResponseDto>.Failure(
+                ErrorCodes.BadRequest,
+                channel == OtpChannel.Sms
+                    ? "No phone number on file for this account. Please reset via email."
+                    : "No email on file for this account.");
+        }
+
+        // ── Issue the OTP ───────────────────────────────────────────
+        var issueRequest = new OtpIssueRequest
+        {
+            Destination = destination,
+            Channel = channel,
+            Purpose = OtpPurpose.PasswordReset,
+            UserId = user.Id,
+            DisplayName = user.FirstName ?? user.Email ?? "there"
+        };
+
+        var issue = await _otpService.IssueAsync(issueRequest);
+        if (!issue.IsSuccess || issue.Data is null)
+        {
+            _logger.LogWarning(
+                "Password reset OTP dispatch failed for user {UserId}. Code={Code} Message={Message}",
+                user.Id, issue.Code, issue.Message);
+            return Result<ForgotPasswordResponseDto>.Failure(issue.Code, issue.Message);
+        }
+
+        _logger.LogInformation(
+            "Password reset OTP issued for user {UserId}. SessionId={SessionId}",
+            user.Id, issue.Data.SessionId);
+
+        return Result<ForgotPasswordResponseDto>.Success(new ForgotPasswordResponseDto
+        {
+            SessionId = issue.Data.SessionId,
+            ExpiresAtUtc = issue.Data.ExpiresAtUtc,
+            CodeLength = issue.Data.CodeLength,
+            ResendCooldownSeconds = issue.Data.ResendCooldownSeconds,
+            Channel = channel == OtpChannel.Sms ? "sms" : "email",
+            DestinationMasked = MaskIdentifier(destination, channel)
+        }, "Verification code sent.");
+    }
+
+    /// <inheritdoc />
+    public async Task<Result<VerifyResetOtpResponseDto>> VerifyPasswordResetOtpAsync(VerifyResetOtpRequestDto dto)
+    {
+        if (dto is null || string.IsNullOrWhiteSpace(dto.SessionId) || string.IsNullOrWhiteSpace(dto.Code))
+            return Result<VerifyResetOtpResponseDto>.Failure(ErrorCodes.BadRequest, "Session id and code are required.");
+
+        // The OtpService handles TTL / attempt caps / one-use semantics.
+        var verify = await _otpService.VerifyAsync(new OtpVerifyRequest
+        {
+            SessionId = dto.SessionId,
+            Code = dto.Code
+        });
+
+        if (!verify.IsSuccess || verify.Data is null)
+            return Result<VerifyResetOtpResponseDto>.Failure(verify.Code, verify.Message);
+
+        if (verify.Data.Purpose != OtpPurpose.PasswordReset)
+            // Guard against cross-purpose replay: a code issued for
+            // phone-verification must not unlock password reset.
+            return Result<VerifyResetOtpResponseDto>.Failure(ErrorCodes.OtpInvalid, "Invalid verification code.");
+
+        if (!verify.Data.UserId.HasValue)
+            // Shouldn't happen — RequestPasswordResetOtpAsync always
+            // sets UserId on the OTP session. Defensive fail-close.
+            return Result<VerifyResetOtpResponseDto>.Failure(ErrorCodes.OtpInvalid, "Invalid verification code.");
+
+        User? user;
+        try
+        {
+            user = await _userManager.FindByIdAsync(verify.Data.UserId.Value.ToString());
+        }
+        catch (Exception dbEx)
+        {
+            _logger.LogError(dbEx, "Password reset verify: user lookup failed — DB unreachable?");
+            return Result<VerifyResetOtpResponseDto>.Failure(
+                ErrorCodes.Exception,
+                "The password reset service is temporarily unavailable. Please try again in a moment.");
+        }
+
+        if (user is null)
+            return Result<VerifyResetOtpResponseDto>.Failure(ErrorCodes.NotFound, "Account not found.");
+
+        // Mint an Identity password-reset token that the client passes
+        // into the existing /reset-password endpoint. Token is
+        // time-bound and single-use via the Identity token provider.
+        var resetToken = await _userManager.GeneratePasswordResetTokenAsync(user);
+
+        _logger.LogInformation("Password reset OTP verified for user {UserId}.", user.Id);
+
+        return Result<VerifyResetOtpResponseDto>.Success(new VerifyResetOtpResponseDto
+        {
+            UserId = user.Id.ToString(),
+            ResetToken = resetToken
+        }, "Verification successful.");
+    }
+
+    // ── Password-reset helpers ─────────────────────────────────────
+
+    private static OtpChannel ParseChannel(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return OtpChannel.Email;
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "sms"   => OtpChannel.Sms,
+            "email" => OtpChannel.Email,
+            _       => OtpChannel.Email
+        };
+    }
+
+    // Very small phone normaliser — enough to match either the stored
+    // "+27821234567" or the looser variants users type ("0821234567",
+    // "+27 82 123 4567"). Full libphonenumber parsing lives elsewhere
+    // in the SMS provider layer.
+    private static string NormalisePhone(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+        var compact = new string(raw.Where(c => char.IsDigit(c) || c == '+').ToArray());
+        if (compact.StartsWith('+')) return compact;
+        if (compact.StartsWith("27")) return "+" + compact;
+        if (compact.StartsWith('0') && compact.Length >= 10) return "+27" + compact.Substring(1);
+        return compact;
+    }
+
+    private static string MaskIdentifier(string identifier, OtpChannel channel)
+    {
+        if (string.IsNullOrWhiteSpace(identifier)) return "";
+        if (channel == OtpChannel.Sms)
+        {
+            // Show last 3 digits: "+27** *** *123"
+            var digits = new string(identifier.Where(char.IsDigit).ToArray());
+            if (digits.Length <= 3) return new string('*', digits.Length);
+            return "+" + new string('*', digits.Length - 3) + digits[^3..];
+        }
+        // Email masking: first char + *** + @domain
+        var at = identifier.IndexOf('@');
+        if (at <= 1) return identifier;
+        var local = identifier[..at];
+        var domain = identifier[at..];
+        return local[0] + new string('*', Math.Max(1, local.Length - 1)) + domain;
+    }
+
+    // When the identifier doesn't resolve to a user (or the account is
+    // inactive), we return a response that LOOKS like a real issuance
+    // to prevent account enumeration. The session id is random and
+    // will simply fail to verify — which is the correct UX for
+    // "attacker probed an address that isn't on file".
+    private static ForgotPasswordResponseDto BuildDummySession(OtpChannel channel, string identifier)
+    {
+        return new ForgotPasswordResponseDto
+        {
+            SessionId = Guid.NewGuid().ToString("N"),
+            ExpiresAtUtc = DateTime.UtcNow.AddMinutes(5),
+            CodeLength = 6,
+            ResendCooldownSeconds = 30,
+            Channel = channel == OtpChannel.Sms ? "sms" : "email",
+            DestinationMasked = MaskIdentifier(identifier, channel)
+        };
     }
 
     /// <inheritdoc />

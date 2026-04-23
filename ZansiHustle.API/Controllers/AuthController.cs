@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using ZansiHustle.Application.Auth;
 using ZansiHustle.Application.Auth.Dtos;
 using ZansiHustle.Application.Common.Interfaces.Shared;
+using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
 
 namespace ZansiHustle.API.Controllers;
@@ -107,23 +108,42 @@ public class AuthController : BaseController
     }
 
     /// <summary>
-    /// Starts the forgot-password flow.
+    /// Starts the forgot-password flow by issuing a 6-digit OTP on the
+    /// requested channel ("email" or "sms"). Returns a session id the
+    /// client presents on <c>/verify-reset-otp</c>.
     /// </summary>
     [HttpPost("forgot-password")]
     [AllowAnonymous]
-    [ProducesResponseType(typeof(Result), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(Result<ForgotPasswordResponseDto>), StatusCodes.Status200OK)]
     public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequestDto dto)
     {
-        // Callback must point at the PORTAL (not the API host), and the
-        // path must match the portal route: /auth/reset-password. The old
-        // callback ("{api-host}/reset-password") produced 404 email links.
-        var callback = $"{GetPortalBaseUrl()}/auth/reset-password";
-        var result = await _authService.ForgotPasswordAsync(dto.Email, callback);
+        if (dto is null)
+            return ToActionResult(Result<ForgotPasswordResponseDto>.Failure(
+                ErrorCodes.BadRequest, "Request is required."));
+        var result = await _authService.RequestPasswordResetOtpAsync(dto);
         return ToActionResult(result);
     }
 
     /// <summary>
-    /// Resets a password using a reset token.
+    /// Verifies the 6-digit OTP issued by <c>/forgot-password</c>. On
+    /// success returns { userId, resetToken } — the caller passes both
+    /// into <c>/reset-password</c> to finalise.
+    /// </summary>
+    [HttpPost("verify-reset-otp")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(Result<VerifyResetOtpResponseDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> VerifyResetOtp([FromBody] VerifyResetOtpRequestDto dto)
+    {
+        if (dto is null)
+            return ToActionResult(Result<VerifyResetOtpResponseDto>.Failure(
+                ErrorCodes.BadRequest, "Request is required."));
+        var result = await _authService.VerifyPasswordResetOtpAsync(dto);
+        return ToActionResult(result);
+    }
+
+    /// <summary>
+    /// Resets a password using the Identity token minted by
+    /// <c>/verify-reset-otp</c>.
     /// </summary>
     [HttpPost("reset-password")]
     [AllowAnonymous]

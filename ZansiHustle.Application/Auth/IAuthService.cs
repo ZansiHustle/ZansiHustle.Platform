@@ -34,12 +34,33 @@ public interface IAuthService
     Task<Result> VerifyEmailAsync(string userId, string token);
 
     /// <summary>
-    /// Starts the forgot-password flow.
+    /// Legacy link-based forgot-password flow — retained for any caller
+    /// that still wants an email with a reset link. The current product
+    /// flow uses <see cref="RequestPasswordResetOtpAsync"/> instead.
     /// </summary>
     Task<Result> ForgotPasswordAsync(string email, string callbackBaseUrl);
 
     /// <summary>
-    /// Resets a password using a token.
+    /// Current forgot-password entry point. Issues a 6-digit OTP on the
+    /// requested channel ("email" or "sms") and returns a session id
+    /// the client must present on the verify step. Enumeration-safe:
+    /// the response shape is identical whether or not the identifier
+    /// exists in the system.
+    /// </summary>
+    Task<Result<ForgotPasswordResponseDto>> RequestPasswordResetOtpAsync(ForgotPasswordRequestDto dto);
+
+    /// <summary>
+    /// Verifies the submitted OTP against the session issued by
+    /// <see cref="RequestPasswordResetOtpAsync"/>. On success, mints an
+    /// Identity password-reset token and returns it together with the
+    /// user id. The client then calls <see cref="ResetPasswordAsync"/>
+    /// to finalise the reset.
+    /// </summary>
+    Task<Result<VerifyResetOtpResponseDto>> VerifyPasswordResetOtpAsync(VerifyResetOtpRequestDto dto);
+
+    /// <summary>
+    /// Resets a password using the Identity token minted by
+    /// <see cref="VerifyPasswordResetOtpAsync"/>.
     /// </summary>
     Task<Result> ResetPasswordAsync(string userId, string token, string newPassword);
 

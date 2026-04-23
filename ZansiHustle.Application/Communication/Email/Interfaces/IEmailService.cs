@@ -18,12 +18,20 @@ public interface IEmailService
     Task<Result> SendEmailVerifiedConfirmationAsync(string toEmail, string firstName, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Sends a one-time-password email.
+    /// Sends a generic one-time-password email (non-purpose-specific copy).
     /// </summary>
     Task<Result> SendOtpAsync(string toEmail, string firstName, string otpCode, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Sends a forgot-password email containing a reset link.
+    /// Sends a password-reset OTP email with purpose-specific copy
+    /// (greeting, expiry line, "didn't request this?" warning).
+    /// </summary>
+    Task<Result> SendPasswordResetOtpAsync(string toEmail, string firstName, string otpCode, int ttlMinutes, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sends a forgot-password email containing a reset link. Retained for
+    /// any legacy link-based caller; the current product flow uses OTP
+    /// via <see cref="SendPasswordResetOtpAsync"/>.
     /// </summary>
     Task<Result> SendPasswordResetAsync(string toEmail, string firstName, string resetLink, CancellationToken cancellationToken = default);
 }

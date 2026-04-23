@@ -134,6 +134,51 @@ public static class AuthEmailTemplates
         return (subject, htmlBody, plainText);
     }
 
+    public static (string Subject, string HtmlBody, string PlainTextBody) BuildPasswordResetOtpEmail(string firstName, string otpCode, int ttlMinutes)
+    {
+        var safeName = Safe(firstName);
+        var safeOtp  = Safe(otpCode);
+        var expiresIn = ttlMinutes <= 0 ? "a few minutes" : ttlMinutes == 1 ? "1 minute" : $"{ttlMinutes} minutes";
+
+        var subject = "Your ZansiHustle password reset code";
+        var htmlBody = Wrap(
+            firstName: safeName,
+            title: "Password Reset Code",
+            subtitle: "Use this code to continue resetting your password",
+            body: $@"
+                <p>We received a request to reset your ZansiHustle password. Enter the code below on the verification screen to continue.</p>
+
+                <div style='margin:28px 0; text-align:center;'>
+                    <div style='display:inline-block; letter-spacing:8px; font-size:30px; font-weight:800; color:{Dark}; background:{Surface}; border:1px solid {Border}; padding:16px 24px; border-radius:12px;'>
+                        {WebUtility.HtmlEncode(safeOtp)}
+                    </div>
+                </div>
+
+                <p style='color:{TextMuted}; font-size:13px;'>This code expires in {WebUtility.HtmlEncode(expiresIn)}. For your security, it can only be used once.</p>
+
+                <div style='margin-top:20px; padding:14px 16px; background:{Surface}; border:1px solid {Border}; border-left:4px solid {Danger}; border-radius:10px; color:{Text};'>
+                    <strong>Didn't request this?</strong> You can safely ignore this email — your password will not change. If you're worried someone else is trying to access your account, change your password the next time you sign in.
+                </div>",
+            footerTitle: "ZansiHustle Security Team");
+
+        var plainText = $"""
+            Hi {safeName},
+
+            We received a request to reset your ZansiHustle password.
+
+            Your verification code is:
+            {safeOtp}
+
+            This code expires in {expiresIn}. Do not share it with anyone.
+
+            If you did not request a password reset, you can safely ignore this email.
+
+            ZansiHustle Security Team
+            """;
+
+        return (subject, htmlBody, plainText);
+    }
+
     public static (string Subject, string HtmlBody, string PlainTextBody) BuildPasswordResetEmail(string firstName, string resetLink)
     {
         var safeName = Safe(firstName);
