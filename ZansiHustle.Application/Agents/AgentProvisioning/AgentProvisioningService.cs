@@ -305,24 +305,40 @@ namespace ZansiHustle.Application.Agents.AgentProvisioning
 
         // ── Temp password generator ────────────────────────────────
         // Format: <Word><Digit><Special>  e.g. "Orange7!"  (8 chars).
-        // Word = 6-letter English word, first letter uppercase.
+        // Word = 6-letter English word, first letter uppercase, rest
+        // lowercase. Total length 8, with at least one upper / lower /
+        // digit / non-alphanumeric — satisfies the IdentityOptions
+        // .Password policy configured in
+        // ServiceExtensions.AddIdentityServices (length>=8, RequireUpper,
+        // RequireLower, RequireDigit, RequireNonAlphanumeric).
         //
         // Why a curated word list instead of random characters: admins
         // relay this password to agents over WhatsApp / SMS / phone.
         // Random strings like "qX7@aP9!" get misread; "Orange7!" does
-        // not. Length of 8 + four character classes still satisfy the
-        // IdentityOptions.Password policy configured in
-        // ServiceExtensions.AddIdentityServices.
+        // not.
         //
-        // Curated word constraints:
-        //   • Exactly 6 letters (validated at startup via the static
-        //     ctor below — fail-fast if the list is ever edited badly).
-        //   • Brand-safe / inoffensive English words.
-        //   • Avoid words containing visually-ambiguous letters where
-        //     reasonable (l/I confusion etc.).
+        // Curated word constraints (enforced by IsValidWord at first
+        // use): exactly 6 letters, uppercase first, lowercase rest.
+        // ASCII only.
         //
         // Special pool excludes characters that get mangled in URLs
         // and SMS escaping (no &, %, ?, #).
+        //
+        // ── Bad-edit safety ───────────────────────────────────────
+        // The previous implementation used a static field initializer
+        // that THREW on the first bad word. Any bad entry then poisoned
+        // the type — every subsequent call to a method on this class
+        // hit a TypeInitializationException, returning 500 to admins
+        // and blocking BOTH Create-Agent and Reset-Password forever.
+        //
+        // The current implementation FILTERS instead of throwing:
+        // bad entries are silently dropped from the runtime pool
+        // (and traced via Debug.WriteLine for dev visibility) so a
+        // single typo cannot kill the whole agent flow. We only throw
+        // if the resulting pool is empty — the truly catastrophic
+        // case — and that throw is caught by the per-method catch
+        // and surfaced as a clean Result.Failure.
+
         private static readonly string[] WordPool = new[]
         {
             "Apples", "Banana", "Branch", "Bridge", "Camera", "Castle",
@@ -333,60 +349,83 @@ namespace ZansiHustle.Application.Agents.AgentProvisioning
             "Honest", "Hustle", "Indigo", "Island", "Jacket", "Jersey",
             "Jungle", "Junior", "Kayaks", "Kettle", "Knight", "Ladder",
             "Lemons", "Letter", "Lights", "Liquid", "Listen", "Magnet",
-            "Mango",  "Maple",  "Market", "Master", "Melody", "Method",
-            "Mirror", "Mobile", "Modern", "Monkey", "Mosaic", "Motion",
-            "Mountain","Native","Nectar", "Nickel", "Nimbus", "Notice",
-            "Nugget", "Oasis",  "Oceans", "Office", "Orange", "Orbits",
-            "Output", "Oxygen", "Paddle", "Palace", "Parrot", "Parsley",
-            "Pencil", "Pepper", "Photon", "Pickle", "Pillar", "Pilots",
-            "Planet", "Player", "Pocket", "Polish", "Poster", "Pretty",
-            "Public", "Pumpkin","Purple", "Rabbit", "Racket", "Random",
+            "Market", "Master", "Melody", "Method", "Mirror", "Mobile",
+            "Modern", "Monkey", "Mosaic", "Motion", "Native", "Nectar",
+            "Nickel", "Nimbus", "Notice", "Nugget", "Oceans", "Office",
+            "Orange", "Orbits", "Output", "Oxygen", "Paddle", "Palace",
+            "Parrot", "Pencil", "Pepper", "Photon", "Pickle", "Pillar",
+            "Pilots", "Planet", "Player", "Pocket", "Polish", "Poster",
+            "Pretty", "Public", "Purple", "Rabbit", "Racket", "Random",
             "Reader", "Resort", "Result", "Ribbon", "Rocket", "Rubies",
-            "Safari", "Salmon", "Samurai","Sanity","Saturn","Schools",
-            "Senior", "Shadow", "Shield", "Shiver", "Signal", "Silent",
-            "Silver", "Simple", "Singer", "Sister", "Skater", "Smiles",
-            "Soccer", "Sonata", "Sparks", "Spirit", "Stable", "Static",
-            "Stones", "Studio", "Summit", "Sunset", "Sweets", "Tablet",
-            "Tactic", "Tailor", "Talent", "Tennis", "Tiger",  "Timber",
-            "Tomato", "Torchy", "Toucan", "Trader", "Travel", "Tunnel",
-            "Turtle", "Unique", "Urban",  "Valley", "Vector", "Velvet",
-            "Vendor", "Violet", "Visual", "Walker", "Wallet", "Walnut",
-            "Warmly", "Wealth", "Whales", "Wheels", "Window", "Winner",
-            "Winter", "Wisdom", "Wonder", "Yellow", "Yogurt", "Zenith",
-            "Zephyr", "Zester", "Zodiac",
+            "Safari", "Salmon", "Sanity", "Saturn", "Senior", "Shadow",
+            "Shield", "Shiver", "Signal", "Silent", "Silver", "Simple",
+            "Singer", "Sister", "Skater", "Smiles", "Soccer", "Sonata",
+            "Sparks", "Spirit", "Stable", "Static", "Stones", "Studio",
+            "Summit", "Sunset", "Sweets", "Tablet", "Tactic", "Tailor",
+            "Talent", "Tennis", "Timber", "Tomato", "Toucan", "Trader",
+            "Travel", "Tunnel", "Turtle", "Unique", "Valley", "Vector",
+            "Velvet", "Vendor", "Violet", "Visual", "Walker", "Wallet",
+            "Walnut", "Warmly", "Wealth", "Whales", "Wheels", "Window",
+            "Winner", "Winter", "Wisdom", "Wonder", "Yellow", "Yogurt",
+            "Zenith", "Zephyr", "Zester", "Zodiac",
         };
 
         private const string PoolDigit   = "23456789";
         private const string PoolSpecial = "!@$*";
 
-        // Hard-validate the curated list at first use so a bad edit
-        // (5- or 7-letter word) trips a clear error rather than a
-        // silent off-format password.
-        private static readonly string[] _validatedWordPool = ValidateWordPool(WordPool);
+        // Lazy so any unexpected init exception (empty pool) flows
+        // through the per-method try/catch as a normal Exception
+        // rather than the sticky TypeInitializationException you get
+        // from a static field initializer.
+        private static readonly Lazy<string[]> _validatedWordPool = new(BuildValidPool);
 
-        private static string[] ValidateWordPool(string[] words)
+        private static string[] BuildValidPool()
         {
-            foreach (var w in words)
+            var valid = new List<string>(WordPool.Length);
+            var skipped = new List<string>();
+            foreach (var w in WordPool)
             {
-                if (w.Length != 6)
-                    throw new InvalidOperationException(
-                        $"Agent password word pool contains '{w}' which is not exactly 6 letters.");
-                if (!char.IsUpper(w[0]))
-                    throw new InvalidOperationException(
-                        $"Agent password word pool entry '{w}' must start uppercase.");
-                for (var i = 1; i < w.Length; i++)
-                {
-                    if (!char.IsLower(w[i]))
-                        throw new InvalidOperationException(
-                            $"Agent password word pool entry '{w}' must be lowercase after the first letter.");
-                }
+                if (IsValidWord(w)) valid.Add(w);
+                else skipped.Add(w ?? "<null>");
             }
-            return words;
+
+            if (skipped.Count > 0)
+            {
+                // Visible in dev runs / unit tests via the debug listener.
+                // We can't inject ILogger into a static helper without
+                // turning the whole class non-static — Debug trace is the
+                // pragmatic compromise for a "this should never happen"
+                // diagnostic.
+                System.Diagnostics.Debug.WriteLine(
+                    $"[AgentProvisioning] Skipping {skipped.Count} invalid password words: {string.Join(", ", skipped)}");
+            }
+
+            if (valid.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    "Agent password word pool is empty after filtering. " +
+                    $"All {skipped.Count} entries were invalid: {string.Join(", ", skipped)}");
+            }
+
+            return valid.ToArray();
+        }
+
+        private static bool IsValidWord(string? w)
+        {
+            if (string.IsNullOrEmpty(w)) return false;
+            if (w.Length != 6) return false;
+            if (!char.IsUpper(w[0])) return false;
+            for (var i = 1; i < w.Length; i++)
+            {
+                if (!char.IsLower(w[i])) return false;
+            }
+            return true;
         }
 
         private static string GenerateTempPassword()
         {
-            var word   = _validatedWordPool[RandomNumberGenerator.GetInt32(_validatedWordPool.Length)];
+            var pool   = _validatedWordPool.Value;
+            var word   = pool[RandomNumberGenerator.GetInt32(pool.Length)];
             var digit  = PoolDigit[RandomNumberGenerator.GetInt32(PoolDigit.Length)];
             var symbol = PoolSpecial[RandomNumberGenerator.GetInt32(PoolSpecial.Length)];
             return $"{word}{digit}{symbol}";

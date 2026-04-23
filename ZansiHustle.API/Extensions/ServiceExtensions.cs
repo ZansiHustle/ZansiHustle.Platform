@@ -170,7 +170,7 @@ public static class ServiceExtensions
     /// </summary>
     public static IServiceCollection AddDatabaseServices(this IServiceCollection services, IConfiguration configuration)
     {
-        const bool IS_LIVE = false;
+        const bool IS_LIVE = true;
         const string UAT_DB = "UATConnection";
         const string LIVE_DB = "LiveConnection";
 
@@ -296,6 +296,12 @@ public static class ServiceExtensions
         services.AddScoped<IEmailSenderMapper, EmailSenderMapper>();
         services.AddScoped<ISupportEmailService, SupportEmailService>();
         services.AddScoped<IMerchantEmailService, MerchantEmailService>();
+
+        // Boot-time diagnostic — logs per-sender readiness once at
+        // startup so a misconfigured UAT/live environment is obvious
+        // in the startup log instead of surfacing at first password
+        // reset. Only logs field names; never secret values.
+        services.AddHostedService<EmailSenderConfigReporter>();
         return services;
     }
 
