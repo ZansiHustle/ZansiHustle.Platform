@@ -23,7 +23,11 @@ namespace ZansiHustle.API.Controllers
     /// generate a fresh one — the old one is invalidated server-side.
     /// </summary>
     [Route("api/agents")]
-    [Authorize]
+    // Provisioning + password regeneration are admin-only operations.
+    // A signed-in agent must NEVER be able to call these endpoints
+    // against themselves or anyone else. Mirrors the authorization
+    // shape used by the other Admin* controllers.
+    [Authorize(Roles = "SuperAdmin,Admin,Partner")]
     public class AgentsController : BaseController
     {
         private readonly IAgentProvisioningService _service;

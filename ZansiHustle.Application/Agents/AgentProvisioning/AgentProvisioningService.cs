@@ -304,40 +304,92 @@ namespace ZansiHustle.Application.Agents.AgentProvisioning
         }
 
         // ── Temp password generator ────────────────────────────────
-        // Guarantees at least one character from each of four classes
-        // (upper / lower / digit / special) and total length = 8,
-        // satisfying IdentityOptions.Password policy configured in
+        // Format: <Word><Digit><Special>  e.g. "Orange7!"  (8 chars).
+        // Word = 6-letter English word, first letter uppercase.
+        //
+        // Why a curated word list instead of random characters: admins
+        // relay this password to agents over WhatsApp / SMS / phone.
+        // Random strings like "qX7@aP9!" get misread; "Orange7!" does
+        // not. Length of 8 + four character classes still satisfy the
+        // IdentityOptions.Password policy configured in
         // ServiceExtensions.AddIdentityServices.
         //
-        // Ambiguous characters (O / 0, I / 1 / l) are excluded so the
-        // password is easy to relay verbally or by SMS without
-        // misreads. Random bytes come from RandomNumberGenerator
-        // (cryptographic).
-        private const string PoolUpper   = "ABCDEFGHJKMNPQRSTUVWXYZ";
-        private const string PoolLower   = "abcdefghjkmnpqrstuvwxyz";
+        // Curated word constraints:
+        //   • Exactly 6 letters (validated at startup via the static
+        //     ctor below — fail-fast if the list is ever edited badly).
+        //   • Brand-safe / inoffensive English words.
+        //   • Avoid words containing visually-ambiguous letters where
+        //     reasonable (l/I confusion etc.).
+        //
+        // Special pool excludes characters that get mangled in URLs
+        // and SMS escaping (no &, %, ?, #).
+        private static readonly string[] WordPool = new[]
+        {
+            "Apples", "Banana", "Branch", "Bridge", "Camera", "Castle",
+            "Cherry", "Clever", "Cloudy", "Coffee", "Copper", "Cotton",
+            "Crayon", "Crisps", "Dancer", "Driver", "Eagles", "Energy",
+            "Falcon", "Family", "Flower", "Forest", "Friend", "Garden",
+            "Gentle", "Ginger", "Golden", "Growth", "Guitar", "Harbor",
+            "Honest", "Hustle", "Indigo", "Island", "Jacket", "Jersey",
+            "Jungle", "Junior", "Kayaks", "Kettle", "Knight", "Ladder",
+            "Lemons", "Letter", "Lights", "Liquid", "Listen", "Magnet",
+            "Mango",  "Maple",  "Market", "Master", "Melody", "Method",
+            "Mirror", "Mobile", "Modern", "Monkey", "Mosaic", "Motion",
+            "Mountain","Native","Nectar", "Nickel", "Nimbus", "Notice",
+            "Nugget", "Oasis",  "Oceans", "Office", "Orange", "Orbits",
+            "Output", "Oxygen", "Paddle", "Palace", "Parrot", "Parsley",
+            "Pencil", "Pepper", "Photon", "Pickle", "Pillar", "Pilots",
+            "Planet", "Player", "Pocket", "Polish", "Poster", "Pretty",
+            "Public", "Pumpkin","Purple", "Rabbit", "Racket", "Random",
+            "Reader", "Resort", "Result", "Ribbon", "Rocket", "Rubies",
+            "Safari", "Salmon", "Samurai","Sanity","Saturn","Schools",
+            "Senior", "Shadow", "Shield", "Shiver", "Signal", "Silent",
+            "Silver", "Simple", "Singer", "Sister", "Skater", "Smiles",
+            "Soccer", "Sonata", "Sparks", "Spirit", "Stable", "Static",
+            "Stones", "Studio", "Summit", "Sunset", "Sweets", "Tablet",
+            "Tactic", "Tailor", "Talent", "Tennis", "Tiger",  "Timber",
+            "Tomato", "Torchy", "Toucan", "Trader", "Travel", "Tunnel",
+            "Turtle", "Unique", "Urban",  "Valley", "Vector", "Velvet",
+            "Vendor", "Violet", "Visual", "Walker", "Wallet", "Walnut",
+            "Warmly", "Wealth", "Whales", "Wheels", "Window", "Winner",
+            "Winter", "Wisdom", "Wonder", "Yellow", "Yogurt", "Zenith",
+            "Zephyr", "Zester", "Zodiac",
+        };
+
         private const string PoolDigit   = "23456789";
-        private const string PoolSpecial = "!@#$%&*?";
+        private const string PoolSpecial = "!@$*";
+
+        // Hard-validate the curated list at first use so a bad edit
+        // (5- or 7-letter word) trips a clear error rather than a
+        // silent off-format password.
+        private static readonly string[] _validatedWordPool = ValidateWordPool(WordPool);
+
+        private static string[] ValidateWordPool(string[] words)
+        {
+            foreach (var w in words)
+            {
+                if (w.Length != 6)
+                    throw new InvalidOperationException(
+                        $"Agent password word pool contains '{w}' which is not exactly 6 letters.");
+                if (!char.IsUpper(w[0]))
+                    throw new InvalidOperationException(
+                        $"Agent password word pool entry '{w}' must start uppercase.");
+                for (var i = 1; i < w.Length; i++)
+                {
+                    if (!char.IsLower(w[i]))
+                        throw new InvalidOperationException(
+                            $"Agent password word pool entry '{w}' must be lowercase after the first letter.");
+                }
+            }
+            return words;
+        }
 
         private static string GenerateTempPassword()
         {
-            var chars = new char[8];
-            chars[0] = PickFrom(PoolUpper);
-            chars[1] = PickFrom(PoolLower);
-            chars[2] = PickFrom(PoolDigit);
-            chars[3] = PickFrom(PoolSpecial);
-            var allPools = PoolUpper + PoolLower + PoolDigit + PoolSpecial;
-            for (var i = 4; i < chars.Length; i++) chars[i] = PickFrom(allPools);
-
-            // Fisher-Yates shuffle so the four "guarantee" characters
-            // aren't always at positions 0-3.
-            for (var i = chars.Length - 1; i > 0; i--)
-            {
-                var j = RandomNumberGenerator.GetInt32(i + 1);
-                (chars[i], chars[j]) = (chars[j], chars[i]);
-            }
-            return new string(chars);
+            var word   = _validatedWordPool[RandomNumberGenerator.GetInt32(_validatedWordPool.Length)];
+            var digit  = PoolDigit[RandomNumberGenerator.GetInt32(PoolDigit.Length)];
+            var symbol = PoolSpecial[RandomNumberGenerator.GetInt32(PoolSpecial.Length)];
+            return $"{word}{digit}{symbol}";
         }
-
-        private static char PickFrom(string pool) => pool[RandomNumberGenerator.GetInt32(pool.Length)];
     }
 }
