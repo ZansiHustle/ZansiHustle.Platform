@@ -170,7 +170,7 @@ public static class ServiceExtensions
     /// </summary>
     public static IServiceCollection AddDatabaseServices(this IServiceCollection services, IConfiguration configuration)
     {
-        const bool IS_LIVE = true;
+        const bool IS_LIVE = false;
         const string UAT_DB = "UATConnection";
         const string LIVE_DB = "LiveConnection";
 
@@ -379,6 +379,8 @@ public static class ServiceExtensions
         services.AddScoped<IAnalyticsRepository, AnalyticsRepository>();
         services.AddScoped<IAdminOrderRepository, AdminOrderRepository>();
         services.AddScoped<IAdminCustomerRepository, AdminCustomerRepository>();
+        services.AddScoped<ZansiHustle.Application.Persistence.Admin.Users.IAdminUserRepository,
+                           ZansiHustle.Infrastructure.Persistence.Admin.Users.AdminUserRepository>();
         services.AddScoped<IAdminPaymentRepository, AdminPaymentRepository>();
         services.AddScoped<IAdminAffiliateRepository, AdminAffiliateRepository>();
         services.AddScoped<IAdminSupportRepository, AdminSupportRepository>();
@@ -405,6 +407,8 @@ public static class ServiceExtensions
         services.AddScoped<IAnalyticsService, AnalyticsService>();
         services.AddScoped<IAdminOrderService, AdminOrderService>();
         services.AddScoped<IAdminCustomerService, AdminCustomerService>();
+        services.AddScoped<ZansiHustle.Application.Admin.Users.IAdminUserService,
+                           ZansiHustle.Application.Admin.Users.AdminUserService>();
         services.AddScoped<IAdminPaymentService, AdminPaymentService>();
         services.AddScoped<IAdminAffiliateService, AdminAffiliateService>();
         services.AddScoped<IAdminSupportService, AdminSupportService>();
