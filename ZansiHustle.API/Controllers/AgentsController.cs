@@ -23,11 +23,18 @@ namespace ZansiHustle.API.Controllers
     /// generate a fresh one — the old one is invalidated server-side.
     /// </summary>
     [Route("api/agents")]
-    // Provisioning + password regeneration are admin-only operations.
-    // A signed-in agent must NEVER be able to call these endpoints
-    // against themselves or anyone else. Mirrors the authorization
-    // shape used by the other Admin* controllers.
-    [Authorize(Roles = "SuperAdmin,Admin,Partner")]
+    // Provisioning + password regeneration are admin-tier operations
+    // — extended to MarketplaceGrowthAssociate + TeamManager because
+    // agent management is the operational responsibility of the
+    // Marketplace Growth role (they own the agent pipeline).
+    //
+    // A signed-in Agent must NEVER reach these endpoints — that would
+    // let an agent enumerate / mutate / reset other agents' accounts.
+    // Buyers and Merchants are likewise blocked. This is enforced by
+    // role allow-list rather than block-list because the shape of
+    // "who can be inside the system" widens over time and the
+    // explicit allow-list is the safer default.
+    [Authorize(Roles = "SuperAdmin,Admin,Partner,MarketplaceGrowthAssociate,TeamManager")]
     public class AgentsController : BaseController
     {
         private readonly IAgentProvisioningService _service;

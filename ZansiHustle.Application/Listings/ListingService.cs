@@ -457,7 +457,10 @@ namespace ZansiHustle.Application.Listings
                 Images = listing.Images ?? new List<string>(),
                 IsFeatured = listing.IsFeatured,
                 IsBoosted = listing.IsBoosted,
-                Rating = listing.Rating,
+                // Source-of-truth correction — same as MerchantService
+                // (see comment there). A listing with zero reviews must
+                // not surface a non-null rating.
+                Rating = listing.ReviewCount > 0 ? listing.Rating : null,
                 ReviewCount = listing.ReviewCount,
                 Stock = listing.Stock,
                 Condition = listing.Condition,
@@ -493,7 +496,10 @@ namespace ZansiHustle.Application.Listings
                 Images = listing.Images ?? new List<string>(),
                 IsFeatured = listing.IsFeatured,
                 IsBoosted = listing.IsBoosted,
-                Rating = listing.Rating,
+                // Source-of-truth correction — same as MerchantService
+                // (see comment there). A listing with zero reviews must
+                // not surface a non-null rating.
+                Rating = listing.ReviewCount > 0 ? listing.Rating : null,
                 ReviewCount = listing.ReviewCount,
                 Stock = listing.Stock,
                 Condition = listing.Condition,

@@ -835,7 +835,12 @@ namespace ZansiHustle.Application.Merchants
                     !string.IsNullOrWhiteSpace(merchant.LogoUrl) ||
                     !string.IsNullOrWhiteSpace(merchant.BannerUrl),
                 FollowersCount = merchant.FollowersCount,
-                Rating = merchant.Rating,
+                // Source-of-truth correction: when a merchant has zero
+                // reviews, `Rating` is meaningless (cached stale value
+                // or seed default). Zero it out so the mobile app can
+                // render "No reviews yet" instead of a misleading
+                // "★ 4.5" with an empty reviews list.
+                Rating = merchant.ReviewCount > 0 ? merchant.Rating : null,
                 ReviewCount = merchant.ReviewCount,
                 TotalOrders = merchant.TotalOrders,
                 TotalRevenue = merchant.TotalRevenue,
