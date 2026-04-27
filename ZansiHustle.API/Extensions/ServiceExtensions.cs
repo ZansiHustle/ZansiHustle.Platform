@@ -170,7 +170,7 @@ public static class ServiceExtensions
     /// </summary>
     public static IServiceCollection AddDatabaseServices(this IServiceCollection services, IConfiguration configuration)
     {
-        const bool IS_LIVE = true;
+        const bool IS_LIVE = false;
         const string UAT_DB = "UATConnection";
         const string LIVE_DB = "LiveConnection";
 

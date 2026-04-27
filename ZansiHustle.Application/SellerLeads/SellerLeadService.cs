@@ -544,12 +544,26 @@ namespace ZansiHustle.Application.SellerLeads
             }
         }
 
+        // Resolves the display name for the user who submitted/owns the
+        // lead. Prefers the joined `AssignedUser` (full name); falls back
+        // to a "Website-Lead" marker when the lead came in via the
+        // public become-a-hustler form with no agent referrer; otherwise
+        // null so the UI can show its own placeholder.
+        private static string? ResolveAssignedUserName(SellerLead sellerLead)
+        {
+            if (sellerLead.AssignedUser != null)
+            {
+                var first = sellerLead.AssignedUser.FirstName?.Trim();
+                var last = sellerLead.AssignedUser.LastName?.Trim();
+                var full = string.Join(" ", new[] { first, last }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                if (!string.IsNullOrWhiteSpace(full)) return full;
+            }
+            if (sellerLead.SourceType == "website_become_hustler") return "Website-Lead";
+            return null;
+        }
+
         private static SellerLeadListItemDto MapToListItemDto(SellerLead sellerLead)
         {
-            var assignedName = "n/a";
-            if (sellerLead.SourceType == "website_become_hustler") assignedName = "Website-Lead";
-            if (sellerLead.AssignedUser != null) assignedName = $"{sellerLead.AssignedUser?.FirstName} {sellerLead.AssignedUser?.LastName}";
-            
             return new SellerLeadListItemDto
             {
                 Id = sellerLead.Id,
@@ -558,14 +572,24 @@ namespace ZansiHustle.Application.SellerLeads
                 BusinessName = sellerLead.BusinessName,
                 LeadType = sellerLead.LeadType,
                 Category = sellerLead.Category,
+                Subcategory = sellerLead.Subcategory,
+                PhoneNumber = sellerLead.PhoneNumber,
+                Email = sellerLead.Email,
                 Province = sellerLead.Province,
                 City = sellerLead.City,
+                SocialHandleOrLink = sellerLead.SocialHandleOrLink,
                 SourceType = sellerLead.SourceType,
                 AssignedUserId = sellerLead.AssignedUserId,
-                AssignedUserName = assignedName,
+                AssignedUserName = ResolveAssignedUserName(sellerLead),
                 VerificationStatus = sellerLead.VerificationStatus,
                 ApprovalStatus = sellerLead.ApprovalStatus,
-                SubmittedAtUtc = sellerLead.SubmittedAtUtc
+                Notes = sellerLead.Notes,
+                ReviewedByUserId = sellerLead.ReviewedByUserId,
+                ReviewedAtUtc = sellerLead.ReviewedAtUtc,
+                ConvertedSellerId = sellerLead.ConvertedSellerId,
+                SubmittedAtUtc = sellerLead.SubmittedAtUtc,
+                CreatedAtUtc = sellerLead.CreatedAtUtc,
+                UpdatedAtUtc = sellerLead.UpdatedAtUtc
             };
         }
 
@@ -587,7 +611,7 @@ namespace ZansiHustle.Application.SellerLeads
                 SocialHandleOrLink = sellerLead.SocialHandleOrLink,
                 SourceType = sellerLead.SourceType,
                 AssignedUserId = sellerLead.AssignedUserId,
-                AssignedUserName = sellerLead.AssignedUser?.FirstName,
+                AssignedUserName = ResolveAssignedUserName(sellerLead),
                 VerificationStatus = sellerLead.VerificationStatus,
                 ApprovalStatus = sellerLead.ApprovalStatus,
                 Notes = sellerLead.Notes,
