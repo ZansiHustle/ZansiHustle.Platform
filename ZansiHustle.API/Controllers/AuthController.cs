@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using ZansiHustle.Application.Auth;
 using ZansiHustle.Application.Auth.Dtos;
 using ZansiHustle.Application.Common.Interfaces.Shared;
+using ZansiHustle.Application.Communications.PhoneVerification;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
 
@@ -17,12 +18,18 @@ public class AuthController : BaseController
 {
     private readonly IAuthService _authService;
     private readonly ICurrentUserService _currentUserService;
+    private readonly IPhoneVerificationService _phoneVerificationService;
     private readonly IConfiguration _config;
 
-    public AuthController(IAuthService authService, ICurrentUserService currentUserService, IConfiguration config)
+    public AuthController(
+        IAuthService authService,
+        ICurrentUserService currentUserService,
+        IPhoneVerificationService phoneVerificationService,
+        IConfiguration config)
     {
         _authService = authService;
         _currentUserService = currentUserService;
+        _phoneVerificationService = phoneVerificationService;
         _config = config;
     }
 
@@ -218,6 +225,44 @@ public class AuthController : BaseController
         }
 
         var result = await _authService.LogoutAsync(_currentUserService.UserId.Value);
+        return ToActionResult(result);
+    }
+
+    /// <summary>
+    /// Sends a one-time SMS verification code via Twilio Verify. Accepts SA
+    /// phone numbers in any of these formats: <c>0791234567</c>,
+    /// <c>27791234567</c>, or already-E.164 <c>+27791234567</c>. The server
+    /// normalizes before dispatching. A short per-destination cooldown is
+    /// enforced; clients hitting it receive <c>OTP_RESEND_COOLDOWN</c>.
+    /// </summary>
+    [HttpPost("send-otp")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(Result<SendOtpResult>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> SendOtp([FromBody] SendOtpRequestDto dto, CancellationToken cancellationToken)
+    {
+        if (dto is null)
+            return ToActionResult(Result<SendOtpResult>.Failure(
+                ErrorCodes.BadRequest, "Request is required."));
+
+        var result = await _phoneVerificationService.SendOtpAsync(dto.PhoneNumber, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    /// <summary>
+    /// Checks an SMS code issued by <c>/send-otp</c> against Twilio Verify.
+    /// Returns the normalized phone number on success so the client can use
+    /// it to drive subsequent auth steps (sign-up, login, phone-confirm).
+    /// </summary>
+    [HttpPost("verify-otp")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(Result<VerifyOtpResult>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> VerifyOtp([FromBody] VerifyOtpRequestDto dto, CancellationToken cancellationToken)
+    {
+        if (dto is null)
+            return ToActionResult(Result<VerifyOtpResult>.Failure(
+                ErrorCodes.BadRequest, "Request is required."));
+
+        var result = await _phoneVerificationService.VerifyOtpAsync(dto.PhoneNumber, dto.Code, cancellationToken);
         return ToActionResult(result);
     }
 }

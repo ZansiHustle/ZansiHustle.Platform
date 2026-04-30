@@ -36,6 +36,8 @@ public static class ErrorCodes
     public const string SmsSendFailed = "SMS_SEND_FAILED";
     public const string WhatsAppSendFailed = "WHATSAPP_SEND_FAILED";
     public const string ProviderNotConfigured = "PROVIDER_NOT_CONFIGURED";
+    public const string PhoneVerificationFailed = "PHONE_VERIFICATION_FAILED";
+    public const string InvalidPhoneNumber = "INVALID_PHONE_NUMBER";
 
     // Payment specifics
     public const string PaymentNotAllowed = "PAYMENT_NOT_ALLOWED";

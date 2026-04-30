@@ -361,3 +361,10 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Local-development secrets overlay. Loaded by ASP.NET Core when
+# ASPNETCORE_ENVIRONMENT=Development. UAT/LIVE use environment variables
+# or hosting secret stores instead. Never commit secrets.
+appsettings.Development.json
+appsettings.Local.json
+appsettings.*.Local.json

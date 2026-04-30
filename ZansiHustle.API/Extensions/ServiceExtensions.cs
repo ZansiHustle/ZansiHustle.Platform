@@ -78,6 +78,7 @@ using ZansiHustle.Application.Communications.WhatsApp;
 using ZansiHustle.Application.Communications.WhatsApp.Interfaces;
 using ZansiHustle.Application.Communications.Otp;
 using ZansiHustle.Application.Communications.Otp.Interfaces;
+using ZansiHustle.Application.Communications.PhoneVerification;
 using ZansiHustle.Infrastructure.Communications.Otp;
 using ZansiHustle.Infrastructure.Configuration;
 using ZansiHustle.Infrastructure.Data;
@@ -166,18 +167,24 @@ public static class ServiceExtensions
     }
 
     /// <summary>
-    /// Registers Entity Framework Core database services.
+    /// Registers Entity Framework Core database services. The target
+    /// connection string is selected by the <c>Database:UseLive</c> flag
+    /// (default <c>false</c> → UAT). Override per environment with
+    /// <c>Database__UseLive=true</c> for the LIVE host. This avoids the
+    /// previous pattern of toggling a <c>const bool IS_LIVE</c> in code
+    /// before each deploy.
     /// </summary>
     public static IServiceCollection AddDatabaseServices(this IServiceCollection services, IConfiguration configuration)
     {
-        const bool IS_LIVE = false;
         const string UAT_DB = "UATConnection";
         const string LIVE_DB = "LiveConnection";
 
-        const string SELECTED_ENV = IS_LIVE ? LIVE_DB : UAT_DB; 
+        var useLive = configuration.GetValue<bool>("Database:UseLive");
+        var selectedEnv = useLive ? LIVE_DB : UAT_DB;
 
-        var connectionString = configuration.GetConnectionString(SELECTED_ENV)
-                               ?? throw new InvalidOperationException($"{SELECTED_ENV} is not configured.");
+        var connectionString = configuration.GetConnectionString(selectedEnv);
+        if (string.IsNullOrWhiteSpace(connectionString))
+            throw new InvalidOperationException($"ConnectionStrings:{selectedEnv} is not configured.");
 
         services.AddDbContext<AppDbContext>(options =>
         {
@@ -325,6 +332,12 @@ public static class ServiceExtensions
         services.AddScoped<IWhatsAppProvider, TwilioWhatsAppProvider>();
         services.AddScoped<IWhatsAppTemplateCatalog, TwilioWhatsAppTemplateCatalog>();
         services.AddScoped<IWhatsAppService, WhatsAppService>();
+
+        // Phone verification (Twilio Verify V2). Backed by IMemoryCache for
+        // the per-destination resend cooldown — added unconditionally so the
+        // service can rely on it being present.
+        services.AddMemoryCache();
+        services.AddScoped<IPhoneVerificationService, TwilioVerifyService>();
 
         return services;
     }
@@ -481,7 +494,8 @@ public static class ServiceExtensions
                             "https://localhost:8081",
                             "https://portal.zansihustle.com",
                             "https://www.zansihustle.com",
-                            "https://www.zansihustle.co.za"
+                            "https://www.zansihustle.co.za",
+                            "https://uat.portal.zansihustle.com"
                         )
                         .AllowAnyHeader()
                         .AllowAnyMethod()

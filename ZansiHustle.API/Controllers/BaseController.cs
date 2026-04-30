@@ -48,6 +48,7 @@ public abstract class BaseController : ControllerBase
             "OTP_EXPIRED" => StatusCodes.Status400BadRequest,
             "OTP_EXHAUSTED" => StatusCodes.Status400BadRequest,
             "INVALID_RESET_TOKEN" => StatusCodes.Status400BadRequest,
+            "INVALID_PHONE_NUMBER" => StatusCodes.Status400BadRequest,
 
             "UNAUTHORIZED" => StatusCodes.Status401Unauthorized,
             "INVALID_CREDENTIALS" => StatusCodes.Status401Unauthorized,
@@ -69,6 +70,7 @@ public abstract class BaseController : ControllerBase
             "EMAIL_SEND_FAILED" => StatusCodes.Status502BadGateway,
             "SMS_SEND_FAILED" => StatusCodes.Status502BadGateway,
             "WHATSAPP_SEND_FAILED" => StatusCodes.Status502BadGateway,
+            "PHONE_VERIFICATION_FAILED" => StatusCodes.Status502BadGateway,
             "PAYMENT_INIT_FAILED" => StatusCodes.Status502BadGateway,
             "PROVIDER_NOT_CONFIGURED" => StatusCodes.Status503ServiceUnavailable,
             "PAYMENT_NOT_ALLOWED" => StatusCodes.Status400BadRequest,
