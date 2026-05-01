@@ -229,11 +229,18 @@ public class AuthController : BaseController
     }
 
     /// <summary>
-    /// Sends a one-time SMS verification code via Twilio Verify. Accepts SA
+    /// Sends a one-time verification code via Twilio Verify. Accepts SA
     /// phone numbers in any of these formats: <c>0791234567</c>,
     /// <c>27791234567</c>, or already-E.164 <c>+27791234567</c>. The server
-    /// normalizes before dispatching. A short per-destination cooldown is
-    /// enforced; clients hitting it receive <c>OTP_RESEND_COOLDOWN</c>.
+    /// normalizes before dispatching.
+    ///
+    /// <para>
+    /// <b>Channel</b> defaults to <c>"sms"</c> when omitted; pass
+    /// <c>"whatsapp"</c> to dispatch over WhatsApp instead. A short
+    /// per-(phone, channel) cooldown is enforced — an SMS cooldown does
+    /// not block a WhatsApp fallback. Clients hitting it receive
+    /// <c>OTP_RESEND_COOLDOWN</c>.
+    /// </para>
     /// </summary>
     [HttpPost("send-otp")]
     [AllowAnonymous]
@@ -244,7 +251,11 @@ public class AuthController : BaseController
             return ToActionResult(Result<SendOtpResult>.Failure(
                 ErrorCodes.BadRequest, "Request is required."));
 
-        var result = await _phoneVerificationService.SendOtpAsync(dto.PhoneNumber, cancellationToken);
+        if (!MobileOtpChannels.TryParse(dto.Channel, out var channel))
+            return ToActionResult(Result<SendOtpResult>.Failure(
+                ErrorCodes.BadRequest, "Unsupported OTP channel. Allowed: sms, whatsapp."));
+
+        var result = await _phoneVerificationService.SendOtpAsync(dto.PhoneNumber, channel, cancellationToken);
         return ToActionResult(result);
     }
 

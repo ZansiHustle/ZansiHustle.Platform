@@ -14,15 +14,18 @@ namespace ZansiHustle.Application.Auth.Dtos;
 public sealed class ForgotPasswordRequestDto
 {
     /// <summary>
-    /// Email address (when Channel == "email") or phone number in
-    /// international E.164 form (when Channel == "sms").
+    /// Email address (when Channel == "email") or phone number in any
+    /// of the accepted formats (E.164 or SA local) — the server
+    /// normalises before dispatching.
     /// </summary>
     [Required]
     public string EmailOrPhone { get; set; } = string.Empty;
 
     /// <summary>
-    /// Delivery channel for the verification code. One of: "email", "sms".
-    /// Defaults to "email" if omitted so existing callers keep working.
+    /// Delivery channel for the verification code. One of: <c>"email"</c>,
+    /// <c>"sms"</c>, <c>"whatsapp"</c>. Defaults to <c>"email"</c> if
+    /// omitted so existing callers keep working. Phone channels go through
+    /// Twilio Verify; email goes through the legacy custom OTP service.
     /// </summary>
     public string? Channel { get; set; }
 }

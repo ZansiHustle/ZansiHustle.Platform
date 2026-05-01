@@ -4,10 +4,19 @@ namespace ZansiHustle.Application.Auth.Dtos;
 /// Request body for <c>POST /api/auth/send-otp</c>. The phone number does not
 /// need to be E.164 — the server normalizes SA inputs (0XXXXXXXXX, 27..., +27...)
 /// before dispatching to Twilio Verify.
+///
+/// <para>
+/// <b>Channel</b> is optional and defaults to SMS when omitted, so older
+/// mobile clients that pre-date this field continue to work unchanged.
+/// Accepted values: <c>"sms"</c> (default), <c>"whatsapp"</c>. Anything
+/// else is rejected with <c>BAD_REQUEST</c>; clients cannot smuggle
+/// arbitrary strings through to the verification provider.
+/// </para>
 /// </summary>
 public sealed class SendOtpRequestDto
 {
     public string PhoneNumber { get; set; } = string.Empty;
+    public string? Channel { get; set; }
 }
 
 /// <summary>

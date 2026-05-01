@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using Twilio.Exceptions;
 using Twilio.Rest.Verify.V2.Service;
 using ZansiHustle.Application.Communications.PhoneVerification;
+using ZansiHustle.Shared.Enums.Communications;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
 
@@ -58,7 +59,10 @@ public sealed class TwilioVerifyService : IPhoneVerificationService
         _logger = logger;
     }
 
-    public async Task<Result<SendOtpResult>> SendOtpAsync(string phoneNumber, CancellationToken cancellationToken = default)
+    public async Task<Result<SendOtpResult>> SendOtpAsync(
+        string phoneNumber,
+        MobileOtpChannel channel = MobileOtpChannel.Sms,
+        CancellationToken cancellationToken = default)
     {
         if (!PhoneNumberNormalizer.TryNormalize(phoneNumber, out var normalized))
             return Result<SendOtpResult>.Failure(ErrorCodes.InvalidPhoneNumber, "Please enter a valid phone number.");
@@ -66,8 +70,25 @@ public sealed class TwilioVerifyService : IPhoneVerificationService
         if (!TryGetReadyClient(out var client, out var configError))
             return Result<SendOtpResult>.Failure(configError!.Code, configError!.Message);
 
+        // Resolve the channel string ONCE here so the rest of the method —
+        // logs, cache key, Twilio call — agrees on the same value.
+        string twilioChannel;
+        try
+        {
+            twilioChannel = MobileOtpChannels.ToTwilioChannel(channel);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return Result<SendOtpResult>.Failure(ErrorCodes.BadRequest, "Unsupported OTP channel.");
+        }
+        var channelWire = MobileOtpChannels.ToWireString(channel);
+
         var cooldown = Math.Max(0, _settings.Verify.ResendCooldownSeconds);
-        var cooldownKey = CacheKeyPrefix + normalized;
+        // Per-(phone, channel) cooldown — an SMS cooldown should not block a
+        // WhatsApp fallback in the same flow. Twilio also rate-limits per
+        // (service, phone), but that's a coarser global cap; this local key
+        // is the one that drives our user-facing cooldown copy.
+        var cooldownKey = $"{CacheKeyPrefix}{normalized}:{channelWire}";
 
         if (cooldown > 0 && _cache.TryGetValue<DateTime>(cooldownKey, out var nextAllowed))
         {
@@ -87,7 +108,7 @@ public sealed class TwilioVerifyService : IPhoneVerificationService
             var options = new CreateVerificationOptions(
                 pathServiceSid: _settings.Verify.ServiceSid,
                 to: normalized,
-                channel: "sms");
+                channel: twilioChannel);
 
             var verification = await VerificationResource.CreateAsync(options, client);
 
@@ -101,12 +122,13 @@ public sealed class TwilioVerifyService : IPhoneVerificationService
             // On a fresh send we expect "pending" — anything else is unusual
             // but not necessarily fatal, so log and let the verify step decide.
             _logger.LogInformation(
-                "Twilio Verify code dispatched. Sid={Sid} Status={Status} To={Phone}.",
-                verification.Sid, verification.Status, MaskPhone(normalized));
+                "Twilio Verify code dispatched. Sid={Sid} Status={Status} Channel={Channel} To={Phone}.",
+                verification.Sid, verification.Status, channelWire, MaskPhone(normalized));
 
             return Result<SendOtpResult>.Success(new SendOtpResult
             {
                 PhoneNumber = normalized,
+                Channel = channel,
                 ResendCooldownSeconds = cooldown
             }, "Verification code sent.");
         }
@@ -118,16 +140,16 @@ public sealed class TwilioVerifyService : IPhoneVerificationService
             if (ex.Status == 429 || ex.Code == 60203 /* max send attempts reached */)
             {
                 _logger.LogWarning(ex,
-                    "Twilio Verify rate-limited send for {Phone}. Code={Code} Status={Status}.",
-                    MaskPhone(normalized), ex.Code, ex.Status);
+                    "Twilio Verify rate-limited send for {Phone} on {Channel}. Code={Code} Status={Status}.",
+                    MaskPhone(normalized), channelWire, ex.Code, ex.Status);
                 return Result<SendOtpResult>.Failure(
                     ErrorCodes.OtpResendCooldown,
                     "Too many requests. Please wait a moment and try again.");
             }
 
             _logger.LogError(ex,
-                "Twilio Verify send failed for {Phone}. Code={Code} Status={Status} Message={Message}.",
-                MaskPhone(normalized), ex.Code, ex.Status, ex.Message);
+                "Twilio Verify send failed for {Phone} on {Channel}. Code={Code} Status={Status} Message={Message}.",
+                MaskPhone(normalized), channelWire, ex.Code, ex.Status, ex.Message);
             return Result<SendOtpResult>.Failure(
                 ErrorCodes.PhoneVerificationFailed,
                 "We could not send the verification code. Please try again.");
@@ -139,7 +161,8 @@ public sealed class TwilioVerifyService : IPhoneVerificationService
         catch (Exception ex)
         {
             _logger.LogError(ex,
-                "Unexpected Twilio Verify send failure for {Phone}.", MaskPhone(normalized));
+                "Unexpected Twilio Verify send failure for {Phone} on {Channel}.",
+                MaskPhone(normalized), channelWire);
             return Result<SendOtpResult>.Failure(
                 ErrorCodes.PhoneVerificationFailed,
                 "We could not send the verification code. Please try again.");

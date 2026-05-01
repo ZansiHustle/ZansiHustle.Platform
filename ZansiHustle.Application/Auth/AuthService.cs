@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using System.Net.Http.Json;
@@ -9,6 +10,7 @@ using ZansiHustle.Application.Auth.Dtos;
 using ZansiHustle.Application.Communications.Email.Interfaces;
 using ZansiHustle.Application.Communications.Otp.Interfaces;
 using ZansiHustle.Application.Communications.Otp.Models;
+using ZansiHustle.Application.Communications.PhoneVerification;
 using ZansiHustle.Application.Persistence.Identity;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Shared.Enums.Communications;
@@ -24,10 +26,20 @@ namespace ZansiHustle.Application.Auth;
 /// </summary>
 public sealed class AuthService : IAuthService
 {
+    // Cache key prefix for phone-reset sessions. Keeps the in-process map
+    // namespaced so it can co-exist with other IMemoryCache consumers.
+    private const string PhoneResetSessionPrefix = "auth:phone-reset-session:";
+    // 10-minute TTL aligns roughly with Twilio Verify's own 10-minute code
+    // expiry. Past this window the verify call would fail anyway, so the
+    // session is useless.
+    private static readonly TimeSpan PhoneResetSessionTtl = TimeSpan.FromMinutes(10);
+
     private readonly UserManager<User> _userManager;
     private readonly IJwtTokenGenerator _jwtTokenGenerator;
     private readonly IEmailService _emailService;
     private readonly IOtpService _otpService;
+    private readonly IPhoneVerificationService _phoneVerificationService;
+    private readonly IMemoryCache _cache;
     private readonly ILogger<AuthService> _logger;
 
     public AuthService(
@@ -35,13 +47,30 @@ public sealed class AuthService : IAuthService
         IJwtTokenGenerator jwtTokenGenerator,
         IEmailService emailService,
         IOtpService otpService,
+        IPhoneVerificationService phoneVerificationService,
+        IMemoryCache cache,
         ILogger<AuthService> logger)
     {
         _userManager = userManager;
         _jwtTokenGenerator = jwtTokenGenerator;
         _emailService = emailService;
         _otpService = otpService;
+        _phoneVerificationService = phoneVerificationService;
+        _cache = cache;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Server-side bookkeeping for a phone-channel reset OTP. Twilio Verify
+    /// itself stores no per-flow state we can correlate to a user, so we
+    /// keep the (sessionId → user, phone) mapping in-process for the
+    /// lifetime of the OTP.
+    /// </summary>
+    private sealed class PhoneResetSession
+    {
+        public Guid UserId { get; init; }
+        public string PhoneNumber { get; init; } = string.Empty;
+        public MobileOtpChannel Channel { get; init; }
     }
 
     /// <inheritdoc />
@@ -249,7 +278,7 @@ public sealed class AuthService : IAuthService
 
         if (string.IsNullOrWhiteSpace(identifier))
             return Result<ForgotPasswordResponseDto>.Failure(ErrorCodes.BadRequest,
-                channel == OtpChannel.Sms ? "Phone number is required." : "Email address is required.");
+                IsPhoneChannel(channel) ? "Phone number is required." : "Email address is required.");
 
         _logger.LogInformation(
             "Password reset OTP requested. Channel={Channel} IdentifierPreview={Preview}",
@@ -268,7 +297,7 @@ public sealed class AuthService : IAuthService
         User? user;
         try
         {
-            user = channel == OtpChannel.Sms
+            user = IsPhoneChannel(channel)
                 ? await _userManager.Users.FirstOrDefaultAsync(u =>
                       u.PhoneNumber == identifier || u.PhoneNumber == NormalisePhone(identifier))
                 : await _userManager.FindByEmailAsync(identifier.ToLowerInvariant());
@@ -302,11 +331,10 @@ public sealed class AuthService : IAuthService
                 "If an account matches, a verification code has been sent.");
         }
 
-        // SMS channel requires a phone number on file. If missing,
-        // we refuse rather than silently succeed — but with a message
-        // that's honest without leaking which accounts have phones
-        // attached (we only reveal this after email lookup succeeds).
-        var destination = channel == OtpChannel.Sms
+        // Phone channels require a phone on file; email requires an email.
+        // We refuse rather than silently succeed — but only after the user
+        // lookup succeeded, so this branch can't be used for enumeration.
+        var destination = IsPhoneChannel(channel)
             ? NormalisePhone(user.PhoneNumber ?? string.Empty)
             : user.Email ?? identifier.ToLowerInvariant();
 
@@ -314,12 +342,58 @@ public sealed class AuthService : IAuthService
         {
             return Result<ForgotPasswordResponseDto>.Failure(
                 ErrorCodes.BadRequest,
-                channel == OtpChannel.Sms
+                IsPhoneChannel(channel)
                     ? "No phone number on file for this account. Please reset via email."
                     : "No email on file for this account.");
         }
 
         // ── Issue the OTP ───────────────────────────────────────────
+        // Phone channels go through Twilio Verify (no plaintext code is
+        // ever stored on our side); email goes through the existing
+        // OtpService which handles its own template/code lifecycle.
+        if (IsPhoneChannel(channel))
+        {
+            var mobileChannel = ToMobileChannel(channel);
+            var send = await _phoneVerificationService.SendOtpAsync(destination, mobileChannel);
+            if (!send.IsSuccess || send.Data is null)
+            {
+                _logger.LogWarning(
+                    "Password reset OTP dispatch failed (phone) for user {UserId}. Code={Code} Message={Message}",
+                    user.Id, send.Code, send.Message);
+                return Result<ForgotPasswordResponseDto>.Failure(send.Code, send.Message);
+            }
+
+            // Cache (sessionId → user, normalised phone, channel) so the
+            // verify step can look up the user without trusting the client
+            // to round-trip the phone number. TTL matches Twilio's 10-min
+            // code lifetime.
+            var sessionId = Guid.NewGuid().ToString("N");
+            _cache.Set(
+                PhoneResetSessionPrefix + sessionId,
+                new PhoneResetSession
+                {
+                    UserId = user.Id,
+                    PhoneNumber = send.Data.PhoneNumber,
+                    Channel = mobileChannel
+                },
+                PhoneResetSessionTtl);
+
+            _logger.LogInformation(
+                "Password reset OTP issued via Twilio Verify. UserId={UserId} SessionId={SessionId} Channel={Channel}",
+                user.Id, sessionId, mobileChannel);
+
+            return Result<ForgotPasswordResponseDto>.Success(new ForgotPasswordResponseDto
+            {
+                SessionId = sessionId,
+                ExpiresAtUtc = DateTime.UtcNow.Add(PhoneResetSessionTtl),
+                CodeLength = 6, // Twilio Verify default; presentational only.
+                ResendCooldownSeconds = send.Data.ResendCooldownSeconds,
+                Channel = ChannelWire(channel),
+                DestinationMasked = MaskIdentifier(destination, channel)
+            }, "Verification code sent.");
+        }
+
+        // Email path — unchanged from before.
         var issueRequest = new OtpIssueRequest
         {
             Destination = destination,
@@ -348,7 +422,7 @@ public sealed class AuthService : IAuthService
             ExpiresAtUtc = issue.Data.ExpiresAtUtc,
             CodeLength = issue.Data.CodeLength,
             ResendCooldownSeconds = issue.Data.ResendCooldownSeconds,
-            Channel = channel == OtpChannel.Sms ? "sms" : "email",
+            Channel = ChannelWire(channel),
             DestinationMasked = MaskIdentifier(destination, channel)
         }, "Verification code sent.");
     }
@@ -359,7 +433,55 @@ public sealed class AuthService : IAuthService
         if (dto is null || string.IsNullOrWhiteSpace(dto.SessionId) || string.IsNullOrWhiteSpace(dto.Code))
             return Result<VerifyResetOtpResponseDto>.Failure(ErrorCodes.BadRequest, "Session id and code are required.");
 
-        // The OtpService handles TTL / attempt caps / one-use semantics.
+        // Phone-channel sessions live in IMemoryCache (set by the SMS /
+        // WhatsApp branch of RequestPasswordResetOtpAsync). Try that first;
+        // a hit means we delegate the code check to Twilio Verify and mint
+        // a reset token if approved. A miss falls through to the legacy
+        // email path which uses the custom OtpService.
+        var phoneCacheKey = PhoneResetSessionPrefix + dto.SessionId;
+        if (_cache.TryGetValue<PhoneResetSession>(phoneCacheKey, out var phoneSession) && phoneSession is not null)
+        {
+            var twilio = await _phoneVerificationService.VerifyOtpAsync(phoneSession.PhoneNumber, dto.Code);
+            if (!twilio.IsSuccess || twilio.Data is null || !twilio.Data.Verified)
+            {
+                // Don't drop the cache entry on failure — Twilio Verify
+                // tracks its own attempt cap and will start returning
+                // OTP_EXHAUSTED once the user has burned all retries.
+                return Result<VerifyResetOtpResponseDto>.Failure(twilio.Code, twilio.Message);
+            }
+
+            // Single-use: invalidate the session immediately so the same
+            // sessionId+code can't be replayed against /verify-reset-otp.
+            _cache.Remove(phoneCacheKey);
+
+            User? phoneUser;
+            try
+            {
+                phoneUser = await _userManager.FindByIdAsync(phoneSession.UserId.ToString());
+            }
+            catch (Exception dbEx)
+            {
+                _logger.LogError(dbEx, "Password reset verify (phone): user lookup failed.");
+                return Result<VerifyResetOtpResponseDto>.Failure(
+                    ErrorCodes.Exception,
+                    "The password reset service is temporarily unavailable. Please try again in a moment.");
+            }
+
+            if (phoneUser is null)
+                return Result<VerifyResetOtpResponseDto>.Failure(ErrorCodes.NotFound, "Account not found.");
+
+            var phoneResetToken = await _userManager.GeneratePasswordResetTokenAsync(phoneUser);
+            _logger.LogInformation(
+                "Password reset OTP verified via Twilio Verify for user {UserId}.", phoneUser.Id);
+
+            return Result<VerifyResetOtpResponseDto>.Success(new VerifyResetOtpResponseDto
+            {
+                UserId = phoneUser.Id.ToString(),
+                ResetToken = phoneResetToken
+            }, "Verification successful.");
+        }
+
+        // Email path — the OtpService handles TTL / attempt caps / one-use semantics.
         var verify = await _otpService.VerifyAsync(new OtpVerifyRequest
         {
             SessionId = dto.SessionId,
@@ -416,11 +538,34 @@ public sealed class AuthService : IAuthService
         if (string.IsNullOrWhiteSpace(raw)) return OtpChannel.Email;
         return raw.Trim().ToLowerInvariant() switch
         {
-            "sms"   => OtpChannel.Sms,
-            "email" => OtpChannel.Email,
-            _       => OtpChannel.Email
+            "sms"      => OtpChannel.Sms,
+            "whatsapp" => OtpChannel.WhatsApp,
+            "email"    => OtpChannel.Email,
+            _          => OtpChannel.Email
         };
     }
+
+    /// <summary>
+    /// True for channels that go through the Twilio Verify provider
+    /// (phone-based). Email lives on a separate code path with its own
+    /// custom OTP store and templates.
+    /// </summary>
+    private static bool IsPhoneChannel(OtpChannel channel)
+        => channel == OtpChannel.Sms || channel == OtpChannel.WhatsApp;
+
+    private static MobileOtpChannel ToMobileChannel(OtpChannel channel) => channel switch
+    {
+        OtpChannel.Sms => MobileOtpChannel.Sms,
+        OtpChannel.WhatsApp => MobileOtpChannel.WhatsApp,
+        _ => MobileOtpChannel.Sms
+    };
+
+    private static string ChannelWire(OtpChannel channel) => channel switch
+    {
+        OtpChannel.Sms => "sms",
+        OtpChannel.WhatsApp => "whatsapp",
+        _ => "email"
+    };
 
     // Very small phone normaliser — enough to match either the stored
     // "+27821234567" or the looser variants users type ("0821234567",
@@ -439,7 +584,7 @@ public sealed class AuthService : IAuthService
     private static string MaskIdentifier(string identifier, OtpChannel channel)
     {
         if (string.IsNullOrWhiteSpace(identifier)) return "";
-        if (channel == OtpChannel.Sms)
+        if (IsPhoneChannel(channel))
         {
             // Show last 3 digits: "+27** *** *123"
             var digits = new string(identifier.Where(char.IsDigit).ToArray());
@@ -467,7 +612,7 @@ public sealed class AuthService : IAuthService
             ExpiresAtUtc = DateTime.UtcNow.AddMinutes(5),
             CodeLength = 6,
             ResendCooldownSeconds = 30,
-            Channel = channel == OtpChannel.Sms ? "sms" : "email",
+            Channel = ChannelWire(channel),
             DestinationMasked = MaskIdentifier(identifier, channel)
         };
     }
