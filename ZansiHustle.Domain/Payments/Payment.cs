@@ -53,6 +53,14 @@ namespace ZansiHustle.Domain.Payments
         /// <summary>Last raw provider response JSON for debugging/audit.</summary>
         public string? RawProviderMetadata { get; set; }
 
+        /// <summary>
+        /// True when the payment was created under a controlled-testing flag
+        /// (e.g. <c>Ozow:UatTestMode</c>). Lets ops filter out test traffic
+        /// in admin/reporting views and protects analytics from synthetic
+        /// payments. Defaults to false for production payments.
+        /// </summary>
+        public bool IsTest { get; set; }
+
         public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
         public DateTime? UpdatedAtUtc { get; set; }
 

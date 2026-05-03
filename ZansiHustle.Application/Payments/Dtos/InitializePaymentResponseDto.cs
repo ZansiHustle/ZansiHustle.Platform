@@ -14,7 +14,14 @@ namespace ZansiHustle.Application.Payments.Dtos
         public string Code { get; set; } = string.Empty;
         public string Provider { get; set; } = string.Empty;
         public string? ProviderReference { get; set; }
+
+        /// <summary>
+        /// Provider checkout URL the buyer should be redirected to.
+        /// For Ozow this is the URL returned by <c>PostPaymentRequest</c>.
+        /// For Paystack it's the <c>authorization_url</c>.
+        /// </summary>
         public string? AuthorizationUrl { get; set; }
+
         public decimal Amount { get; set; }
         public string Currency { get; set; } = "ZAR";
         public PaymentTransactionStatus Status { get; set; }
@@ -22,7 +29,7 @@ namespace ZansiHustle.Application.Payments.Dtos
         /// <summary>
         /// Paystack Public Key echoed back so in-app native checkout (via a
         /// Paystack SDK) can run without needing a second config request.
-        /// Safe to expose.
+        /// Null for Ozow — Ozow flows are redirect-only.
         /// </summary>
         public string? PublicKey { get; set; }
     }

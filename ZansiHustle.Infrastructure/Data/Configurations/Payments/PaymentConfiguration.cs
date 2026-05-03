@@ -59,6 +59,13 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Payments
             builder.Property(x => x.RawProviderMetadata)
                 .HasColumnType("nvarchar(max)");
 
+            builder.Property(x => x.IsTest)
+                .HasDefaultValue(false)
+                .IsRequired();
+
+            // Cheap to filter test payments out of admin/reporting queries.
+            builder.HasIndex(x => x.IsTest);
+
             builder.Property(x => x.CreatedAtUtc)
                 .IsRequired();
 

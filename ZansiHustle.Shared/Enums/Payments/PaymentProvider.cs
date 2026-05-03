@@ -7,4 +7,5 @@ namespace ZansiHustle.Shared.Enums.Payments;
 public static class PaymentProvider
 {
     public const string Paystack = "Paystack";
+    public const string Ozow = "Ozow";
 }

@@ -102,6 +102,7 @@ using ZansiHustle.Infrastructure.Persistence.Listings;
 using ZansiHustle.Infrastructure.Persistence.Merchants;
 using ZansiHustle.Infrastructure.Persistence.Orders;
 using ZansiHustle.Infrastructure.Persistence.Payments;
+using ZansiHustle.Infrastructure.Payments.Ozow;
 using ZansiHustle.Infrastructure.Payments.Paystack;
 using ZansiHustle.Infrastructure.Persistence.Podcasts;
 using ZansiHustle.Infrastructure.Persistence.SellerCategories;
@@ -357,6 +358,35 @@ public static class ServiceExtensions
             var settings = sp.GetRequiredService<IOptions<PaystackSettings>>().Value;
             PaystackClient.ConfigureHttpClient(client, settings);
         });
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the Ozow-backed payment provider, the SHA512 hash service,
+    /// and a typed HTTP client. Mirrors the Paystack registration pattern;
+    /// Ozow credentials are read from the "Ozow" configuration section.
+    /// Calls fail at runtime with <c>PROVIDER_NOT_CONFIGURED</c> when
+    /// credentials or the hash service are missing — the app still starts.
+    /// </summary>
+    public static IServiceCollection AddOzowPayments(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<OzowSettings>(configuration.GetSection(OzowSettings.SectionName));
+
+        services.AddScoped<IOzowHashService, OzowHashService>();
+
+        services.AddHttpClient<IOzowClient, OzowClient>((sp, client) =>
+        {
+            var settings = sp.GetRequiredService<IOptions<OzowSettings>>().Value;
+            OzowClient.ConfigureHttpClient(client, settings);
+        });
+
+        // Boot-time diagnostic — logs Ozow readiness, missing env vars, and
+        // localhost URL warnings ONCE at startup so a misconfigured UAT
+        // environment is obvious in the deploy log instead of surfacing at
+        // first checkout. See OzowConfigReporter for safety notes (no
+        // secret values are ever logged).
+        services.AddHostedService<OzowConfigReporter>();
 
         return services;
     }
