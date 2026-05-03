@@ -28,17 +28,20 @@ namespace ZansiHustle.API.Controllers
         private readonly IPaymentService _paymentService;
         private readonly ICurrentUserService _currentUserService;
         private readonly OzowSettings _ozowSettings;
+        private readonly YocoSettings _yocoSettings;
         private readonly ILogger<PaymentsController> _logger;
 
         public PaymentsController(
             IPaymentService paymentService,
             ICurrentUserService currentUserService,
             IOptions<OzowSettings> ozowSettings,
+            IOptions<YocoSettings> yocoSettings,
             ILogger<PaymentsController> logger)
         {
             _paymentService = paymentService;
             _currentUserService = currentUserService;
             _ozowSettings = ozowSettings.Value ?? new OzowSettings();
+            _yocoSettings = yocoSettings.Value ?? new YocoSettings();
             _logger = logger;
         }
 
@@ -162,6 +165,32 @@ namespace ZansiHustle.API.Controllers
             return Ok(new { received = true });
         }
 
+        /// <summary>
+        /// Yoco webhook receiver. Yoco signs events per the Standard Webhooks
+        /// spec (HMAC-SHA256). Always returns 200 OK so Yoco stops retrying;
+        /// the audit row records signature validity and dedup status.
+        /// </summary>
+        [HttpPost("webhook/yoco")]
+        [AllowAnonymous]
+        public async Task<IActionResult> YocoWebhook(CancellationToken cancellationToken)
+        {
+            // Signature is computed over the EXACT raw bytes — re-serializing
+            // would change whitespace and break verification.
+            Request.EnableBuffering();
+            Request.Body.Position = 0;
+
+            using var reader = new StreamReader(Request.Body, leaveOpen: true);
+            var rawBody = await reader.ReadToEndAsync(cancellationToken);
+            Request.Body.Position = 0;
+
+            var webhookId = Request.Headers.TryGetValue("webhook-id", out var idHdr) ? idHdr.ToString() : null;
+            var webhookTimestamp = Request.Headers.TryGetValue("webhook-timestamp", out var tsHdr) ? tsHdr.ToString() : null;
+            var webhookSignature = Request.Headers.TryGetValue("webhook-signature", out var sigHdr) ? sigHdr.ToString() : null;
+
+            await _paymentService.HandleYocoWebhookAsync(rawBody, webhookId, webhookTimestamp, webhookSignature, cancellationToken);
+            return Ok(new { received = true });
+        }
+
         private static decimal ParseDecimal(Microsoft.Extensions.Primitives.StringValues raw)
         {
             var s = raw.ToString();
@@ -265,5 +294,89 @@ namespace ZansiHustle.API.Controllers
         }
 
         private static string? NullIfBlank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
+
+        // ─── Yoco user-redirect return endpoints ─────────────────────────────
+        // Same contract as the Ozow return endpoints: pure user-redirect
+        // targets, anonymous, never mutate payment state. Yoco itself signs
+        // the webhook delivered to /api/payments/webhook/yoco — that, plus
+        // POST /api/payments/verify/{reference}, are the only paths that may
+        // change a Payment's Status. These return endpoints exist so Yoco's
+        // configured success/cancel/failure URLs don't 404, and so the
+        // mobile app can deep-link into a "verifying…" screen.
+
+        /// <summary>Yoco Success redirect target. Does NOT mark the payment paid.</summary>
+        [HttpGet("yoco/return/success")]
+        [HttpPost("yoco/return/success")]
+        [AllowAnonymous]
+        public Task<IActionResult> YocoReturnSuccess(CancellationToken cancellationToken)
+            => HandleYocoReturnAsync("success", cancellationToken);
+
+        /// <summary>Yoco Cancel redirect target. Does NOT mutate payment state.</summary>
+        [HttpGet("yoco/return/cancel")]
+        [HttpPost("yoco/return/cancel")]
+        [AllowAnonymous]
+        public Task<IActionResult> YocoReturnCancel(CancellationToken cancellationToken)
+            => HandleYocoReturnAsync("cancel", cancellationToken);
+
+        /// <summary>Yoco Failure redirect target. Does NOT mutate payment state.</summary>
+        [HttpGet("yoco/return/failure")]
+        [HttpPost("yoco/return/failure")]
+        [AllowAnonymous]
+        public Task<IActionResult> YocoReturnFailure(CancellationToken cancellationToken)
+            => HandleYocoReturnAsync("failure", cancellationToken);
+
+        private async Task<IActionResult> HandleYocoReturnAsync(string result, CancellationToken cancellationToken)
+        {
+            var (checkoutId, paymentCode, status) = await ReadYocoReturnContextAsync(cancellationToken);
+
+            // Log only the safe correlation fields. No SecretKey / signing
+            // secret / signed body ever appears here — see YocoClient +
+            // YocoSignatureService for the wider non-leak guarantee.
+            _logger.LogInformation(
+                "[Yoco][Return] result={Result} checkoutId={CheckoutId} paymentCode={PaymentCode} status={Status}",
+                result, checkoutId ?? "<none>", paymentCode ?? "<none>", status ?? "<none>");
+
+            var deepLink = _yocoSettings.AppReturnDeepLink;
+            if (!string.IsNullOrWhiteSpace(deepLink))
+            {
+                var sep = deepLink.Contains('?') ? '&' : '?';
+                var qs = $"result={Uri.EscapeDataString(result)}";
+                if (!string.IsNullOrWhiteSpace(paymentCode))
+                    qs += $"&reference={Uri.EscapeDataString(paymentCode)}";
+                else if (!string.IsNullOrWhiteSpace(checkoutId))
+                    qs += $"&checkoutId={Uri.EscapeDataString(checkoutId)}";
+                if (!string.IsNullOrWhiteSpace(status))
+                    qs += $"&status={Uri.EscapeDataString(status)}";
+
+                return Redirect($"{deepLink}{sep}{qs}");
+            }
+
+            return Content(
+                "Payment response received. Please return to the app to verify payment.",
+                "text/plain; charset=utf-8");
+        }
+
+        private async Task<(string? CheckoutId, string? PaymentCode, string? Status)> ReadYocoReturnContextAsync(CancellationToken cancellationToken)
+        {
+            // Yoco appends `id` (the checkout id) to the success/cancel/failure
+            // redirect URLs. We may also see our own metadata key surfaced as a
+            // query param (`paymentCode`) if the deploy is configured to do so.
+            // Read from the query first; fall back to form fields on POST.
+            string? checkoutId  = NullIfBlank(Request.Query["id"].ToString())
+                                  ?? NullIfBlank(Request.Query["checkoutId"].ToString());
+            string? paymentCode = NullIfBlank(Request.Query["paymentCode"].ToString());
+            string? status      = NullIfBlank(Request.Query["status"].ToString());
+
+            if (Request.HasFormContentType)
+            {
+                var form = await Request.ReadFormAsync(cancellationToken);
+                checkoutId  ??= NullIfBlank(form["id"].ToString())
+                                ?? NullIfBlank(form["checkoutId"].ToString());
+                paymentCode ??= NullIfBlank(form["paymentCode"].ToString());
+                status      ??= NullIfBlank(form["status"].ToString());
+            }
+
+            return (checkoutId, paymentCode, status);
+        }
     }
 }

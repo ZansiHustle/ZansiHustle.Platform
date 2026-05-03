@@ -47,5 +47,19 @@ namespace ZansiHustle.Application.Payments
             OzowTransactionNotification notification,
             string rawBody,
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Processes a Yoco webhook event delivered to /api/payments/webhook/yoco.
+        /// Validates the Standard Webhooks signature via <see cref="IYocoSignatureService"/>,
+        /// dedupes via the event id, and applies the Yoco status to the local
+        /// Payment + Order. Always returns Result.Success so the controller can
+        /// ack 200 to Yoco regardless.
+        /// </summary>
+        Task<Result> HandleYocoWebhookAsync(
+            string rawBody,
+            string? webhookId,
+            string? webhookTimestamp,
+            string? webhookSignature,
+            CancellationToken cancellationToken = default);
     }
 }

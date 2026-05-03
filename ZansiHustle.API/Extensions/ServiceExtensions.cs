@@ -104,6 +104,7 @@ using ZansiHustle.Infrastructure.Persistence.Orders;
 using ZansiHustle.Infrastructure.Persistence.Payments;
 using ZansiHustle.Infrastructure.Payments.Ozow;
 using ZansiHustle.Infrastructure.Payments.Paystack;
+using ZansiHustle.Infrastructure.Payments.Yoco;
 using ZansiHustle.Infrastructure.Persistence.Podcasts;
 using ZansiHustle.Infrastructure.Persistence.SellerCategories;
 using ZansiHustle.Infrastructure.Persistence.SellerLeads;
@@ -392,6 +393,32 @@ public static class ServiceExtensions
     }
 
     /// <summary>
+    /// Registers the Yoco-backed payment provider, the Standard Webhooks
+    /// signature service, and a typed HTTP client. Mirrors the Ozow/Paystack
+    /// registration pattern; Yoco credentials are read from the "Yoco"
+    /// configuration section. Calls fail at runtime with
+    /// <c>PROVIDER_NOT_CONFIGURED</c> when SecretKey or WebhookSigningSecret
+    /// is missing — the app still starts so other providers (Ozow) keep
+    /// working independently.
+    /// </summary>
+    public static IServiceCollection AddYocoPayments(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<YocoSettings>(configuration.GetSection(YocoSettings.SectionName));
+
+        services.AddScoped<IYocoSignatureService, YocoSignatureService>();
+
+        services.AddHttpClient<IYocoClient, YocoClient>((sp, client) =>
+        {
+            var settings = sp.GetRequiredService<IOptions<YocoSettings>>().Value;
+            YocoClient.ConfigureHttpClient(client, settings);
+        });
+
+        services.AddHostedService<YocoConfigReporter>();
+
+        return services;
+    }
+
+    /// <summary>
     /// Registers the channel-agnostic OTP service and the in-memory session store.
     /// Replace <see cref="InMemoryOtpStore"/> with a Redis/SQL implementation
     /// when scaling horizontally.
@@ -464,6 +491,15 @@ public static class ServiceExtensions
         services.AddScoped<IPaymentService, PaymentService>();
         services.AddScoped<IEventPlanService, EventPlanService>();
         services.AddScoped<IFundraisingService, FundraisingService>();
+
+        // Casual peer-to-peer Marketplace — separate domain from
+        // merchant Listings; owned by a User, not a Merchant.
+        services.AddScoped<
+            ZansiHustle.Application.Persistence.Marketplace.IMarketplaceListingRepository,
+            ZansiHustle.Infrastructure.Persistence.Marketplace.MarketplaceListingRepository>();
+        services.AddScoped<
+            ZansiHustle.Application.Marketplace.IMarketplaceListingService,
+            ZansiHustle.Application.Marketplace.MarketplaceListingService>();
 
         // Standalone referral / affiliate system.
         services.AddScoped<ZansiHustle.Application.Persistence.Referrals.IAffiliateProfileRepository,

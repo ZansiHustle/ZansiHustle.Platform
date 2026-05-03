@@ -11,6 +11,7 @@ using ZansiHustle.Domain.Fundraising;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Domain.Influencers;
 using ZansiHustle.Domain.Listings;
+using ZansiHustle.Domain.Marketplace;
 using ZansiHustle.Domain.Media;
 using ZansiHustle.Domain.Merchants;
 using ZansiHustle.Domain.Orders;
@@ -109,6 +110,10 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     public DbSet<SellerSubcategory> SellerSubcategories => Set<SellerSubcategory>();
 
     public DbSet<Listing> Listings => Set<Listing>();
+
+    // ── Casual peer-to-peer Marketplace (separate from merchant Listings) ──
+    public DbSet<MarketplaceListing> MarketplaceListings => Set<MarketplaceListing>();
+    public DbSet<MarketplaceListingImage> MarketplaceListingImages => Set<MarketplaceListingImage>();
 
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();

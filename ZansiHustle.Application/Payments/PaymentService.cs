@@ -27,6 +27,8 @@ namespace ZansiHustle.Application.Payments
         private readonly IPaystackClient _paystackClient;
         private readonly IOzowClient _ozowClient;
         private readonly IOzowHashService _ozowHashService;
+        private readonly IYocoClient _yocoClient;
+        private readonly IYocoSignatureService _yocoSignatureService;
         private readonly UserManager<User> _userManager;
         private readonly ILogger<PaymentService> _logger;
 
@@ -36,6 +38,8 @@ namespace ZansiHustle.Application.Payments
             IPaystackClient paystackClient,
             IOzowClient ozowClient,
             IOzowHashService ozowHashService,
+            IYocoClient yocoClient,
+            IYocoSignatureService yocoSignatureService,
             UserManager<User> userManager,
             ILogger<PaymentService> logger)
         {
@@ -44,6 +48,8 @@ namespace ZansiHustle.Application.Payments
             _paystackClient = paystackClient;
             _ozowClient = ozowClient;
             _ozowHashService = ozowHashService;
+            _yocoClient = yocoClient;
+            _yocoSignatureService = yocoSignatureService;
             _userManager = userManager;
             _logger = logger;
         }
@@ -88,6 +94,7 @@ namespace ZansiHustle.Application.Payments
                 return providerName switch
                 {
                     PaymentProvider.Ozow => await InitializeOzowAsync(order, buyerUserId, cancellationToken),
+                    PaymentProvider.Yoco => await InitializeYocoAsync(order, buyerUserId, cancellationToken),
                     PaymentProvider.Paystack => await InitializePaystackAsync(order, buyerUserId, request.CallbackUrl, cancellationToken),
                     _ => Result<InitializePaymentResponseDto>.Failure(ErrorCodes.BadRequest, $"Unknown payment provider '{providerName}'.")
                 };
@@ -102,7 +109,8 @@ namespace ZansiHustle.Application.Payments
         private static string ResolveProvider(string? requested)
         {
             if (string.IsNullOrWhiteSpace(requested)) return PaymentProvider.Ozow;
-            if (string.Equals(requested, PaymentProvider.Ozow, StringComparison.OrdinalIgnoreCase)) return PaymentProvider.Ozow;
+            if (string.Equals(requested, PaymentProvider.Ozow,     StringComparison.OrdinalIgnoreCase)) return PaymentProvider.Ozow;
+            if (string.Equals(requested, PaymentProvider.Yoco,     StringComparison.OrdinalIgnoreCase)) return PaymentProvider.Yoco;
             if (string.Equals(requested, PaymentProvider.Paystack, StringComparison.OrdinalIgnoreCase)) return PaymentProvider.Paystack;
             return requested;
         }
@@ -287,6 +295,101 @@ namespace ZansiHustle.Application.Payments
             return stripped.Length > max ? stripped.Substring(0, max) : stripped;
         }
 
+        // ─── Initialize: Yoco ────────────────────────────────────────────────
+
+        private async Task<Result<InitializePaymentResponseDto>> InitializeYocoAsync(
+            Order order,
+            Guid buyerUserId,
+            CancellationToken cancellationToken)
+        {
+            if (!_yocoClient.IsConfigured)
+                return Result<InitializePaymentResponseDto>.Failure(
+                    ErrorCodes.ProviderNotConfigured,
+                    "Yoco is not configured on this environment (credentials and/or webhook signing secret).");
+
+            // ── UAT controlled-testing guard ─────────────────────────────────
+            // Same model as Ozow: cap amount, tag the code, mark IsTest.
+            var uatTestMode = _yocoClient.UatTestMode;
+            var chargedAmount = uatTestMode
+                ? Math.Min(order.Total, _yocoClient.UatTestAmount)
+                : order.Total;
+            var paymentCode = uatTestMode ? "UAT-TEST-" + GenerateCode() : GenerateCode();
+
+            var payment = new Payment
+            {
+                Id = Guid.NewGuid(),
+                Code = paymentCode,
+                OrderId = order.Id,
+                UserId = buyerUserId,
+                Provider = PaymentProvider.Yoco,
+                Amount = chargedAmount,
+                Currency = string.IsNullOrWhiteSpace(order.Currency) ? "ZAR" : order.Currency,
+                Status = PaymentTransactionStatus.Initialized,
+                IsTest = uatTestMode,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+
+            await _paymentRepository.AddAsync(payment);
+            await _paymentRepository.SaveChangesAsync();
+
+            if (uatTestMode)
+            {
+                _logger.LogWarning(
+                    "[Yoco][UAT-TEST] Initiating TEST payment {Code} for order {OrderCode}. " +
+                    "Charged amount capped at R{Charged} (order total R{OrderTotal}). IsTest=true.",
+                    payment.Code, order.Code, payment.Amount, order.Total);
+            }
+
+            // Yoco wants the amount in cents. We pass our own Payment Code in
+            // metadata so the webhook handler can find the payment row even
+            // if Yoco's checkoutId is missing on the payload.
+            var yocoRequest = new YocoCheckoutRequest
+            {
+                Amount = ToSubunit(payment.Amount),
+                Currency = payment.Currency,
+                Metadata = new Dictionary<string, string>
+                {
+                    ["paymentCode"] = payment.Code,
+                    ["orderId"] = order.Id.ToString(),
+                    ["orderCode"] = order.Code,
+                    ["paymentId"] = payment.Id.ToString()
+                }
+                // SuccessUrl / CancelUrl / FailureUrl are passed through by
+                // YocoClient.ConfigureHttpClient consumers — we leave them
+                // null here so the global Yoco settings take effect. Per-call
+                // overrides can be threaded through later if needed.
+            };
+
+            var ycResult = await _yocoClient.CreateCheckoutAsync(yocoRequest, cancellationToken);
+
+            if (!ycResult.IsSuccess || ycResult.Data is null || string.IsNullOrWhiteSpace(ycResult.Data.RedirectUrl))
+            {
+                payment.Status = PaymentTransactionStatus.Failed;
+                payment.FailedAtUtc = DateTime.UtcNow;
+                payment.FailureReason = ycResult.Message;
+                payment.UpdatedAtUtc = DateTime.UtcNow;
+                _paymentRepository.Update(payment);
+                await _paymentRepository.SaveChangesAsync();
+
+                return Result<InitializePaymentResponseDto>.Failure(ErrorCodes.PaymentInitFailed, ycResult.Message ?? "Failed to initialize Yoco checkout.");
+            }
+
+            // Store Yoco's checkout id as ProviderReference so /verify can
+            // look it up. The buyer's redirect URL goes on ProviderAuthorizationUrl.
+            payment.ProviderReference = ycResult.Data.Id;
+            payment.ProviderAuthorizationUrl = ycResult.Data.RedirectUrl;
+            payment.ProviderAccessCode = ycResult.Data.Id;
+            payment.Status = PaymentTransactionStatus.Pending;
+            payment.UpdatedAtUtc = DateTime.UtcNow;
+
+            _paymentRepository.Update(payment);
+            await _paymentRepository.SaveChangesAsync();
+
+            _logger.LogInformation("Payment {Code} initialized via Yoco for order {OrderCode}. checkoutId={CheckoutId}",
+                payment.Code, order.Code, ycResult.Data.Id);
+            return Result<InitializePaymentResponseDto>.Success(MapInitializeResponse(payment), "Payment initialized.");
+        }
+
         // ─── Get by id ───────────────────────────────────────────────────────
 
         /// <inheritdoc />
@@ -338,6 +441,36 @@ namespace ZansiHustle.Application.Payments
                 }
 
                 // Route to the right provider based on the stored Payment.Provider.
+                if (string.Equals(payment.Provider, PaymentProvider.Yoco, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!_yocoClient.IsConfigured)
+                        return Result<PaymentDto>.Failure(ErrorCodes.ProviderNotConfigured, "Yoco is not configured.");
+
+                    var checkoutId = payment.ProviderReference ?? payment.ProviderAccessCode;
+                    if (string.IsNullOrWhiteSpace(checkoutId))
+                        return Result<PaymentDto>.Failure(ErrorCodes.NotFound, "Yoco checkout id is not stored on this payment.");
+
+                    var ycLookup = await _yocoClient.GetCheckoutAsync(checkoutId, cancellationToken);
+
+                    if (!ycLookup.IsSuccess || ycLookup.Data is null)
+                        return Result<PaymentDto>.Failure(ErrorCodes.Exception, ycLookup.Message ?? "Yoco verify returned no data.");
+
+                    await ApplyYocoSignalAsync(
+                        payment,
+                        status: ycLookup.Data.PaymentStatus,
+                        eventSource: "verify",
+                        providerEventKey: $"yoco-verify:{checkoutId}",
+                        providerAmountSubunit: ycLookup.Data.Amount,
+                        currencyCode: ycLookup.Data.Currency,
+                        channel: null,
+                        rawPayload: JsonSerializer.Serialize(ycLookup.Data),
+                        failureReason: null,
+                        cancellationToken);
+
+                    var refreshedYoco = await _paymentRepository.GetByIdAsync(payment.Id);
+                    return Result<PaymentDto>.Success(MapDto(refreshedYoco ?? payment), "Verification complete.");
+                }
+
                 if (string.Equals(payment.Provider, PaymentProvider.Ozow, StringComparison.OrdinalIgnoreCase))
                 {
                     if (!_ozowClient.IsConfigured)
@@ -733,6 +866,264 @@ namespace ZansiHustle.Application.Payments
 
                 default:
                     _logger.LogInformation("Unhandled Ozow status '{Status}' for payment {Code} (source={Source}).", status, payment.Code, eventSource);
+                    break;
+            }
+        }
+
+        // ─── Webhook: Yoco ───────────────────────────────────────────────────
+
+        /// <inheritdoc />
+        public async Task<Result> HandleYocoWebhookAsync(
+            string rawBody,
+            string? webhookId,
+            string? webhookTimestamp,
+            string? webhookSignature,
+            CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var signatureValid = _yocoSignatureService.VerifyWebhookSignature(
+                    rawBody ?? string.Empty, webhookId, webhookTimestamp, webhookSignature);
+
+                YocoWebhookEvent? evt = null;
+                try
+                {
+                    evt = JsonSerializer.Deserialize<YocoWebhookEvent>(rawBody ?? string.Empty);
+                }
+                catch (JsonException jex)
+                {
+                    _logger.LogWarning(jex, "[Yoco] Webhook payload was not valid JSON.");
+                }
+
+                var eventType = evt?.Type ?? "unknown";
+                var eventId = evt?.Id ?? webhookId ?? "<none>";
+                var eventKey = $"yoco:{eventType}:{eventId}";
+
+                // Idempotency dedup.
+                if (await _paymentRepository.EventKeyExistsAsync(eventKey))
+                {
+                    _logger.LogInformation("Duplicate Yoco webhook ignored: {Key}", eventKey);
+                    return Result.Success("Duplicate webhook ignored.");
+                }
+
+                // Match the event back to our Payment row. Prefer our own
+                // metadata.paymentCode (which we set on createCheckout) and
+                // fall back to the checkoutId stored as ProviderReference.
+                Payment? payment = null;
+                var paymentCodeMeta = evt?.Payload?.Metadata != null
+                                      && evt.Payload.Metadata.TryGetValue("paymentCode", out var pc)
+                                          ? pc
+                                          : null;
+
+                if (!string.IsNullOrWhiteSpace(paymentCodeMeta))
+                {
+                    payment = await _paymentRepository.GetByCodeAsync(paymentCodeMeta);
+                }
+
+                if (payment is null && !string.IsNullOrWhiteSpace(evt?.Payload?.CheckoutId))
+                {
+                    payment = await _paymentRepository.GetByProviderReferenceAsync(evt.Payload.CheckoutId);
+                }
+
+                var eventRow = new PaymentEvent
+                {
+                    Id = Guid.NewGuid(),
+                    PaymentId = payment?.Id,
+                    Provider = PaymentProvider.Yoco,
+                    ProviderEventKey = eventKey,
+                    EventType = eventType,
+                    RawPayload = rawBody ?? string.Empty,
+                    SignatureHeader = webhookSignature,
+                    SignatureValid = signatureValid,
+                    Processed = false,
+                    ReceivedAtUtc = DateTime.UtcNow
+                };
+
+                await _paymentRepository.AddEventAsync(eventRow);
+                await _paymentRepository.SaveChangesAsync();
+
+                if (!signatureValid)
+                {
+                    _logger.LogWarning("[Yoco] Webhook signature invalid (or signing secret unset). Event {Key} parked.", eventKey);
+                    eventRow.ProcessingError = "Signature mismatch or signing secret unavailable.";
+                    await _paymentRepository.SaveChangesAsync();
+                    return Result.Success("Signature invalid; event logged, not applied.");
+                }
+
+                if (payment is null || evt?.Payload is null)
+                {
+                    eventRow.ProcessingError = "No matching payment for Yoco event " + eventId;
+                    await _paymentRepository.SaveChangesAsync();
+                    return Result.Success("Event logged; no matching payment.");
+                }
+
+                await ApplyYocoSignalAsync(
+                    payment,
+                    status: ResolveYocoStatusFromEvent(evt),
+                    eventSource: "webhook",
+                    providerEventKey: eventKey,
+                    providerAmountSubunit: evt.Payload.Amount,
+                    currencyCode: evt.Payload.Currency,
+                    channel: evt.Payload.PaymentMethodDetails?.Type,
+                    rawPayload: rawBody ?? string.Empty,
+                    failureReason: null,
+                    cancellationToken);
+
+                eventRow.Processed = true;
+                eventRow.ProcessedAtUtc = DateTime.UtcNow;
+                await _paymentRepository.SaveChangesAsync();
+
+                return Result.Success("Webhook processed.");
+            }
+            catch (DbUpdateException dbex) when (IsUniqueViolation(dbex))
+            {
+                _logger.LogInformation("Yoco webhook lost dedup race; treating as duplicate.");
+                return Result.Success("Duplicate webhook ignored (race).");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Yoco] Webhook processing threw.");
+                return Result.Success("Webhook received; processing failed internally (logged).");
+            }
+        }
+
+        /// <summary>
+        /// Yoco surfaces status both on the event type (e.g. "payment.succeeded")
+        /// and on the inner payload.status. Prefer the event type because it's
+        /// the canonical signal.
+        /// </summary>
+        private static string? ResolveYocoStatusFromEvent(YocoWebhookEvent evt)
+        {
+            var t = evt?.Type?.ToLowerInvariant();
+            return t switch
+            {
+                "payment.succeeded" => "succeeded",
+                "payment.failed"    => "failed",
+                "payment.canceled"  => "canceled",
+                "payment.cancelled" => "canceled",
+                _                   => evt?.Payload?.Status
+            };
+        }
+
+        // ─── Yoco state-transition logic ─────────────────────────────────────
+
+        /// <summary>
+        /// Applies a Yoco status signal (from webhook OR verify) to a Payment
+        /// + its Order. Idempotent — Succeeded payments ignore further signals.
+        /// Validates expected currency + amount before transitioning to Succeeded.
+        /// </summary>
+        private async Task ApplyYocoSignalAsync(
+            Payment payment,
+            string? status,
+            string eventSource,
+            string providerEventKey,
+            long providerAmountSubunit,
+            string? currencyCode,
+            string? channel,
+            string rawPayload,
+            string? failureReason,
+            CancellationToken cancellationToken)
+        {
+            void StampMeta()
+            {
+                payment.UpdatedAtUtc = DateTime.UtcNow;
+                payment.ChannelUsed = channel ?? payment.ChannelUsed;
+                payment.RawProviderMetadata = rawPayload;
+            }
+
+            switch ((status ?? string.Empty).Trim().ToLowerInvariant())
+            {
+                case "succeeded":
+                    if (payment.Status == PaymentTransactionStatus.Succeeded)
+                    {
+                        _logger.LogInformation("Yoco signal ignored — payment {Code} already Succeeded (source={Source}).", payment.Code, eventSource);
+                        return;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(currencyCode)
+                        && !string.Equals(currencyCode, payment.Currency, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger.LogError(
+                            "Yoco currency mismatch on payment {Code}: expected {Expected}, provider sent {Got}.",
+                            payment.Code, payment.Currency, currencyCode);
+
+                        payment.Status = PaymentTransactionStatus.Failed;
+                        payment.FailedAtUtc = DateTime.UtcNow;
+                        payment.FailureReason = $"Currency mismatch: expected {payment.Currency}, got {currencyCode}.";
+                        StampMeta();
+                        _paymentRepository.Update(payment);
+                        await _paymentRepository.SaveChangesAsync();
+                        return;
+                    }
+
+                    var expectedSubunit = ToSubunit(payment.Amount);
+                    if (providerAmountSubunit > 0 && providerAmountSubunit != expectedSubunit)
+                    {
+                        _logger.LogError(
+                            "Yoco amount mismatch on payment {Code}: expected {Expected} subunits, provider charged {Charged}.",
+                            payment.Code, expectedSubunit, providerAmountSubunit);
+
+                        payment.Status = PaymentTransactionStatus.Failed;
+                        payment.FailedAtUtc = DateTime.UtcNow;
+                        payment.FailureReason = $"Amount mismatch: expected {expectedSubunit}, got {providerAmountSubunit}.";
+                        StampMeta();
+                        _paymentRepository.Update(payment);
+                        await _paymentRepository.SaveChangesAsync();
+                        return;
+                    }
+
+                    payment.Status = PaymentTransactionStatus.Succeeded;
+                    payment.PaidAtUtc = DateTime.UtcNow;
+                    StampMeta();
+                    _paymentRepository.Update(payment);
+
+                    await AdvanceOrderOnPaidAsync(payment);
+
+                    await _paymentRepository.SaveChangesAsync();
+                    _logger.LogInformation("Yoco payment {Code} Succeeded via {Source}.", payment.Code, eventSource);
+                    break;
+
+                case "canceled":
+                    if (payment.Status == PaymentTransactionStatus.Succeeded)
+                    {
+                        _logger.LogWarning("Ignored Yoco canceled — payment {Code} already Succeeded.", payment.Code);
+                        return;
+                    }
+                    payment.Status = PaymentTransactionStatus.Cancelled;
+                    payment.CancelledAtUtc = DateTime.UtcNow;
+                    payment.FailureReason = failureReason ?? "Cancelled by buyer.";
+                    StampMeta();
+                    _paymentRepository.Update(payment);
+                    await MarkOrderPaymentFailedAsync(payment);
+                    await _paymentRepository.SaveChangesAsync();
+                    break;
+
+                case "failed":
+                    if (payment.Status == PaymentTransactionStatus.Succeeded)
+                    {
+                        _logger.LogWarning("Ignored Yoco failed — payment {Code} already Succeeded.", payment.Code);
+                        return;
+                    }
+                    payment.Status = PaymentTransactionStatus.Failed;
+                    payment.FailedAtUtc = DateTime.UtcNow;
+                    payment.FailureReason = failureReason ?? "failed";
+                    StampMeta();
+                    _paymentRepository.Update(payment);
+                    await MarkOrderPaymentFailedAsync(payment);
+                    await _paymentRepository.SaveChangesAsync();
+                    break;
+
+                case "pending":
+                    StampMeta();
+                    _paymentRepository.Update(payment);
+                    await _paymentRepository.SaveChangesAsync();
+                    _logger.LogInformation(
+                        "Yoco payment {Code} reported pending via {Source}. Awaiting terminal status.",
+                        payment.Code, eventSource);
+                    break;
+
+                default:
+                    _logger.LogInformation("Unhandled Yoco status '{Status}' for payment {Code} (source={Source}).", status, payment.Code, eventSource);
                     break;
             }
         }

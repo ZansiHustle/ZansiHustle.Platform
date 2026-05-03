@@ -46,10 +46,11 @@ builder.Services.AddOtpServices(builder.Configuration);
 builder.Services.AddMarketingAndOperationsServices(builder.Configuration);
 
 // ============================================================================
-// 8a. PAYMENTS (Paystack — pending; Ozow — live)
+// 8a. PAYMENTS (Paystack — pending; Ozow — live EFT; Yoco — card payments)
 // ============================================================================
 builder.Services.AddPaystackPayments(builder.Configuration);
 builder.Services.AddOzowPayments(builder.Configuration);
+builder.Services.AddYocoPayments(builder.Configuration);
 
 // ============================================================================
 // 9. FRONT-END CORS

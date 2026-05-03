@@ -8,4 +8,5 @@ public static class PaymentProvider
 {
     public const string Paystack = "Paystack";
     public const string Ozow = "Ozow";
+    public const string Yoco = "Yoco";
 }
