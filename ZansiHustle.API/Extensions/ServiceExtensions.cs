@@ -534,6 +534,13 @@ public static class ServiceExtensions
         services.AddScoped<ZansiHustle.Application.Media.IMediaService,
                            ZansiHustle.Application.Media.MediaService>();
 
+        // Shared read-time URL refresher. Used by MerchantService and
+        // MarketplaceListingService to recover from rotted R2 signed
+        // URLs persisted on entity rows (legacy uploads, or any path
+        // that ran without Storage:R2:PublicBaseUrl configured).
+        services.AddScoped<ZansiHustle.Application.Media.Storage.IStorageUrlResolver,
+                           ZansiHustle.Application.Media.Storage.StorageUrlResolver>();
+
         return services;
     }
 

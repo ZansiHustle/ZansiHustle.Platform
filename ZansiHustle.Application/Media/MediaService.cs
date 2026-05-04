@@ -67,6 +67,12 @@ namespace ZansiHustle.Application.Media
             [MediaPurpose.ShopBanner]     = new("public", MediaVisibility.Public,  6_000_000, ImagesOnly,   RequiresReview: false),
             [MediaPurpose.UserAvatar]     = new("public", MediaVisibility.Public,  4_000_000, ImagesOnly,   RequiresReview: false),
 
+            // Marketplace listing images. PUBLIC container is mandatory:
+            // the listing renders the stored URL directly to buyers, so
+            // a TTL'd private-signed URL would rot after upload. Resolves
+            // via Storage:R2:PublicBaseUrl to a permanent CDN URL.
+            [MediaPurpose.MarketplaceListingImage] = new("public", MediaVisibility.Public, 12_000_000, ImagesOnly, RequiresReview: false),
+
             [MediaPurpose.Other]          = new("private", MediaVisibility.Private, 10_000_000, ImagesOrPdf, RequiresReview: false),
         };
 

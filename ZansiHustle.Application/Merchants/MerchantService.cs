@@ -29,7 +29,7 @@ namespace ZansiHustle.Application.Merchants
         private readonly Application.Persistence.Media.IMediaAssetRepository _mediaRepo;
         private readonly IUserLookupService _userLookup;
         private readonly ISellerLeadRepository _sellerLeadRepository;
-        private readonly IMediaStorageService _mediaStorage;
+        private readonly IStorageUrlResolver _storageUrlResolver;
 
         public MerchantService(
             IMerchantRepository merchantRepository,
@@ -38,7 +38,7 @@ namespace ZansiHustle.Application.Merchants
             Application.Persistence.Media.IMediaAssetRepository mediaRepo,
             IUserLookupService userLookup,
             ISellerLeadRepository sellerLeadRepository,
-            IMediaStorageService mediaStorage)
+            IStorageUrlResolver storageUrlResolver)
         {
             _merchantRepository = merchantRepository;
             _sellerCategoryRepository = sellerCategoryRepository;
@@ -46,7 +46,7 @@ namespace ZansiHustle.Application.Merchants
             _mediaRepo = mediaRepo;
             _userLookup = userLookup;
             _sellerLeadRepository = sellerLeadRepository;
-            _mediaStorage = mediaStorage;
+            _storageUrlResolver = storageUrlResolver;
         }
 
         // Verification uploads required for self-registration. Used both at
@@ -392,8 +392,8 @@ namespace ZansiHustle.Application.Merchants
                     // original presigned TTL. Without this, URLs rot after
                     // logout/login and images 403 — the exact symptom seen
                     // in the post-shop-creation flow.
-                    dto.LogoUrl   = await RefreshStoredUrlAsync(dto.LogoUrl);
-                    dto.BannerUrl = await RefreshStoredUrlAsync(dto.BannerUrl);
+                    dto.LogoUrl   = await _storageUrlResolver.RefreshAsync(dto.LogoUrl);
+                    dto.BannerUrl = await _storageUrlResolver.RefreshAsync(dto.BannerUrl);
                     mapped.Add(dto);
                 }
 
@@ -899,56 +899,5 @@ namespace ZansiHustle.Application.Merchants
             return dto;
         }
 
-        /// <summary>
-        /// If a stored URL points at our R2 storage, extract the bucket +
-        /// key and re-issue a fresh read URL. This is the fix for shop
-        /// logo / banner images going 403 after the original presigned
-        /// TTL expires — the Merchant row still has the URL string, but
-        /// the signature in it is stale. We regenerate on every read so
-        /// images stay valid for at least the new TTL (7 days for public,
-        /// or permanent if Storage:R2:PublicBaseUrl is configured, per
-        /// IMediaStorageService.IssueReadUrlAsync).
-        ///
-        /// Non-R2 URLs (external CDNs, legacy mock images) pass through
-        /// unchanged. Malformed inputs pass through rather than throw.
-        /// </summary>
-        private async Task<string?> RefreshStoredUrlAsync(string? storedUrl)
-        {
-            if (string.IsNullOrWhiteSpace(storedUrl)) return storedUrl;
-            if (!storedUrl.Contains("r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase)
-                && !storedUrl.Contains("r2.dev", StringComparison.OrdinalIgnoreCase))
-                return storedUrl;
-
-            try
-            {
-                var uri = new Uri(storedUrl);
-                var path = uri.AbsolutePath.TrimStart('/');
-                var firstSlash = path.IndexOf('/');
-                if (firstSlash < 0) return storedUrl;
-
-                var bucket = path[..firstSlash];
-                var key    = path[(firstSlash + 1)..];
-
-                // Map the actual R2 bucket name back to the logical
-                // container MediaService uses. Anything containing
-                // "public" in the name maps to the public container;
-                // everything else is treated as private (a conservative
-                // default — a typo'd bucket name shouldn't leak a long
-                // public URL to a private asset).
-                var container = bucket.Contains("public", StringComparison.OrdinalIgnoreCase)
-                    ? "public"
-                    : "private";
-
-                var ttl = container == "public"
-                    ? TimeSpan.FromDays(7)
-                    : TimeSpan.FromMinutes(15);
-
-                return await _mediaStorage.IssueReadUrlAsync(container, key, ttl);
-            }
-            catch
-            {
-                return storedUrl;
-            }
-        }
     }
 }

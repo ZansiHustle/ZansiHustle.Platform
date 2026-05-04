@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Logging;
 using ZansiHustle.Application.Common.Paging;
 using ZansiHustle.Application.Marketplace.Dtos;
+using ZansiHustle.Application.Media.Storage;
 using ZansiHustle.Application.Persistence.Marketplace;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Domain.Marketplace;
@@ -30,15 +31,18 @@ namespace ZansiHustle.Application.Marketplace
 
         private readonly IMarketplaceListingRepository _repository;
         private readonly UserManager<User> _userManager;
+        private readonly IStorageUrlResolver _storageUrlResolver;
         private readonly ILogger<MarketplaceListingService> _logger;
 
         public MarketplaceListingService(
             IMarketplaceListingRepository repository,
             UserManager<User> userManager,
+            IStorageUrlResolver storageUrlResolver,
             ILogger<MarketplaceListingService> logger)
         {
             _repository = repository;
             _userManager = userManager;
+            _storageUrlResolver = storageUrlResolver;
             _logger = logger;
         }
 
@@ -57,9 +61,13 @@ namespace ZansiHustle.Application.Marketplace
 
                 var (items, total) = await _repository.SearchAsync(filter);
 
+                var dtos = new List<MarketplaceListingDto>(items.Count);
+                foreach (var entity in items)
+                    dtos.Add(await MapDtoAsync(entity));
+
                 var paged = new PagedResult<MarketplaceListingDto>
                 {
-                    Items = items.Select(MapDto).ToList(),
+                    Items = dtos,
                     Total = total,
                     Page = filter.Page <= 0 ? 1 : filter.Page,
                     PageSize = filter.PageSize <= 0 ? 20 : filter.PageSize,
@@ -84,7 +92,7 @@ namespace ZansiHustle.Application.Marketplace
                 if (entity is null)
                     return Result<MarketplaceListingDto>.Failure(ErrorCodes.NotFound, "Listing not found.");
 
-                return Result<MarketplaceListingDto>.Success(MapDto(entity), "Listing retrieved.");
+                return Result<MarketplaceListingDto>.Success(await MapDtoAsync(entity), "Listing retrieved.");
             }
             catch (Exception ex)
             {
@@ -100,7 +108,12 @@ namespace ZansiHustle.Application.Marketplace
             try
             {
                 var items = await _repository.GetByOwnerAsync(ownerUserId);
-                return Result<List<MarketplaceListingDto>>.Success(items.Select(MapDto).ToList(), "My listings retrieved.");
+
+                var dtos = new List<MarketplaceListingDto>(items.Count);
+                foreach (var entity in items)
+                    dtos.Add(await MapDtoAsync(entity));
+
+                return Result<List<MarketplaceListingDto>>.Success(dtos, "My listings retrieved.");
             }
             catch (Exception ex)
             {
@@ -168,7 +181,7 @@ namespace ZansiHustle.Application.Marketplace
 
                 // Re-load with the Owner nav populated for the response.
                 var fresh = await _repository.GetByIdAsync(listing.Id) ?? listing;
-                return Result<MarketplaceListingDto>.Success(MapDto(fresh), "Listing created.");
+                return Result<MarketplaceListingDto>.Success(await MapDtoAsync(fresh), "Listing created.");
             }
             catch (Exception ex)
             {
@@ -205,7 +218,7 @@ namespace ZansiHustle.Application.Marketplace
                 _repository.Update(listing);
                 await _repository.SaveChangesAsync();
 
-                return Result<MarketplaceListingDto>.Success(MapDto(listing), "Status updated.");
+                return Result<MarketplaceListingDto>.Success(await MapDtoAsync(listing), "Status updated.");
             }
             catch (Exception ex)
             {
@@ -256,7 +269,7 @@ namespace ZansiHustle.Application.Marketplace
                 await _repository.SaveChangesAsync();
 
                 var fresh = await _repository.GetByIdAsync(listing.Id) ?? listing;
-                return Result<MarketplaceListingDto>.Success(MapDto(fresh), "Listing updated.");
+                return Result<MarketplaceListingDto>.Success(await MapDtoAsync(fresh), "Listing updated.");
             }
             catch (Exception ex)
             {
@@ -308,7 +321,7 @@ namespace ZansiHustle.Application.Marketplace
                 await _repository.SaveChangesAsync();
 
                 var fresh = await _repository.GetByIdAsync(listing.Id) ?? listing;
-                return Result<MarketplaceListingDto>.Success(MapDto(fresh), "Image attached.");
+                return Result<MarketplaceListingDto>.Success(await MapDtoAsync(fresh), "Image attached.");
             }
             catch (Exception ex)
             {
@@ -352,7 +365,7 @@ namespace ZansiHustle.Application.Marketplace
                 await _repository.SaveChangesAsync();
 
                 var fresh = await _repository.GetByIdAsync(listing.Id) ?? listing;
-                return Result<MarketplaceListingDto>.Success(MapDto(fresh), "Image removed.");
+                return Result<MarketplaceListingDto>.Success(await MapDtoAsync(fresh), "Image removed.");
             }
             catch (Exception ex)
             {
@@ -443,8 +456,36 @@ namespace ZansiHustle.Application.Marketplace
             return Result.Success();
         }
 
-        private static MarketplaceListingDto MapDto(MarketplaceListing entity)
+        /// <summary>
+        /// Project a <see cref="MarketplaceListing"/> entity to its
+        /// buyer-facing DTO, refreshing every stored image URL through
+        /// <see cref="IStorageUrlResolver"/> in the process.
+        ///
+        /// The resolver is a no-op for permanent CDN URLs (uploaded
+        /// when <c>Storage:R2:PublicBaseUrl</c> is configured) and a
+        /// re-sign for legacy R2 hostnames whose original presigned
+        /// signature has aged out. Same defensive pattern Merchant uses
+        /// for shop logo / banner — without it, listings created during
+        /// the window where uploads landed in the private bucket would
+        /// show a broken image after the 15-minute TTL expired.
+        /// </summary>
+        private async Task<MarketplaceListingDto> MapDtoAsync(MarketplaceListing entity)
         {
+            // Resolve URLs ONCE per image, then reuse — Images and
+            // ImageItems share ordering and content, so signing each
+            // URL twice would double R2 calls for no benefit.
+            var ordered = entity.Images
+                .OrderBy(i => i.SortOrder)
+                .ThenBy(i => i.CreatedAtUtc)
+                .ToList();
+
+            var resolved = new List<(MarketplaceListingImage Image, string ResolvedUrl)>(ordered.Count);
+            foreach (var img in ordered)
+            {
+                var refreshed = await _storageUrlResolver.RefreshAsync(img.Url) ?? img.Url;
+                resolved.Add((img, refreshed));
+            }
+
             return new MarketplaceListingDto
             {
                 Id = entity.Id,
@@ -454,22 +495,16 @@ namespace ZansiHustle.Application.Marketplace
                 Currency = entity.Currency,
                 Category = entity.Category,
                 Condition = entity.Condition,
-                Images = entity.Images
-                    .OrderBy(i => i.SortOrder)
-                    .ThenBy(i => i.CreatedAtUtc)
-                    .Select(i => i.Url)
-                    .ToList(),
+                Images = resolved.Select(r => r.ResolvedUrl).ToList(),
                 // ImageItems mirrors `Images` ordering but carries id +
                 // sortOrder so the owner-edit screen can target each
                 // image (DELETE / future reorder) by id.
-                ImageItems = entity.Images
-                    .OrderBy(i => i.SortOrder)
-                    .ThenBy(i => i.CreatedAtUtc)
-                    .Select(i => new MarketplaceListingImageDto
+                ImageItems = resolved
+                    .Select(r => new MarketplaceListingImageDto
                     {
-                        Id = i.Id,
-                        Url = i.Url,
-                        SortOrder = i.SortOrder,
+                        Id = r.Image.Id,
+                        Url = r.ResolvedUrl,
+                        SortOrder = r.Image.SortOrder,
                     })
                     .ToList(),
                 Province = entity.Province,

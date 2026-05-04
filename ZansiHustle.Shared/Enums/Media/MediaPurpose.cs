@@ -31,6 +31,13 @@ namespace ZansiHustle.Shared.Enums.Media
         ShopBanner = 21,
         UserAvatar = 22,
 
+        // ── Marketplace (peer-to-peer second-hand) ───────────────────
+        // Permanent public asset attached to a MarketplaceListing.
+        // Must NOT be Private — listings render the stored URL directly
+        // for buyers, so a TTL'd signed URL would rot the image after
+        // the user navigates away.
+        MarketplaceListingImage = 30,
+
         Other = 99,
     }
 }

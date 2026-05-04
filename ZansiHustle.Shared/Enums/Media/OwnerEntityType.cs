@@ -11,6 +11,7 @@ namespace ZansiHustle.Shared.Enums.Media
         Listing = 2,
         User = 3,
         SellerLead = 4,
+        MarketplaceListing = 5,
         Other = 99,
     }
 }
