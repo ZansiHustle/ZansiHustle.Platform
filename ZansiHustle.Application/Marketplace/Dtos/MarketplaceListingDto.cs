@@ -20,6 +20,13 @@ namespace ZansiHustle.Application.Marketplace.Dtos
         public string Category { get; set; } = string.Empty;
         public ProductCondition Condition { get; set; }
         public List<string> Images { get; set; } = new();
+
+        /// <summary>
+        /// Per-image detail (id + url + sortOrder). Same set + ordering
+        /// as <see cref="Images"/>; consumed by the owner-edit screen so
+        /// each image can be referenced by id for delete / reorder.
+        /// </summary>
+        public List<MarketplaceListingImageDto> ImageItems { get; set; } = new();
         public string Province { get; set; } = string.Empty;
         public string Location { get; set; } = string.Empty;
         public bool AllowOffers { get; set; }

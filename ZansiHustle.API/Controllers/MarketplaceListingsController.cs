@@ -107,6 +107,29 @@ namespace ZansiHustle.API.Controllers
         }
 
         /// <summary>
+        /// Authenticated — owner-only partial update of listing details.
+        /// Body fields are all optional; only present keys are applied.
+        /// Image management lives on <c>POST /{id}/images</c> so this
+        /// endpoint stays focused on text/details and never has to
+        /// validate or re-upload binary content.
+        /// </summary>
+        [HttpPatch("{id:guid}")]
+        [Authorize]
+        [ProducesResponseType(typeof(Result<MarketplaceListingDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> Update(
+            Guid id,
+            [FromBody] UpdateMarketplaceListingRequestDto request)
+        {
+            var userId = _currentUserService.UserId;
+
+            if (!userId.HasValue)
+                return ToActionResult(Result<MarketplaceListingDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            var result = await _service.UpdateAsync(userId.Value, id, request);
+            return ToActionResult(result);
+        }
+
+        /// <summary>
         /// Authenticated — owner-only image attachment.
         /// The binary upload itself is NOT performed here — the client
         /// uses the existing R2-backed media-upload pipeline
@@ -127,6 +150,26 @@ namespace ZansiHustle.API.Controllers
                 return ToActionResult(Result<MarketplaceListingDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
 
             var result = await _service.AddImageAsync(userId.Value, id, request);
+            return ToActionResult(result);
+        }
+
+        /// <summary>
+        /// Authenticated — owner-only image removal. The route encodes
+        /// both ids; the service double-checks that the image actually
+        /// belongs to the listing so a foreign image id can't be used
+        /// to delete someone else's photo via this route.
+        /// </summary>
+        [HttpDelete("{listingId:guid}/images/{imageId:guid}")]
+        [Authorize]
+        [ProducesResponseType(typeof(Result<MarketplaceListingDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> RemoveImage(Guid listingId, Guid imageId)
+        {
+            var userId = _currentUserService.UserId;
+
+            if (!userId.HasValue)
+                return ToActionResult(Result<MarketplaceListingDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            var result = await _service.RemoveImageAsync(userId.Value, listingId, imageId);
             return ToActionResult(result);
         }
     }

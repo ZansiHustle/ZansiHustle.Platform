@@ -116,6 +116,18 @@ namespace ZansiHustle.Infrastructure.Persistence.Marketplace
             await _context.MarketplaceListingImages.AddAsync(image);
         }
 
+        public async Task<MarketplaceListingImage?> GetImageByIdAsync(Guid imageId)
+        {
+            return await _context.MarketplaceListingImages
+                .FirstOrDefaultAsync(x => x.Id == imageId);
+        }
+
+        public void RemoveImage(MarketplaceListingImage image)
+        {
+            ArgumentNullException.ThrowIfNull(image);
+            _context.MarketplaceListingImages.Remove(image);
+        }
+
         public async Task<bool> SaveChangesAsync()
         {
             return await _context.SaveChangesAsync() > 0;

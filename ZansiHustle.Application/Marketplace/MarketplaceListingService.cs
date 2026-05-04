@@ -214,6 +214,57 @@ namespace ZansiHustle.Application.Marketplace
             }
         }
 
+        // ─── Update (partial — owner-only) ────────────────────────────────────
+
+        public async Task<Result<MarketplaceListingDto>> UpdateAsync(
+            Guid ownerUserId,
+            Guid listingId,
+            UpdateMarketplaceListingRequestDto request)
+        {
+            try
+            {
+                if (request is null)
+                    return Result<MarketplaceListingDto>.Failure(ErrorCodes.BadRequest, "Request body is required.");
+
+                var listing = await _repository.GetByIdAsync(listingId);
+                if (listing is null)
+                    return Result<MarketplaceListingDto>.Failure(ErrorCodes.NotFound, "Listing not found.");
+
+                if (listing.OwnerUserId != ownerUserId)
+                    return Result<MarketplaceListingDto>.Failure(ErrorCodes.Forbidden, "You do not have permission to modify this listing.");
+
+                var validation = ValidateUpdate(request);
+                if (!validation.IsSuccess)
+                    return Result<MarketplaceListingDto>.Failure(validation.Code, validation.Message);
+
+                // Apply only fields present in the request. `null` means
+                // "leave unchanged"; an empty string on a required field
+                // is rejected by ValidateUpdate above so we never wipe a
+                // required column.
+                if (request.Title is not null) listing.Title = request.Title.Trim();
+                if (request.Description is not null) listing.Description = request.Description.Trim();
+                if (request.Price.HasValue) listing.Price = request.Price.Value;
+                if (request.Category is not null) listing.Category = request.Category.Trim();
+                if (request.Condition.HasValue) listing.Condition = request.Condition.Value;
+                if (request.Province is not null) listing.Province = request.Province.Trim();
+                if (request.Location is not null) listing.Location = request.Location.Trim();
+                if (request.AllowOffers.HasValue) listing.AllowOffers = request.AllowOffers.Value;
+
+                listing.UpdatedAtUtc = DateTime.UtcNow;
+
+                _repository.Update(listing);
+                await _repository.SaveChangesAsync();
+
+                var fresh = await _repository.GetByIdAsync(listing.Id) ?? listing;
+                return Result<MarketplaceListingDto>.Success(MapDto(fresh), "Listing updated.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Marketplace Update failed for listing {ListingId}.", listingId);
+                return Result<MarketplaceListingDto>.Failure(ErrorCodes.Exception, "Failed to update listing.");
+            }
+        }
+
         // ─── Add image ───────────────────────────────────────────────────────
 
         public async Task<Result<MarketplaceListingDto>> AddImageAsync(
@@ -266,7 +317,99 @@ namespace ZansiHustle.Application.Marketplace
             }
         }
 
+        // ─── Remove image (owner-only) ───────────────────────────────────────
+
+        public async Task<Result<MarketplaceListingDto>> RemoveImageAsync(
+            Guid ownerUserId,
+            Guid listingId,
+            Guid imageId)
+        {
+            try
+            {
+                var listing = await _repository.GetByIdAsync(listingId);
+                if (listing is null)
+                    return Result<MarketplaceListingDto>.Failure(ErrorCodes.NotFound, "Listing not found.");
+
+                if (listing.OwnerUserId != ownerUserId)
+                    return Result<MarketplaceListingDto>.Failure(ErrorCodes.Forbidden, "You do not have permission to modify this listing.");
+
+                var image = await _repository.GetImageByIdAsync(imageId);
+                if (image is null)
+                    return Result<MarketplaceListingDto>.Failure(ErrorCodes.NotFound, "Image not found.");
+
+                // Belt and braces — verify the image actually belongs to
+                // this listing. Without this check a malicious client
+                // could pass a foreign image id and delete someone
+                // else's photo via their own listing's URL.
+                if (image.ListingId != listing.Id)
+                    return Result<MarketplaceListingDto>.Failure(ErrorCodes.NotFound, "Image not found on this listing.");
+
+                _repository.RemoveImage(image);
+
+                listing.UpdatedAtUtc = DateTime.UtcNow;
+                _repository.Update(listing);
+
+                await _repository.SaveChangesAsync();
+
+                var fresh = await _repository.GetByIdAsync(listing.Id) ?? listing;
+                return Result<MarketplaceListingDto>.Success(MapDto(fresh), "Image removed.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Marketplace RemoveImage failed for listing {ListingId}, image {ImageId}.", listingId, imageId);
+                return Result<MarketplaceListingDto>.Failure(ErrorCodes.Exception, "Failed to remove image.");
+            }
+        }
+
         // ─── Helpers ─────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Partial-update validation. Only checks fields actually present
+        /// (non-null) on the request so a PATCH that touches just one
+        /// field doesn't have to send the others. Required fields, when
+        /// included, must remain non-empty — we never accept an empty
+        /// string in a column that the create-flow forbids.
+        /// </summary>
+        private static Result ValidateUpdate(UpdateMarketplaceListingRequestDto request)
+        {
+            if (request.Title is not null)
+            {
+                if (string.IsNullOrWhiteSpace(request.Title))
+                    return Result.Failure(ErrorCodes.BadRequest, "Title cannot be empty.");
+                if (request.Title.Length > MaxTitleLen)
+                    return Result.Failure(ErrorCodes.BadRequest, $"Title must be <= {MaxTitleLen} characters.");
+            }
+
+            if (request.Description is { Length: > MaxDescriptionLen })
+                return Result.Failure(ErrorCodes.BadRequest, $"Description must be <= {MaxDescriptionLen} characters.");
+
+            if (request.Price.HasValue && request.Price.Value < 0)
+                return Result.Failure(ErrorCodes.BadRequest, "Price must be >= 0.");
+
+            if (request.Category is not null)
+            {
+                if (string.IsNullOrWhiteSpace(request.Category))
+                    return Result.Failure(ErrorCodes.BadRequest, "Category cannot be empty.");
+                if (request.Category.Length > MaxCategoryLen)
+                    return Result.Failure(ErrorCodes.BadRequest, $"Category must be <= {MaxCategoryLen} characters.");
+            }
+
+            if (request.Condition.HasValue && !Enum.IsDefined(typeof(ProductCondition), request.Condition.Value))
+                return Result.Failure(ErrorCodes.BadRequest, "Condition is invalid.");
+
+            if (request.Province is not null)
+            {
+                if (string.IsNullOrWhiteSpace(request.Province))
+                    return Result.Failure(ErrorCodes.BadRequest, "Province cannot be empty.");
+                if (request.Province.Length > MaxProvinceLen)
+                    return Result.Failure(ErrorCodes.BadRequest, $"Province must be <= {MaxProvinceLen} characters.");
+            }
+
+            if (request.Location is { Length: > MaxLocationLen })
+                return Result.Failure(ErrorCodes.BadRequest, $"Location must be <= {MaxLocationLen} characters.");
+
+            return Result.Success();
+        }
 
         private static Result ValidateCreate(CreateMarketplaceListingRequestDto request)
         {
@@ -315,6 +458,19 @@ namespace ZansiHustle.Application.Marketplace
                     .OrderBy(i => i.SortOrder)
                     .ThenBy(i => i.CreatedAtUtc)
                     .Select(i => i.Url)
+                    .ToList(),
+                // ImageItems mirrors `Images` ordering but carries id +
+                // sortOrder so the owner-edit screen can target each
+                // image (DELETE / future reorder) by id.
+                ImageItems = entity.Images
+                    .OrderBy(i => i.SortOrder)
+                    .ThenBy(i => i.CreatedAtUtc)
+                    .Select(i => new MarketplaceListingImageDto
+                    {
+                        Id = i.Id,
+                        Url = i.Url,
+                        SortOrder = i.SortOrder,
+                    })
                     .ToList(),
                 Province = entity.Province,
                 Location = entity.Location,

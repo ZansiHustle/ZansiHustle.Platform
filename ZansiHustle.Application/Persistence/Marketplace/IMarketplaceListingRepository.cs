@@ -24,6 +24,8 @@ namespace ZansiHustle.Application.Persistence.Marketplace
         void Delete(MarketplaceListing listing);
 
         Task AddImageAsync(MarketplaceListingImage image);
+        Task<MarketplaceListingImage?> GetImageByIdAsync(Guid imageId);
+        void RemoveImage(MarketplaceListingImage image);
 
         Task<bool> SaveChangesAsync();
     }

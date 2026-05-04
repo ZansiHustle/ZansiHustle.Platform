@@ -35,10 +35,32 @@ namespace ZansiHustle.Application.Marketplace
             Guid listingId,
             UpdateMarketplaceListingStatusRequestDto request);
 
+        /// <summary>
+        /// Authenticated — owner-only partial update of listing fields.
+        /// Only fields present (non-null) on the request are applied; all
+        /// applied fields run the same length / range / enum validation
+        /// rules as <see cref="CreateAsync"/>.
+        /// </summary>
+        Task<Result<MarketplaceListingDto>> UpdateAsync(
+            Guid ownerUserId,
+            Guid listingId,
+            UpdateMarketplaceListingRequestDto request);
+
         /// <summary>Authenticated — owner-only image attachment.</summary>
         Task<Result<MarketplaceListingDto>> AddImageAsync(
             Guid ownerUserId,
             Guid listingId,
             AddMarketplaceListingImageRequestDto request);
+
+        /// <summary>
+        /// Authenticated — owner-only image removal. Verifies the image
+        /// row actually belongs to the listing (not just that both ids
+        /// exist) so a malicious client can't pass a foreign image id
+        /// to remove someone else's photo.
+        /// </summary>
+        Task<Result<MarketplaceListingDto>> RemoveImageAsync(
+            Guid ownerUserId,
+            Guid listingId,
+            Guid imageId);
     }
 }
