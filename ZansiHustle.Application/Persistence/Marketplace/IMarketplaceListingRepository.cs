@@ -19,6 +19,13 @@ namespace ZansiHustle.Application.Persistence.Marketplace
         Task<MarketplaceListing?> GetByIdAsync(Guid id);
         Task<List<MarketplaceListing>> GetByOwnerAsync(Guid ownerUserId);
 
+        /// <summary>
+        /// Distinct, non-empty <c>Category</c> values across currently-
+        /// Active listings. Returned as bare strings; case-folding,
+        /// trimming, and counting are the service's job.
+        /// </summary>
+        Task<List<string>> GetActiveCategoryValuesAsync();
+
         Task AddAsync(MarketplaceListing listing);
         void Update(MarketplaceListing listing);
         void Delete(MarketplaceListing listing);

@@ -49,6 +49,21 @@ namespace ZansiHustle.API.Controllers
             return ToActionResult(result);
         }
 
+        /// <summary>
+        /// Public — category buckets across all currently-Active
+        /// listings (with counts). Used by the Marketplace tab to
+        /// render a chip row that's guaranteed to point at non-empty
+        /// buckets.
+        /// </summary>
+        [HttpGet("categories")]
+        [AllowAnonymous]
+        [ProducesResponseType(typeof(Result<List<MarketplaceListingCategoryDto>>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetCategories()
+        {
+            var result = await _service.GetCategoriesAsync();
+            return ToActionResult(result);
+        }
+
         /// <summary>Authenticated — listings owned by the calling user (any status).</summary>
         [HttpGet("mine")]
         [Authorize]

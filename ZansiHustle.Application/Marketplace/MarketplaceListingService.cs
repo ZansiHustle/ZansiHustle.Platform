@@ -82,6 +82,39 @@ namespace ZansiHustle.Application.Marketplace
             }
         }
 
+        // ─── Get categories (active only) ────────────────────────────────────
+
+        public async Task<Result<List<MarketplaceListingCategoryDto>>> GetCategoriesAsync()
+        {
+            try
+            {
+                var raw = await _repository.GetActiveCategoryValuesAsync();
+
+                // Group case-insensitively after trimming so " Electronics ",
+                // "Electronics", and "electronics" collapse into one bucket.
+                // Pick the first observed canonical casing as the display
+                // value — the seller's chosen casing wins for that bucket.
+                var grouped = raw
+                    .Select(c => (c ?? string.Empty).Trim())
+                    .Where(c => c.Length > 0)
+                    .GroupBy(c => c, StringComparer.OrdinalIgnoreCase)
+                    .Select(g => new MarketplaceListingCategoryDto
+                    {
+                        Name = g.First(),
+                        Count = g.Count(),
+                    })
+                    .OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                return Result<List<MarketplaceListingCategoryDto>>.Success(grouped, "Categories retrieved.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Marketplace GetCategories failed.");
+                return Result<List<MarketplaceListingCategoryDto>>.Failure(ErrorCodes.Exception, "Failed to retrieve categories.");
+            }
+        }
+
         // ─── Get by id ───────────────────────────────────────────────────────
 
         public async Task<Result<MarketplaceListingDto>> GetByIdAsync(Guid id)

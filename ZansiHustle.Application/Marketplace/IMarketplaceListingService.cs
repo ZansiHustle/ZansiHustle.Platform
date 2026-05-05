@@ -20,6 +20,15 @@ namespace ZansiHustle.Application.Marketplace
         /// <summary>Public — paged search across active Marketplace listings.</summary>
         Task<Result<PagedResult<MarketplaceListingDto>>> SearchAsync(MarketplaceListingFilterRequestDto filter);
 
+        /// <summary>
+        /// Public — categories that currently have at least one Active
+        /// listing, with per-bucket counts. Powers the Marketplace tab's
+        /// chip row so chips never point at an empty bucket. Computed
+        /// across the WHOLE active dataset (not paginated) so chip
+        /// availability stays consistent regardless of page size.
+        /// </summary>
+        Task<Result<List<MarketplaceListingCategoryDto>>> GetCategoriesAsync();
+
         /// <summary>Public — single listing detail.</summary>
         Task<Result<MarketplaceListingDto>> GetByIdAsync(Guid id);
 

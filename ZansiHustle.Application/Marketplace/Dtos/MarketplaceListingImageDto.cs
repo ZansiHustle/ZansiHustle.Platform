@@ -17,5 +17,11 @@ namespace ZansiHustle.Application.Marketplace.Dtos
         public Guid Id { get; set; }
         public string Url { get; set; } = string.Empty;
         public int SortOrder { get; set; }
+
+        // TODO (image variants — phase 2): expose `string? ThumbnailUrl`
+        // once the upload pipeline emits a small variant (≈320px) on
+        // finalize. Card / list surfaces should render the thumbnail;
+        // the detail gallery keeps using `Url`. The frontend
+        // marketplaceMapper already has the mirroring TODO.
     }
 }

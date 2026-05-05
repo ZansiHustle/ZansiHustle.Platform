@@ -92,6 +92,21 @@ namespace ZansiHustle.Infrastructure.Persistence.Marketplace
                 .ToListAsync();
         }
 
+        public async Task<List<string>> GetActiveCategoryValuesAsync()
+        {
+            // SQL projects only the Category column for active rows —
+            // no Include, no other columns. The service does the
+            // case-fold + dedupe in memory because EF translation of
+            // string.Trim().ToLower() across providers is uneven.
+            return await _context.MarketplaceListings
+                .AsNoTracking()
+                .Where(x => x.Status == Shared.Enums.Marketplace.MarketplaceListingStatus.Active
+                            && x.Category != null
+                            && x.Category != string.Empty)
+                .Select(x => x.Category)
+                .ToListAsync();
+        }
+
         public async Task AddAsync(MarketplaceListing listing)
         {
             ArgumentNullException.ThrowIfNull(listing);

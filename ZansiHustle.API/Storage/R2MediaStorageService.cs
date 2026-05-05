@@ -67,11 +67,20 @@ namespace ZansiHustle.API.Storage
                 endpoint, _privateBucket, _publicBucket, _publicBaseUrl ?? "(signed)");
         }
 
+        // Public-asset Cache-Control. Storage keys are guaranteed unique
+        // per upload (asset GUID embedded in the key), so we never
+        // overwrite an object in place — `immutable` is safe and tells
+        // browsers / CDNs they can hold the asset for the full year
+        // without revalidation. Saves a round-trip on every repeat
+        // open of the same listing.
+        private const string PublicCacheControl = "public, max-age=31536000, immutable";
+
         public Task<MediaUploadTicket> IssueUploadAsync(
             string container, string storageKey, string contentType, long maxSizeBytes, TimeSpan ttl)
         {
             var bucket = ResolveBucket(container);
             var expires = DateTime.UtcNow.Add(ttl);
+            var isPublic = string.Equals(container, "public", StringComparison.OrdinalIgnoreCase);
 
             var req = new GetPreSignedUrlRequest
             {
@@ -82,18 +91,39 @@ namespace ZansiHustle.API.Storage
                 ContentType = contentType,
             };
 
+            // Bake Cache-Control into the signature for public assets.
+            // R2 stores it as object metadata and serves it back on
+            // every GET, so the CDN/browser caches the image for a
+            // year without revalidation. The client MUST echo this
+            // exact header on the PUT or R2 will 403 — that's why we
+            // also add it to `headers` below.
+            //
+            // Private assets (KYC/verification) intentionally do NOT
+            // get this — those URLs are signed-read with short TTL,
+            // and we don't want a CDN to retain a long-lived copy of
+            // an ID document.
+            if (isPublic)
+            {
+                req.Headers.CacheControl = PublicCacheControl;
+            }
+
             var url = _s3.GetPreSignedURL(req);
 
-            // The signer bakes Content-Type into the signature, so the client
-            // MUST echo this exact header on the PUT. We deliberately do NOT
-            // send any custom x-zh-* headers — R2 can't enforce them from a
-            // presigned URL, and they'd force an extra CORS AllowedHeaders
-            // entry for no benefit. Size enforcement already happens in
-            // MediaService before the ticket is issued.
+            // Echo headers the signer baked in. Client must include
+            // each one byte-for-byte on the PUT or R2 returns 403.
+            // We deliberately do NOT send custom x-zh-* headers — R2
+            // can't enforce them from a presigned URL, and they'd
+            // force an extra CORS AllowedHeaders entry for no benefit.
+            // Size enforcement already happens in MediaService before
+            // the ticket is issued.
             var headers = new System.Collections.Generic.Dictionary<string, string>
             {
                 ["Content-Type"] = contentType,
             };
+            if (isPublic)
+            {
+                headers["Cache-Control"] = PublicCacheControl;
+            }
 
             return Task.FromResult(new MediaUploadTicket
             {

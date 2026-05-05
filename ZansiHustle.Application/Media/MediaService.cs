@@ -71,7 +71,14 @@ namespace ZansiHustle.Application.Media
             // the listing renders the stored URL directly to buyers, so
             // a TTL'd private-signed URL would rot after upload. Resolves
             // via Storage:R2:PublicBaseUrl to a permanent CDN URL.
-            [MediaPurpose.MarketplaceListingImage] = new("public", MediaVisibility.Public, 12_000_000, ImagesOnly, RequiresReview: false),
+            //
+            // Hard cap is 2MB — the mobile client optimises every photo
+            // to roughly 1280px / quality 0.8 / under 800KB before
+            // upload, with 2MB as the abort threshold. The backend
+            // enforces the same number defensively so a non-optimising
+            // client (or a tampered request) can't fill R2 with raw
+            // 12MB phone photos.
+            [MediaPurpose.MarketplaceListingImage] = new("public", MediaVisibility.Public, 2_000_000, ImagesOnly, RequiresReview: false),
 
             [MediaPurpose.Other]          = new("private", MediaVisibility.Private, 10_000_000, ImagesOrPdf, RequiresReview: false),
         };
