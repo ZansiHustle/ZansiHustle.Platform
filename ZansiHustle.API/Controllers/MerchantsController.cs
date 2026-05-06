@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ZansiHustle.Application.Common.Interfaces.Shared;
+using ZansiHustle.Application.Common.Paging;
 using ZansiHustle.Application.Listings;
 using ZansiHustle.Application.Listings.Dtos;
 using ZansiHustle.Application.Merchants;
@@ -34,13 +35,53 @@ namespace ZansiHustle.API.Controllers
         }
 
         /// <summary>
-        /// Gets all merchants (admin/public discovery).
+        /// Gets all merchants (admin only — exposes bank, KYC, payout
+        /// and revenue fields). Public discovery uses
+        /// <c>GET /public</c> below, which returns a narrow DTO.
         /// </summary>
         [HttpGet]
         [ProducesResponseType(typeof(Result<List<MerchantDto>>), StatusCodes.Status200OK)]
         public async Task<IActionResult> GetAll()
         {
             var result = await _merchantService.GetAllAsync();
+            return ToActionResult(result);
+        }
+
+        // ─── Public discovery (Store Locator / Nearby) ──────────────
+        //
+        // The class-level [Authorize] still applies to every other
+        // route on this controller — only these two are explicitly
+        // unauthenticated. Both project through MerchantPublicDto, a
+        // narrow DTO that contains zero bank / KYC / payout / referral
+        // / contact-email / owner-id / revenue fields.
+
+        /// <summary>
+        /// Public, unauthenticated paged search of Active merchants for
+        /// the buyer-side Store Locator. Filters: q, category, province,
+        /// city, lat/lng (+ radiusKm), sort. Pagination capped at 100.
+        /// </summary>
+        [HttpGet("public")]
+        [AllowAnonymous]
+        [ProducesResponseType(typeof(Result<PagedResult<MerchantPublicDto>>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> SearchPublic([FromQuery] MerchantPublicFilterRequestDto filter)
+        {
+            var result = await _merchantService.SearchPublicAsync(filter);
+            return ToActionResult(result);
+        }
+
+        /// <summary>
+        /// Public, unauthenticated single-merchant detail. Returns 404
+        /// when the merchant does not exist OR is not <c>Active</c> —
+        /// the existence of Pending / Suspended merchants is never
+        /// disclosed to public callers.
+        /// </summary>
+        [HttpGet("public/{id:guid}")]
+        [AllowAnonymous]
+        [ProducesResponseType(typeof(Result<MerchantPublicDto>), StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> GetPublicById(Guid id, [FromQuery] decimal? lat = null, [FromQuery] decimal? lng = null)
+        {
+            var result = await _merchantService.GetPublicByIdAsync(id, lat, lng);
             return ToActionResult(result);
         }
 

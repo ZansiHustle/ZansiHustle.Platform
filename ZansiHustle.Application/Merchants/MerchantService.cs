@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using ZansiHustle.Application.Common.Interfaces.Shared;
+using ZansiHustle.Application.Common.Paging;
 using ZansiHustle.Application.Media.Storage;
 using ZansiHustle.Application.Merchants.Dtos;
 using ZansiHustle.Application.Persistence.Merchants;
@@ -12,6 +13,7 @@ using ZansiHustle.Application.Persistence.SellerCategories;
 using ZansiHustle.Application.Persistence.SellerLeads;
 using ZansiHustle.Domain.Merchants;
 using ZansiHustle.Domain.SellerLeads;
+using ZansiHustle.Application.Common.Geo;
 using ZansiHustle.Shared.Enums.Merchants;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
@@ -91,6 +93,170 @@ namespace ZansiHustle.Application.Merchants
             {
                 return Result<MerchantDto>.Failure(ErrorCodes.Exception, $"An error occurred while retrieving the merchant. {ex.Message}");
             }
+        }
+
+        // ─── Public discovery (Store Locator / Nearby) ───────────────
+        //
+        // The public endpoints route through these two methods. They
+        // share NO mapper with the admin/owner DTO — every public
+        // response is built by MapToPublicDto, so private fields (bank,
+        // KYC notes, payout, referral, owner-id, contact-email,
+        // revenue) are physically incapable of leaking.
+
+        /// <inheritdoc />
+        public async Task<Result<PagedResult<MerchantPublicDto>>> SearchPublicAsync(
+            MerchantPublicFilterRequestDto filter)
+        {
+            try
+            {
+                filter ??= new MerchantPublicFilterRequestDto();
+
+                var (items, total) = await _merchantRepository.SearchPublicAsync(filter);
+
+                // Distance is recomputed here (rather than passed back
+                // through the repo) so the contract stays "repo returns
+                // entities". The math is cheap — at most pageSize calls
+                // per request.
+                double? userLat = filter.Lat.HasValue ? (double)filter.Lat.Value : null;
+                double? userLng = filter.Lng.HasValue ? (double)filter.Lng.Value : null;
+                var hasCoords = userLat.HasValue && userLng.HasValue;
+
+                var dtos = new List<MerchantPublicDto>(items.Count);
+                foreach (var entity in items)
+                    dtos.Add(await MapToPublicDtoAsync(entity, userLat, userLng, hasCoords));
+
+                var (page, pageSize) = ClampPaging(filter.Page, filter.PageSize);
+                var paged = new PagedResult<MerchantPublicDto>
+                {
+                    Items = dtos,
+                    Total = total,
+                    Page = page,
+                    PageSize = pageSize,
+                };
+
+                return Result<PagedResult<MerchantPublicDto>>.Success(paged, "Merchants retrieved.");
+            }
+            catch (Exception ex)
+            {
+                return Result<PagedResult<MerchantPublicDto>>.Failure(
+                    ErrorCodes.Exception,
+                    $"An error occurred while retrieving merchants. {ex.Message}");
+            }
+        }
+
+        /// <inheritdoc />
+        public async Task<Result<MerchantPublicDto>> GetPublicByIdAsync(
+            Guid id,
+            decimal? lat = null,
+            decimal? lng = null)
+        {
+            try
+            {
+                // Repository filters non-Active out — a Pending /
+                // Suspended merchant resolves to null, which becomes a
+                // 404. Buyer cannot tell whether the merchant is missing
+                // or merely hidden, which is the goal.
+                var merchant = await _merchantRepository.GetPublicByIdAsync(id);
+
+                if (merchant is null)
+                    return Result<MerchantPublicDto>.Failure(ErrorCodes.NotFound, "Merchant not found.");
+
+                double? userLat = lat.HasValue ? (double)lat.Value : null;
+                double? userLng = lng.HasValue ? (double)lng.Value : null;
+                var hasCoords = userLat.HasValue && userLng.HasValue;
+
+                var dto = await MapToPublicDtoAsync(merchant, userLat, userLng, hasCoords);
+                return Result<MerchantPublicDto>.Success(dto, "Merchant retrieved.");
+            }
+            catch (Exception ex)
+            {
+                return Result<MerchantPublicDto>.Failure(
+                    ErrorCodes.Exception,
+                    $"An error occurred while retrieving the merchant. {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Project a Merchant entity into the public DTO. Hand-written
+        /// per field rather than copying from <see cref="MerchantDto"/>
+        /// so a future field added to the admin DTO can never leak
+        /// here by accident — the audit surface stays tight.
+        /// </summary>
+        private async Task<MerchantPublicDto> MapToPublicDtoAsync(
+            Merchant merchant,
+            double? userLat,
+            double? userLng,
+            bool hasCoords)
+        {
+            // Refresh stored R2 URLs so logo/banner survive past the
+            // original presigned TTL. The resolver passes public
+            // (pub-r2.dev) URLs through unchanged and only re-signs
+            // legacy private bucket URLs — so this is safe to call
+            // even when the merchant has already-public assets.
+            var logoUrl = await _storageUrlResolver.RefreshAsync(merchant.LogoUrl);
+            var bannerUrl = await _storageUrlResolver.RefreshAsync(merchant.BannerUrl);
+
+            decimal? distanceKm = null;
+            if (hasCoords && merchant.Latitude.HasValue && merchant.Longitude.HasValue)
+            {
+                var d = Haversine.DistanceKm(
+                    userLat!.Value, userLng!.Value,
+                    (double)merchant.Latitude.Value, (double)merchant.Longitude.Value);
+                // Round to 2 dp — ~1.1 km granularity. The frontend
+                // re-renders the value as "X.X km" / "Y km" anyway,
+                // so anything finer adds no UX precision.
+                distanceKm = Math.Round((decimal)d, 2);
+            }
+
+            return new MerchantPublicDto
+            {
+                Id = merchant.Id,
+                Slug = merchant.Slug,
+                Name = merchant.Name,
+                Description = merchant.Description,
+
+                Category = merchant.SellerCategory?.Name,
+
+                Province = merchant.Province,
+                City = merchant.City,
+                Suburb = merchant.Suburb,
+                AddressLine1 = merchant.AddressLine1,
+                FormattedAddress = merchant.FormattedAddress,
+                Latitude = merchant.Latitude,
+                Longitude = merchant.Longitude,
+                DistanceKm = distanceKm,
+
+                // Status filter on the repo guarantees Active here, but
+                // the dual-check stays — if the filter ever loosens,
+                // IsVerified continues to mean "fully approved".
+                IsVerified =
+                    merchant.Status == MerchantStatus.Active &&
+                    merchant.KycStatus == MerchantKycStatus.Verified,
+
+                // Same rule as MapToDto — a stored rating is meaningless
+                // until at least one review has landed.
+                Rating = merchant.ReviewCount > 0 ? merchant.Rating : null,
+                ReviewCount = merchant.ReviewCount,
+
+                LogoUrl = logoUrl,
+                BannerUrl = bannerUrl,
+
+                Phone = merchant.ContactPhoneNumber,
+                WhatsApp = merchant.WhatsAppNumber,
+                WebsiteUrl = merchant.WebsiteUrl,
+            };
+        }
+
+        // Mirror of repository paging clamps so the response envelope
+        // reflects the values that were actually used.
+        private static (int Page, int PageSize) ClampPaging(int page, int pageSize)
+        {
+            const int defaultPageSize = 20;
+            const int maxPageSize = 100;
+            var p = page <= 0 ? 1 : page;
+            var ps = pageSize <= 0 ? defaultPageSize : pageSize;
+            if (ps > maxPageSize) ps = maxPageSize;
+            return (p, ps);
         }
 
         /// <inheritdoc />

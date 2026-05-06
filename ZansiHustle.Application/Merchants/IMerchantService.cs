@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using ZansiHustle.Application.Common.Paging;
 using ZansiHustle.Application.Merchants.Dtos;
 using ZansiHustle.Shared.Results;
 
@@ -13,6 +14,28 @@ namespace ZansiHustle.Application.Merchants
     {
         Task<Result<List<MerchantDto>>> GetAllAsync();
         Task<Result<MerchantDto>> GetByIdAsync(Guid id);
+
+        /// <summary>
+        /// Public, unauthenticated discovery — backs the Store Locator /
+        /// Nearby tab. Returns only Active merchants and projects them
+        /// through <see cref="MerchantPublicDto"/> so bank, KYC, payout,
+        /// referral, contact-email, owner-id and revenue fields are
+        /// never exposed.
+        /// </summary>
+        Task<Result<PagedResult<MerchantPublicDto>>> SearchPublicAsync(
+            MerchantPublicFilterRequestDto filter);
+
+        /// <summary>
+        /// Public, unauthenticated detail. Returns 404
+        /// (<see cref="Shared.Errors.ErrorCodes.NotFound"/>) if the
+        /// merchant does not exist OR <c>Status != Active</c> — the
+        /// existence of Pending/Suspended merchants is never disclosed.
+        /// </summary>
+        Task<Result<MerchantPublicDto>> GetPublicByIdAsync(
+            Guid id,
+            decimal? lat = null,
+            decimal? lng = null);
+
         Task<Result<MerchantDto>> CreateAsync(CreateMerchantRequestDto request);
         Task<Result<MerchantDto>> UpdateAsync(Guid id, UpdateMerchantRequestDto request);
         Task<Result<MerchantDto>> VerifyKycAsync(Guid id);
