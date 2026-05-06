@@ -346,6 +346,10 @@ namespace ZansiHustle.Application.Marketplace
                     CreatedAtUtc = DateTime.UtcNow,
                 };
 
+                _logger.LogDebug(
+                    "[MarketplaceListing][AddImage] incoming url={IncomingUrl} saved url={SavedUrl}",
+                    request.Url, image.Url);
+
                 await _repository.AddImageAsync(image);
 
                 listing.UpdatedAtUtc = DateTime.UtcNow;
@@ -516,6 +520,9 @@ namespace ZansiHustle.Application.Marketplace
             foreach (var img in ordered)
             {
                 var refreshed = await _storageUrlResolver.RefreshAsync(img.Url) ?? img.Url;
+                _logger.LogDebug(
+                    "[MarketplaceListing][MapImage] listing={ListingId} image={ImageId} stored={Stored} resolved={Resolved}",
+                    entity.Id, img.Id, img.Url, refreshed);
                 resolved.Add((img, refreshed));
             }
 

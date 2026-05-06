@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace ZansiHustle.Application.Media.Storage
@@ -7,44 +8,75 @@ namespace ZansiHustle.Application.Media.Storage
     /// <summary>
     /// Default <see cref="IStorageUrlResolver"/> implementation.
     ///
-    /// Lifted from the previous private helper in
-    /// <c>MerchantService.RefreshStoredUrlAsync</c> so merchant and
-    /// marketplace share one canonical recovery path for stored URLs.
-    /// The original behaviour is preserved verbatim — only the call
-    /// site moved.
+    /// Recovers stored URLs to a usable read URL on every map. There
+    /// are TWO distinct stored shapes in the wild:
     ///
-    /// Mechanics: when an asset is uploaded into R2 without a
-    /// configured <c>Storage:R2:PublicBaseUrl</c>, FinalizeAsync persists
-    /// a presigned URL. The signature ages out (15 min for private,
-    /// 7 days for public) and the row's URL goes 403. We can't fix the
-    /// stored value without a migration, so we re-derive bucket+key
-    /// from the URL path on every read and ask the storage adapter for
-    /// a fresh signed URL.
+    ///   1. <c>https://pub-{hash}.r2.dev/{key}</c> (and any future
+    ///      custom CDN domain) — bucket is bound to the hostname; the
+    ///      path is the storage key directly, no bucket prefix. This
+    ///      is the stable form; it must pass through unchanged.
     ///
-    /// Idempotent for permanent CDN URLs: <c>Storage:R2:PublicBaseUrl</c>
-    /// configured → stored URL is <c>{cdn}/{key}</c>, not an R2 hostname,
-    /// so the early-return at the top kicks in.
+    ///   2. <c>https://{accountid}.r2.cloudflarestorage.com/{bucket}/{key}?X-Amz-...</c>
+    ///      — bucket is in the path. These are legacy presigned URLs
+    ///      written before <c>Storage:R2:PublicBaseUrl</c> was set; the
+    ///      signature ages out (15 min private / 7 days public) and the
+    ///      stored URL goes 403. We re-derive bucket+key and ask the
+    ///      storage adapter for a fresh URL — for public buckets that
+    ///      adapter now returns the stable <c>{publicBaseUrl}/{key}</c>
+    ///      form, so legacy rows recover automatically on read.
+    ///
+    /// Past bug: the hostname guard included <c>r2.dev</c>, which
+    /// pulled stable public-CDN URLs into the cloudflarestorage.com
+    /// parser. Their path <c>/{key}</c> has no bucket prefix, so the
+    /// first key segment ("5", from the OwnerEntityType int) was being
+    /// classified as the bucket name, mapped to "private", and re-
+    /// signed against <c>zansihustle-private</c> — pointing at an
+    /// object that lives in <c>zansihustle-public</c>. The early-
+    /// return below for PublicBaseUrl-prefixed URLs prevents the
+    /// happy-path case from ever entering the parser.
     /// </summary>
     public sealed class StorageUrlResolver : IStorageUrlResolver
     {
         private readonly IMediaStorageService _storage;
         private readonly ILogger<StorageUrlResolver> _logger;
+        private readonly string? _publicBaseUrl;
 
-        public StorageUrlResolver(IMediaStorageService storage, ILogger<StorageUrlResolver> logger)
+        public StorageUrlResolver(
+            IMediaStorageService storage,
+            IConfiguration config,
+            ILogger<StorageUrlResolver> logger)
         {
             _storage = storage;
             _logger = logger;
+            // Trailing-slash-stripped to match R2MediaStorageService —
+            // both consumers must agree on shape so a `StartsWith` check
+            // against either form works.
+            _publicBaseUrl = config["Storage:R2:PublicBaseUrl"]?.TrimEnd('/');
         }
 
         public async Task<string?> RefreshAsync(string? storedUrl)
         {
             if (string.IsNullOrWhiteSpace(storedUrl)) return storedUrl;
 
-            // Anything that isn't an R2 hostname passes through. This is
-            // the path permanent public CDN URLs and external/legacy
-            // images take — we MUST NOT rewrite them.
-            if (!storedUrl.Contains("r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase)
-                && !storedUrl.Contains("r2.dev", StringComparison.OrdinalIgnoreCase))
+            // Stable public CDN URL — pass straight through. This covers:
+            //   • new uploads written as `{publicBaseUrl}/{key}`
+            //   • legacy rows that were already rebased on a previous read
+            //   • any future custom domain set via PublicBaseUrl
+            // Must run BEFORE the cloudflarestorage.com parser; the
+            // r2.dev / custom-CDN shape has `/{key}` (no bucket prefix)
+            // which the parser would misclassify.
+            if (!string.IsNullOrWhiteSpace(_publicBaseUrl) &&
+                storedUrl.StartsWith(_publicBaseUrl!, StringComparison.OrdinalIgnoreCase))
+            {
+                return storedUrl;
+            }
+
+            // ONLY presigned `cloudflarestorage.com` URLs need re-signing.
+            // The path on those is always `/{bucket}/{key}` — the parser
+            // below relies on that. Anything else (external CDNs, third-
+            // party hosts, the stable r2.dev form) must NOT enter the
+            // parser.
+            if (!storedUrl.Contains("r2.cloudflarestorage.com", StringComparison.OrdinalIgnoreCase))
                 return storedUrl;
 
             try
