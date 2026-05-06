@@ -51,15 +51,43 @@ namespace ZansiHustle.Application.Merchants
             _storageUrlResolver = storageUrlResolver;
         }
 
-        // Verification uploads required for self-registration. Used both at
-        // CreateMineAsync time (to fail-fast if a required upload is missing)
-        // and at VerifyKycAsync time (each must be Approved).
-        private static readonly Shared.Enums.Media.MediaPurpose[] RequiredVerificationPurposes =
+        // Required verification uploads for self-registration. Used at
+        // CreateMineAsync time (fail-fast if anything is missing) and
+        // at VerifyKycAsync time (each must be Approved). Two paths:
+        //
+        //   • OnlineStore (products / services online) keeps the
+        //     original ID + Portrait + VerificationProductSample
+        //     contract — backwards compatible with everything that
+        //     submitted before the physical-store path existed.
+        //
+        //   • PhysicalStore swaps the product-sample for storefront
+        //     and interior photos. The Nearby / Store Locator
+        //     surface relies on these to verify the location is real
+        //     before showing the merchant on the buyer-facing map.
+        //
+        // Keep the rule a pure function of MerchantType so the same
+        // call site can compute the set at submit and at verify. No
+        // category-based gating today — frontend may layer additional
+        // requirements on top (e.g. BusinessLicense for healthcare),
+        // but those don't change the *minimum* server-side bar.
+        private static Shared.Enums.Media.MediaPurpose[]
+            GetRequiredVerificationPurposes(MerchantType type)
         {
-            Shared.Enums.Media.MediaPurpose.IdDocument,
-            Shared.Enums.Media.MediaPurpose.Portrait,
-            Shared.Enums.Media.MediaPurpose.VerificationProductSample,
-        };
+            return type == MerchantType.PhysicalStore
+                ? new[]
+                {
+                    Shared.Enums.Media.MediaPurpose.IdDocument,
+                    Shared.Enums.Media.MediaPurpose.Portrait,
+                    Shared.Enums.Media.MediaPurpose.StorefrontPhoto,
+                    Shared.Enums.Media.MediaPurpose.StoreInteriorPhoto,
+                }
+                : new[]
+                {
+                    Shared.Enums.Media.MediaPurpose.IdDocument,
+                    Shared.Enums.Media.MediaPurpose.Portrait,
+                    Shared.Enums.Media.MediaPurpose.VerificationProductSample,
+                };
+        }
 
         /// <inheritdoc />
         public async Task<Result<List<MerchantDto>>> GetAllAsync()
@@ -214,6 +242,12 @@ namespace ZansiHustle.Application.Merchants
                 Slug = merchant.Slug,
                 Name = merchant.Name,
                 Description = merchant.Description,
+
+                // Type discrimination. PhysicalStore vs OnlineStore is
+                // the contract Nearby gates on; expose it (and the
+                // boolean alias) so the client never has to guess.
+                Type = merchant.Type,
+                IsPhysicalStore = merchant.Type == MerchantType.PhysicalStore,
 
                 Category = merchant.SellerCategory?.Name,
 
@@ -388,9 +422,18 @@ namespace ZansiHustle.Application.Merchants
                 // be Approved. Admins approve uploads individually via the
                 // /api/media/{id}/review endpoint; this gate ensures KYC
                 // status flips ONLY when the document review is complete.
+                //
+                // Required-set is derived from the merchant's persisted
+                // Type, so a PhysicalStore needs Storefront + Interior
+                // approved, while an OnlineStore still needs the
+                // VerificationProductSample. Mixing the rules across
+                // record types would either lock out existing online
+                // sellers (no Storefront ever uploaded) or under-verify
+                // physical stores.
                 var media = await _mediaRepo.GetByOwnerAsync(
                     Shared.Enums.Media.OwnerEntityType.Merchant, id);
-                foreach (var purpose in RequiredVerificationPurposes)
+                var requiredPurposes = GetRequiredVerificationPurposes(merchant.Type);
+                foreach (var purpose in requiredPurposes)
                 {
                     var approved = media.Any(m =>
                         m.Purpose == purpose &&
@@ -637,10 +680,18 @@ namespace ZansiHustle.Application.Merchants
                 // Merchant row. Each required purpose must be present among
                 // the supplied media-asset ids; admin then approves them
                 // separately to flip KycStatus.
+                //
+                // Required-set depends on MerchantType — physical stores
+                // need storefront + interior photos instead of the
+                // generic product sample. The frontend may layer
+                // additional category-specific requirements on top
+                // (e.g. BusinessLicense for healthcare); the server's
+                // bar is the minimum.
+                var requiredCreatePurposes = GetRequiredVerificationPurposes(entity.Type);
                 if (request.MediaAssetIds is { Count: > 0 })
                 {
                     var assets = await _mediaRepo.GetByIdsAsync(request.MediaAssetIds);
-                    foreach (var purpose in RequiredVerificationPurposes)
+                    foreach (var purpose in requiredCreatePurposes)
                     {
                         var hit = assets.Any(a =>
                             a.UploadedByUserId == ownerUserId &&
@@ -654,8 +705,11 @@ namespace ZansiHustle.Application.Merchants
                 }
                 else
                 {
+                    var human = entity.Type == MerchantType.PhysicalStore
+                        ? "ID document, selfie, storefront photo and interior photo"
+                        : "ID document, selfie, and product sample";
                     return Result<MerchantDto>.Failure(ErrorCodes.BadRequest,
-                        "Verification uploads are required (ID document, selfie, product sample).");
+                        $"Verification uploads are required ({human}).");
                 }
 
                 await _merchantRepository.AddAsync(entity);

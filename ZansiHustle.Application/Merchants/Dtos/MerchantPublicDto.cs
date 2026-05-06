@@ -1,4 +1,5 @@
 using System;
+using ZansiHustle.Shared.Enums.Merchants;
 
 namespace ZansiHustle.Application.Merchants.Dtos
 {
@@ -20,6 +21,23 @@ namespace ZansiHustle.Application.Merchants.Dtos
         public string Slug { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
         public string? Description { get; set; }
+
+        /// <summary>
+        /// Whether this merchant is a physical Store (people can visit
+        /// the location) or an online-only Shop. Different surfaces
+        /// gate on this:
+        ///   • Nearby / Store Locator filters to <c>PhysicalStore</c>.
+        ///   • Online product / service discovery treats both equally.
+        /// Same int values as the admin <see cref="MerchantDto.Type"/>;
+        /// safe to expose because it carries no PII.
+        /// </summary>
+        public MerchantType Type { get; set; }
+
+        /// <summary>
+        /// Convenience flag for clients that don't want to import the
+        /// enum. <c>true</c> iff <c>Type == PhysicalStore</c>.
+        /// </summary>
+        public bool IsPhysicalStore { get; set; }
 
         /// <summary>
         /// Flat category name (joined from <c>SellerCategory.Name</c>).

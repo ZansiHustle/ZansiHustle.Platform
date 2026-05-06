@@ -166,6 +166,17 @@ namespace ZansiHustle.Infrastructure.Persistence.Merchants
                 .Include(x => x.SellerCategory)
                 .Where(x => x.Status == MerchantStatus.Active);
 
+            // Type filter — caller-driven. Nearby / Store Locator MUST
+            // send PhysicalStore; without a filter the endpoint returns
+            // every Active merchant of any type (useful for admin /
+            // debug). The service layer documents the contract; the
+            // repository just honours what's asked.
+            if (filter.Type.HasValue)
+            {
+                var type = filter.Type.Value;
+                query = query.Where(x => x.Type == type);
+            }
+
             if (!string.IsNullOrWhiteSpace(filter.Province))
             {
                 var province = filter.Province.Trim();

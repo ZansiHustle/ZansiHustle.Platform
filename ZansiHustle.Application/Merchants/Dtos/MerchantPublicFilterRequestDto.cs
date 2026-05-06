@@ -1,3 +1,5 @@
+using ZansiHustle.Shared.Enums.Merchants;
+
 namespace ZansiHustle.Application.Merchants.Dtos
 {
     /// <summary>
@@ -43,6 +45,22 @@ namespace ZansiHustle.Application.Merchants.Dtos
         /// fall through to the default-by-coords rule.
         /// </summary>
         public string? Sort { get; set; }
+
+        /// <summary>
+        /// Filter by merchant type. The Nearby / Store Locator surface
+        /// MUST send <see cref="MerchantType.PhysicalStore"/> so it
+        /// only renders verifiable physical locations — online-only
+        /// shops belong to product/service discovery surfaces and
+        /// should not appear on a map. The endpoint deliberately does
+        /// NOT default this server-side; callers state their intent
+        /// explicitly. When omitted, both PhysicalStore and OnlineStore
+        /// merchants are returned (useful for admin / debug only).
+        ///
+        /// Bound via <c>[FromQuery]</c> as the enum's int value
+        /// (<c>?type=1</c> for PhysicalStore, <c>?type=2</c> for
+        /// OnlineStore) or its name (<c>?type=PhysicalStore</c>).
+        /// </summary>
+        public MerchantType? Type { get; set; }
 
         public int Page { get; set; } = 1;
         public int PageSize { get; set; } = 20;

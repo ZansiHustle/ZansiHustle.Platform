@@ -80,6 +80,18 @@ namespace ZansiHustle.Application.Media
             // 12MB phone photos.
             [MediaPurpose.MarketplaceListingImage] = new("public", MediaVisibility.Public, 2_000_000, ImagesOnly, RequiresReview: false),
 
+            // ── Physical-store verification ──────────────────────────────
+            // All four share the verification bucket's semantics:
+            // Private container, admin review required, photo-or-PDF
+            // for the documents and image-only for the photos. Sized
+            // generously (8MB photos, 10MB documents) so good-quality
+            // captures from a mid-range Android phone don't clip.
+            [MediaPurpose.StorefrontPhoto]              = new("private", MediaVisibility.Private,  8_000_000, ImagesOnly,  RequiresReview: true),
+            [MediaPurpose.StoreInteriorPhoto]           = new("private", MediaVisibility.Private,  8_000_000, ImagesOnly,  RequiresReview: true),
+            [MediaPurpose.StoreShelvesPhoto]            = new("private", MediaVisibility.Private,  8_000_000, ImagesOnly,  RequiresReview: true),
+            [MediaPurpose.BusinessRegistrationDocument] = new("private", MediaVisibility.Private, 10_000_000, ImagesOrPdf, RequiresReview: true),
+            [MediaPurpose.BusinessLicenseDocument]      = new("private", MediaVisibility.Private, 10_000_000, ImagesOrPdf, RequiresReview: true),
+
             [MediaPurpose.Other]          = new("private", MediaVisibility.Private, 10_000_000, ImagesOrPdf, RequiresReview: false),
         };
 
