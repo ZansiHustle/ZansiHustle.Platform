@@ -622,6 +622,31 @@ namespace ZansiHustle.Application.Merchants
                 if (request is null)
                     return Result<MerchantDto>.Failure(ErrorCodes.BadRequest, "Request is required.");
 
+                // Duplicate-type guard. The product rule is one application
+                // per (owner, type): a user may have at most one OnlineStore
+                // application/merchant AND at most one PhysicalStore. They
+                // can hold one of each (online seller who later adds a
+                // physical store) but not two of the same kind.
+                //
+                // Implemented at the service layer rather than the database
+                // because EF migrations on the live UAT data are higher-cost
+                // than a server-side check; the matching unique index in
+                // `MerchantConfiguration` (filtered to non-null OwnerUserId)
+                // is the belt-and-braces backstop.
+                var existingMerchants = await _merchantRepository.GetByOwnerAsync(ownerUserId);
+                var duplicate = existingMerchants
+                    .FirstOrDefault(m => m.Type == request.Type);
+                if (duplicate is not null)
+                {
+                    var typeName = request.Type == MerchantType.PhysicalStore
+                        ? "physical store"
+                        : "online seller";
+                    return Result<MerchantDto>.Failure(
+                        ErrorCodes.Conflict,
+                        $"You already have a {typeName} application on file. " +
+                        "You can update the existing one — submitting another isn't allowed.");
+                }
+
                 // Seller-first onboarding: a merchant record represents the
                 // seller account, not necessarily a published storefront. The
                 // shop name is therefore optional at creation — the seller can
