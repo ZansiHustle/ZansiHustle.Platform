@@ -24,6 +24,17 @@ namespace ZansiHustle.Domain.Listings
         public ListingType Type { get; set; }
         public ListingStatus Status { get; set; } = ListingStatus.Active;
 
+        /// <summary>
+        /// Where this listing is available — gates which surfaces may
+        /// render it (Home / Explore feeds vs. Store profile only) and
+        /// whether online checkout applies. Defaults to
+        /// <see cref="AvailabilityMode.OnlineOnly"/> at the database
+        /// level (migration backfill); <c>ListingService</c> overrides
+        /// the default at create-time based on the owning merchant's
+        /// type (<c>PhysicalStore → InStoreOnly</c>).
+        /// </summary>
+        public AvailabilityMode AvailabilityMode { get; set; } = AvailabilityMode.OnlineOnly;
+
         /// <summary>Owning shop. Required — a listing always belongs to a merchant.</summary>
         public Guid MerchantId { get; set; }
         public Merchant? Merchant { get; set; }

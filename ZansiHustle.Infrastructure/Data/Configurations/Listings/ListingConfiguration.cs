@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using ZansiHustle.Domain.Listings;
+using ZansiHustle.Shared.Enums.Listings;
 
 namespace ZansiHustle.Infrastructure.Data.Configurations.Listings
 {
@@ -48,6 +49,9 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Listings
             builder.HasIndex(x => x.Slug).IsUnique();
             builder.HasIndex(x => x.Type);
             builder.HasIndex(x => x.Status);
+            // SearchAsync filters Status==Active AND AvailabilityMode!=InStoreOnly
+            // on every public listing query — index supports the hot path.
+            builder.HasIndex(x => x.AvailabilityMode);
             builder.HasIndex(x => x.MerchantId);
             builder.HasIndex(x => x.SellerCategoryId);
             builder.HasIndex(x => x.SellerSubcategoryId);
@@ -88,6 +92,16 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Listings
             builder.Property(x => x.Status)
                 .HasConversion<int>()
                 .IsRequired();
+
+            // NOT NULL with DB-level default of 1 (OnlineOnly) so the
+            // migration backfills existing rows without needing a
+            // separate UPDATE pass — every pre-existing listing was
+            // created by an OnlineStore merchant and is correctly
+            // tagged OnlineOnly.
+            builder.Property(x => x.AvailabilityMode)
+                .HasConversion<int>()
+                .IsRequired()
+                .HasDefaultValue(AvailabilityMode.OnlineOnly);
 
             builder.Property(x => x.Condition)
                 .HasConversion<int?>();

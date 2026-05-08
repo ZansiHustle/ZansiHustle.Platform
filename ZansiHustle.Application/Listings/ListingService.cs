@@ -13,6 +13,7 @@ using ZansiHustle.Application.Persistence.Merchants;
 using ZansiHustle.Application.Persistence.SellerCategories;
 using ZansiHustle.Domain.Listings;
 using ZansiHustle.Shared.Enums.Listings;
+using ZansiHustle.Shared.Enums.Merchants;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
 
@@ -152,6 +153,27 @@ namespace ZansiHustle.Application.Listings
                 if (!categoryCheck.IsSuccess)
                     return Result<ListingDto>.Failure(categoryCheck.Code, categoryCheck.Message);
 
+                // Resolve AvailabilityMode:
+                //   • Caller-supplied value wins, subject to validation.
+                //   • Otherwise default by merchant type — PhysicalStore
+                //     defaults to InStoreOnly so a store-only owner who
+                //     submits a listing without specifying mode lands
+                //     in their catalog instead of the public feed.
+                //   • InStoreOnly is rejected for non-PhysicalStore
+                //     merchants (would never surface in any feed).
+                var resolvedAvailability = request.AvailabilityMode
+                    ?? (merchant.Type == MerchantType.PhysicalStore
+                        ? AvailabilityMode.InStoreOnly
+                        : AvailabilityMode.OnlineOnly);
+
+                if (resolvedAvailability == AvailabilityMode.InStoreOnly &&
+                    merchant.Type != MerchantType.PhysicalStore)
+                {
+                    return Result<ListingDto>.Failure(
+                        ErrorCodes.BadRequest,
+                        "InStoreOnly listings require a physical-store merchant.");
+                }
+
                 var listing = new Listing
                 {
                     Id = Guid.NewGuid(),
@@ -159,6 +181,7 @@ namespace ZansiHustle.Application.Listings
                     Slug = await GenerateUniqueSlugAsync(request.Title),
                     Type = request.Type,
                     Status = request.Status ?? ListingStatus.Active,
+                    AvailabilityMode = resolvedAvailability,
                     MerchantId = request.MerchantId,
                     Title = request.Title.Trim(),
                     Description = request.Description?.Trim(),
@@ -253,6 +276,22 @@ namespace ZansiHustle.Application.Listings
 
                 if (request.Status.HasValue)
                     listing.Status = request.Status.Value;
+
+                // Owners may flip AvailabilityMode at any time, but the
+                // merchant-type rule still applies — InStoreOnly only
+                // makes sense for a PhysicalStore merchant.
+                if (request.AvailabilityMode.HasValue)
+                {
+                    if (request.AvailabilityMode.Value == AvailabilityMode.InStoreOnly &&
+                        listing.Merchant!.Type != MerchantType.PhysicalStore)
+                    {
+                        return Result<ListingDto>.Failure(
+                            ErrorCodes.BadRequest,
+                            "InStoreOnly listings require a physical-store merchant.");
+                    }
+
+                    listing.AvailabilityMode = request.AvailabilityMode.Value;
+                }
 
                 if (listing.Type == ListingType.Product)
                 {
@@ -440,6 +479,7 @@ namespace ZansiHustle.Application.Listings
                 Slug = listing.Slug,
                 Type = listing.Type,
                 Status = listing.Status,
+                AvailabilityMode = listing.AvailabilityMode,
                 MerchantId = listing.MerchantId,
                 MerchantName = listing.Merchant?.Name,
                 MerchantSlug = listing.Merchant?.Slug,
@@ -483,6 +523,7 @@ namespace ZansiHustle.Application.Listings
                 Slug = listing.Slug,
                 Type = listing.Type,
                 Status = listing.Status,
+                AvailabilityMode = listing.AvailabilityMode,
                 MerchantId = listing.MerchantId,
                 MerchantName = listing.Merchant?.Name,
                 MerchantSlug = listing.Merchant?.Slug,

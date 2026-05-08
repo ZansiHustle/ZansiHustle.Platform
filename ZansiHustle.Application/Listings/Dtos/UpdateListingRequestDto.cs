@@ -26,6 +26,13 @@ namespace ZansiHustle.Application.Listings.Dtos
 
         public ListingStatus? Status { get; set; }
 
+        /// <summary>
+        /// Optional. When supplied, the same merchant-type validation
+        /// applies as on create — InStoreOnly requires PhysicalStore.
+        /// Omitting leaves the existing value unchanged.
+        /// </summary>
+        public AvailabilityMode? AvailabilityMode { get; set; }
+
         // Product-only.
         public int? Stock { get; set; }
         public ListingCondition? Condition { get; set; }

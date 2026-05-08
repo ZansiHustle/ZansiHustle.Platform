@@ -12,6 +12,15 @@ namespace ZansiHustle.Application.Listings.Dtos
         public string? Q { get; set; }
         public ListingType? Type { get; set; }
         public ListingStatus? Status { get; set; }
+
+        /// <summary>
+        /// Optional explicit availability filter. Public listing search
+        /// hard-excludes <see cref="AvailabilityMode.InStoreOnly"/>
+        /// regardless of what callers pass — this filter narrows
+        /// further (e.g. "OnlineOnly only") if needed.
+        /// </summary>
+        public AvailabilityMode? AvailabilityMode { get; set; }
+
         public Guid? MerchantId { get; set; }
         public Guid? SellerCategoryId { get; set; }
         public Guid? SellerSubcategoryId { get; set; }

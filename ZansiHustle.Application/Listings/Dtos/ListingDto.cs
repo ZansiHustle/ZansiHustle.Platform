@@ -16,6 +16,13 @@ namespace ZansiHustle.Application.Listings.Dtos
         public ListingType Type { get; set; }
         public ListingStatus Status { get; set; }
 
+        /// <summary>
+        /// Where this listing is available — drives whether it appears
+        /// in Home/Explore feeds (OnlineOnly + OnlineAndInStore) or
+        /// only on the merchant's Store profile (InStoreOnly).
+        /// </summary>
+        public AvailabilityMode AvailabilityMode { get; set; }
+
         public Guid MerchantId { get; set; }
         public string? MerchantName { get; set; }
         public string? MerchantSlug { get; set; }

@@ -16,6 +16,13 @@ namespace ZansiHustle.Application.Listings.Dtos
         public ListingType Type { get; set; }
         public ListingStatus Status { get; set; }
 
+        /// <summary>
+        /// Where this listing is available. Mobile feed clients hide
+        /// online-only CTAs (Add to cart) and show "Available in store"
+        /// for InStoreOnly / OnlineAndInStore items on Store surfaces.
+        /// </summary>
+        public AvailabilityMode AvailabilityMode { get; set; }
+
         public Guid MerchantId { get; set; }
         public string? MerchantName { get; set; }
         public string? MerchantSlug { get; set; }

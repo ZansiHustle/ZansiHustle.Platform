@@ -7,6 +7,7 @@ using ZansiHustle.Application.Listings.Dtos;
 using ZansiHustle.Application.Persistence.Listings;
 using ZansiHustle.Domain.Listings;
 using ZansiHustle.Infrastructure.Data;
+using ZansiHustle.Shared.Enums.Listings;
 
 namespace ZansiHustle.Infrastructure.Persistence.Listings
 {
@@ -28,11 +29,38 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
                 .Include(x => x.SellerCategory)
                 .Include(x => x.SellerSubcategory);
 
+            // Hard contract for the public listing search:
+            //
+            //   1. Status MUST be Active. Earlier the filter was
+            //      optional; the mobile client always passed Active
+            //      but a forgotten parameter would expose Drafts /
+            //      Archived. We now enforce server-side regardless of
+            //      the caller-supplied filter.
+            //   2. AvailabilityMode MUST NOT be InStoreOnly. Physical-
+            //      store catalog items belong on the merchant's Store
+            //      profile, never in Home / Explore / global search.
+            //      A caller-supplied filter can narrow further (e.g.
+            //      "OnlineOnly only") but cannot loosen this gate.
+            query = query
+                .Where(x => x.Status == ListingStatus.Active)
+                .Where(x => x.AvailabilityMode != AvailabilityMode.InStoreOnly);
+
             if (filter.Type.HasValue)
                 query = query.Where(x => x.Type == filter.Type.Value);
 
-            if (filter.Status.HasValue)
-                query = query.Where(x => x.Status == filter.Status.Value);
+            // filter.Status no longer relaxes the Active hard-filter
+            // above — we keep the parameter on the DTO for API
+            // back-compat, but it can only narrow within Active. If
+            // a caller passes `status=Draft` we return zero rows
+            // (intentional — buyer feeds never see drafts).
+            if (filter.Status.HasValue && filter.Status.Value != ListingStatus.Active)
+                query = query.Where(_ => false);
+
+            if (filter.AvailabilityMode.HasValue &&
+                filter.AvailabilityMode.Value != AvailabilityMode.InStoreOnly)
+            {
+                query = query.Where(x => x.AvailabilityMode == filter.AvailabilityMode.Value);
+            }
 
             if (filter.MerchantId.HasValue)
                 query = query.Where(x => x.MerchantId == filter.MerchantId.Value);

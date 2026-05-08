@@ -28,6 +28,15 @@ namespace ZansiHustle.Application.Listings.Dtos
 
         public ListingStatus? Status { get; set; } = ListingStatus.Active;
 
+        /// <summary>
+        /// Optional. When omitted, <c>ListingService</c> derives the
+        /// default from the owning merchant's type:
+        /// <c>PhysicalStore → InStoreOnly</c>, otherwise <c>OnlineOnly</c>.
+        /// Sending <see cref="AvailabilityMode.InStoreOnly"/> for an
+        /// OnlineStore merchant is rejected.
+        /// </summary>
+        public AvailabilityMode? AvailabilityMode { get; set; }
+
         // Product-only.
         public int? Stock { get; set; }
         public ListingCondition? Condition { get; set; }
