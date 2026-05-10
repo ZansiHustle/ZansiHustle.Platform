@@ -767,9 +767,6 @@ namespace ZansiHustle.Application.Merchants
                 if (request is null)
                     return Result<MerchantDto>.Failure(ErrorCodes.BadRequest, "Request is required.");
 
-                if (string.IsNullOrWhiteSpace(request.Name))
-                    return Result<MerchantDto>.Failure(ErrorCodes.BadRequest, "Shop name is required.");
-
                 var merchant = await _merchantRepository.GetByIdAsync(merchantId);
 
                 if (merchant is null)
@@ -778,34 +775,58 @@ namespace ZansiHustle.Application.Merchants
                 if (merchant.OwnerUserId != ownerUserId)
                     return Result<MerchantDto>.Failure(ErrorCodes.Forbidden, "You do not have permission to update this shop.");
 
-                var categoryCheck = await ValidateCategoriesAsync(request.SellerCategoryId, request.SellerSubcategoryId);
-                if (!categoryCheck.IsSuccess)
-                    return Result<MerchantDto>.Failure(categoryCheck.Code, categoryCheck.Message);
+                // PATCH semantics: only validate / assign fields that
+                // the caller actually supplied (non-null). Each focused
+                // screen sends a small subset (StorePhotos sends just
+                // logo+banner; StoreDetails sends visible fields only)
+                // — omitted fields must be preserved, NOT nulled.
+                if (request.Name is not null)
+                {
+                    if (string.IsNullOrWhiteSpace(request.Name))
+                        return Result<MerchantDto>.Failure(ErrorCodes.BadRequest, "Shop name is required.");
+                    ApplyNameAndSlugAsync(merchant, request.Name);
+                }
 
-                ApplyNameAndSlugAsync(merchant, request.Name);
-                merchant.Description = request.Description?.Trim();
-                merchant.Type = request.Type;
-                merchant.SellerCategoryId = request.SellerCategoryId;
-                merchant.SellerSubcategoryId = request.SellerSubcategoryId;
-                merchant.ContactEmail = request.ContactEmail?.Trim();
-                merchant.ContactPhoneNumber = request.ContactPhoneNumber?.Trim();
-                merchant.WhatsAppNumber = request.WhatsAppNumber?.Trim();
-                merchant.SocialHandle = request.SocialHandle?.Trim();
-                merchant.IdNumber = request.IdNumber?.Trim();
-                merchant.Province = request.Province?.Trim();
-                merchant.City = request.City?.Trim();
-                merchant.AddressLine1 = request.AddressLine1?.Trim();
-                merchant.Suburb = request.Suburb?.Trim();
-                merchant.PostalCode = request.PostalCode?.Trim();
-                merchant.Country = request.Country?.Trim();
-                merchant.CountryCode = string.IsNullOrWhiteSpace(request.CountryCode) ? null : request.CountryCode.Trim().ToUpperInvariant();
-                merchant.Latitude = request.Latitude;
-                merchant.Longitude = request.Longitude;
-                merchant.GooglePlaceId = request.GooglePlaceId?.Trim();
-                merchant.FormattedAddress = request.FormattedAddress?.Trim();
-                merchant.WebsiteUrl = request.WebsiteUrl?.Trim();
-                merchant.LogoUrl = request.LogoUrl?.Trim();
-                merchant.BannerUrl = request.BannerUrl?.Trim();
+                // Category validation only runs when at least one of the
+                // category fields was supplied — otherwise we'd re-check
+                // the existing values for no reason (and a screen that
+                // omits both fields stays untouched).
+                if (request.SellerCategoryId is not null || request.SellerSubcategoryId is not null)
+                {
+                    var effectiveCategoryId = request.SellerCategoryId ?? merchant.SellerCategoryId;
+                    var effectiveSubcategoryId = request.SellerSubcategoryId ?? merchant.SellerSubcategoryId;
+                    var categoryCheck = await ValidateCategoriesAsync(effectiveCategoryId, effectiveSubcategoryId);
+                    if (!categoryCheck.IsSuccess)
+                        return Result<MerchantDto>.Failure(categoryCheck.Code, categoryCheck.Message);
+
+                    if (request.SellerCategoryId is not null) merchant.SellerCategoryId = request.SellerCategoryId;
+                    if (request.SellerSubcategoryId is not null) merchant.SellerSubcategoryId = request.SellerSubcategoryId;
+                }
+
+                if (request.Description       is not null) merchant.Description       = request.Description.Trim();
+                if (request.Type              is not null) merchant.Type              = request.Type.Value;
+                if (request.ContactEmail      is not null) merchant.ContactEmail      = request.ContactEmail.Trim();
+                if (request.ContactPhoneNumber is not null) merchant.ContactPhoneNumber = request.ContactPhoneNumber.Trim();
+                if (request.WhatsAppNumber    is not null) merchant.WhatsAppNumber    = request.WhatsAppNumber.Trim();
+                if (request.SocialHandle      is not null) merchant.SocialHandle      = request.SocialHandle.Trim();
+                if (request.IdNumber          is not null) merchant.IdNumber          = request.IdNumber.Trim();
+                if (request.Province          is not null) merchant.Province          = request.Province.Trim();
+                if (request.City              is not null) merchant.City              = request.City.Trim();
+                if (request.AddressLine1      is not null) merchant.AddressLine1      = request.AddressLine1.Trim();
+                if (request.Suburb            is not null) merchant.Suburb            = request.Suburb.Trim();
+                if (request.PostalCode        is not null) merchant.PostalCode        = request.PostalCode.Trim();
+                if (request.Country           is not null) merchant.Country           = request.Country.Trim();
+                if (request.CountryCode       is not null)
+                    merchant.CountryCode = string.IsNullOrWhiteSpace(request.CountryCode)
+                        ? null
+                        : request.CountryCode.Trim().ToUpperInvariant();
+                if (request.Latitude          is not null) merchant.Latitude          = request.Latitude;
+                if (request.Longitude         is not null) merchant.Longitude         = request.Longitude;
+                if (request.GooglePlaceId     is not null) merchant.GooglePlaceId     = request.GooglePlaceId.Trim();
+                if (request.FormattedAddress  is not null) merchant.FormattedAddress  = request.FormattedAddress.Trim();
+                if (request.WebsiteUrl        is not null) merchant.WebsiteUrl        = request.WebsiteUrl.Trim();
+                if (request.LogoUrl           is not null) merchant.LogoUrl           = request.LogoUrl.Trim();
+                if (request.BannerUrl         is not null) merchant.BannerUrl         = request.BannerUrl.Trim();
                 merchant.UpdatedAtUtc = DateTime.UtcNow;
 
                 _merchantRepository.Update(merchant);

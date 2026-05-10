@@ -7,11 +7,20 @@ namespace ZansiHustle.Application.Merchants.Dtos
     /// Request model used by a seller to update a shop they own.
     /// Cannot change Status, KYC, payout eligibility, or ownership.
     /// </summary>
+    /// <remarks>
+    /// PATCH semantics: every field is nullable, and the service only
+    /// assigns a property when the caller supplied a value (i.e.
+    /// non-null). This lets focused screens — e.g. StorePhotos
+    /// updating just <c>LogoUrl</c> / <c>BannerUrl</c>, or
+    /// StoreDetails updating contact + address only — avoid round-
+    /// tripping the whole merchant payload (which previously caused
+    /// omitted fields to be nulled out).
+    /// </remarks>
     public class UpdateMyMerchantRequestDto
     {
-        public string Name { get; set; } = string.Empty;
+        public string? Name { get; set; }
         public string? Description { get; set; }
-        public MerchantType Type { get; set; }
+        public MerchantType? Type { get; set; }
         public Guid? SellerCategoryId { get; set; }
         public Guid? SellerSubcategoryId { get; set; }
         public string? ContactEmail { get; set; }
