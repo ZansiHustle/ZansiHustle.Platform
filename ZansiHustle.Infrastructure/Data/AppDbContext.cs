@@ -18,6 +18,7 @@ using ZansiHustle.Domain.Orders;
 using ZansiHustle.Domain.Payments;
 using ZansiHustle.Domain.Podcasts;
 using ZansiHustle.Domain.Referrals;
+using ZansiHustle.Domain.Reviews;
 using ZansiHustle.Domain.SellerCategories;
 using ZansiHustle.Domain.SellerLeads;
 
@@ -135,4 +136,7 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
 
     // ── Shared media / blob-metadata system ───────────────────────────────
     public DbSet<MediaAsset> MediaAssets => Set<MediaAsset>();
+
+    // ── Polymorphic reviews (Store / Shop / Product / Service) ────────────
+    public DbSet<Review> Reviews => Set<Review>();
 }
