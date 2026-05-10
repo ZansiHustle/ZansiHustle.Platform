@@ -174,6 +174,16 @@ namespace ZansiHustle.Application.Listings
                         "InStoreOnly listings require a physical-store merchant.");
                 }
 
+                // Defensive guard against bad image strings. Mobile
+                // clients now upload to R2 before saving, but earlier
+                // builds were persisting picker URIs (`blob:`,
+                // `file:`, raw UUIDs) directly. Reject anything that
+                // isn't an absolute http(s) URL so the data layer is
+                // self-protecting regardless of client version.
+                var imageCheck = ValidateImageUrls(request.Images);
+                if (!imageCheck.IsSuccess)
+                    return Result<ListingDto>.Failure(imageCheck.Code, imageCheck.Message);
+
                 var listing = new Listing
                 {
                     Id = Guid.NewGuid(),
@@ -272,7 +282,15 @@ namespace ZansiHustle.Application.Listings
                 listing.City = request.City?.Trim();
 
                 if (request.Images is not null)
-                    listing.Images = request.Images.Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).ToList();
+                {
+                    var updateImageCheck = ValidateImageUrls(request.Images);
+                    if (!updateImageCheck.IsSuccess)
+                        return Result<ListingDto>.Failure(updateImageCheck.Code, updateImageCheck.Message);
+                    listing.Images = request.Images
+                        .Where(s => !string.IsNullOrWhiteSpace(s))
+                        .Select(s => s.Trim())
+                        .ToList();
+                }
 
                 if (request.Status.HasValue)
                     listing.Status = request.Status.Value;
@@ -382,6 +400,35 @@ namespace ZansiHustle.Application.Listings
 
                 if (categoryId.HasValue && sub.SellerCategoryId != categoryId.Value)
                     return Result.Failure(ErrorCodes.BadRequest, "The selected subcategory does not belong to the selected category.");
+            }
+
+            return Result.Success();
+        }
+
+        /// <summary>
+        /// Reject image strings that aren't absolute http(s) URLs. Catches
+        /// legacy mobile clients that may have shipped picker URIs
+        /// (`blob:`, `file:`, `content:`) or raw media-asset UUIDs
+        /// directly into the listing payload — those values were never
+        /// uploaded to R2 and would 404 on every cross-session render.
+        /// New clients upload via `uploadMediaAsset` first; this guard
+        /// is the data layer's belt-and-braces.
+        /// </summary>
+        private static Result ValidateImageUrls(IEnumerable<string>? images)
+        {
+            if (images is null) return Result.Success();
+
+            foreach (var raw in images)
+            {
+                if (string.IsNullOrWhiteSpace(raw)) continue;
+                var trimmed = raw.Trim();
+                var lower = trimmed.ToLowerInvariant();
+                if (!lower.StartsWith("http://") && !lower.StartsWith("https://"))
+                {
+                    return Result.Failure(
+                        ErrorCodes.BadRequest,
+                        "Listing images must be uploaded before saving — only http(s) URLs are accepted.");
+                }
             }
 
             return Result.Success();
