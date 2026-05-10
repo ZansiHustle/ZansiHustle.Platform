@@ -65,6 +65,23 @@ namespace ZansiHustle.API.Storage
             _logger.LogInformation(
                 "[Media] R2 adapter initialised. endpoint={Endpoint} private={Private} public={Public} publicBaseUrl={PublicBaseUrl}",
                 endpoint, _privateBucket, _publicBucket, _publicBaseUrl ?? "(signed)");
+
+            // Operational guard: when PublicBaseUrl is unset, every public
+            // asset (product/service imagery, shop logo, shop banner,
+            // marketplace photos) is persisted as a 7-day SigV4 URL keyed
+            // off `cloudflarestorage.com`. After 7 days the signature
+            // expires and any listing carrying the URL renders broken.
+            // StorageUrlResolver re-signs these on read, but the read
+            // path can only fix consumers that go through the resolver —
+            // so this is also operationally undesirable (signature churn
+            // defeats CDN/image caches). Configure
+            // `Storage:R2:PublicBaseUrl` so reads return the stable
+            // `pub-{hash}.r2.dev` form and the asset URL is permanent.
+            if (string.IsNullOrWhiteSpace(_publicBaseUrl))
+            {
+                _logger.LogWarning(
+                    "[Media] Storage:R2:PublicBaseUrl is not set. Public assets (product/service images, shop logo/banner) will be stored as 7-day signed URLs. Configure Storage__R2__PublicBaseUrl (e.g. https://pub-{{hash}}.r2.dev or your CDN domain) to persist stable URLs.");
+            }
         }
 
         // Public-asset Cache-Control. Storage keys are guaranteed unique

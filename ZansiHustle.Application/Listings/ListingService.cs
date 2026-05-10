@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using ZansiHustle.Application.Common.Paging;
 using ZansiHustle.Application.Listings.Dtos;
+using ZansiHustle.Application.Media.Storage;
 using ZansiHustle.Application.Persistence.Listings;
 using ZansiHustle.Application.Persistence.Merchants;
 using ZansiHustle.Application.Persistence.SellerCategories;
@@ -24,13 +25,20 @@ namespace ZansiHustle.Application.Listings
         private readonly IListingRepository _listingRepository;
         private readonly IMerchantRepository _merchantRepository;
         private readonly ISellerCategoryRepository _sellerCategoryRepository;
+        private readonly IStorageUrlResolver _storageUrlResolver;
         private readonly ILogger<ListingService> _logger;
 
-        public ListingService(IListingRepository listingRepository, IMerchantRepository merchantRepository, ISellerCategoryRepository sellerCategoryRepository, ILogger<ListingService> logger)
+        public ListingService(
+            IListingRepository listingRepository,
+            IMerchantRepository merchantRepository,
+            ISellerCategoryRepository sellerCategoryRepository,
+            IStorageUrlResolver storageUrlResolver,
+            ILogger<ListingService> logger)
         {
             _listingRepository = listingRepository;
             _merchantRepository = merchantRepository;
             _sellerCategoryRepository = sellerCategoryRepository;
+            _storageUrlResolver = storageUrlResolver;
             _logger = logger;
         }
 
@@ -46,9 +54,13 @@ namespace ZansiHustle.Application.Listings
                 var page = filter.Page <= 0 ? 1 : filter.Page;
                 var pageSize = filter.PageSize <= 0 ? 20 : (filter.PageSize > 100 ? 100 : filter.PageSize);
 
+                var mapped = new List<ListingListItemDto>(items.Count);
+                foreach (var item in items)
+                    mapped.Add(await MapToListItemAsync(item));
+
                 var data = new PagedResult<ListingListItemDto>
                 {
-                    Items = items.Select(MapToListItem).ToList(),
+                    Items = mapped,
                     Total = total,
                     Page = page,
                     PageSize = pageSize
@@ -73,7 +85,7 @@ namespace ZansiHustle.Application.Listings
                 if (listing is null)
                     return Result<ListingDto>.Failure(ErrorCodes.NotFound, "Listing not found.");
 
-                return Result<ListingDto>.Success(MapToDto(listing), "Listing retrieved successfully.");
+                return Result<ListingDto>.Success(await MapToDtoAsync(listing), "Listing retrieved successfully.");
             }
             catch (Exception ex)
             {
@@ -93,7 +105,9 @@ namespace ZansiHustle.Application.Listings
                     return Result<List<ListingListItemDto>>.Failure(ErrorCodes.NotFound, "Shop not found.");
 
                 var listings = await _listingRepository.GetByMerchantAsync(merchantId);
-                var data = listings.Select(MapToListItem).ToList();
+                var data = new List<ListingListItemDto>(listings.Count);
+                foreach (var item in listings)
+                    data.Add(await MapToListItemAsync(item));
 
                 return Result<List<ListingListItemDto>>.Success(data, "Shop listings retrieved successfully.");
             }
@@ -110,7 +124,9 @@ namespace ZansiHustle.Application.Listings
             try
             {
                 var listings = await _listingRepository.GetByOwnerAsync(ownerUserId);
-                var data = listings.Select(MapToListItem).ToList();
+                var data = new List<ListingListItemDto>(listings.Count);
+                foreach (var item in listings)
+                    data.Add(await MapToListItemAsync(item));
 
                 return Result<List<ListingListItemDto>>.Success(data, "Your listings retrieved successfully.");
             }
@@ -231,7 +247,7 @@ namespace ZansiHustle.Application.Listings
                     return Result<ListingDto>.Failure(ErrorCodes.Exception, "Failed to create listing.");
 
                 var reloaded = await _listingRepository.GetByIdAsync(listing.Id);
-                return Result<ListingDto>.Success(MapToDto(reloaded ?? listing), "Listing created successfully.");
+                return Result<ListingDto>.Success(await MapToDtoAsync(reloaded ?? listing), "Listing created successfully.");
             }
             catch (Exception ex)
             {
@@ -341,7 +357,7 @@ namespace ZansiHustle.Application.Listings
                     return Result<ListingDto>.Failure(ErrorCodes.Exception, "Failed to update listing.");
 
                 var reloaded = await _listingRepository.GetByIdAsync(listing.Id);
-                return Result<ListingDto>.Success(MapToDto(reloaded ?? listing), "Listing updated successfully.");
+                return Result<ListingDto>.Success(await MapToDtoAsync(reloaded ?? listing), "Listing updated successfully.");
             }
             catch (Exception ex)
             {
@@ -517,8 +533,36 @@ namespace ZansiHustle.Application.Listings
             return cleaned.Count == 0 ? null : cleaned;
         }
 
-        private static ListingDto MapToDto(Listing listing)
+        /// <summary>
+        /// Refresh every stored image URL through <see cref="IStorageUrlResolver"/>.
+        /// Mirrors the pattern in <c>MarketplaceListingService.MapDtoAsync</c> and
+        /// <c>MerchantService</c>: the resolver is a no-op for permanent
+        /// CDN URLs (<c>Storage:R2:PublicBaseUrl</c> set) and re-issues a
+        /// fresh signed URL for legacy <c>cloudflarestorage.com</c> rows
+        /// or expired LocalFilesystem signed URLs. Without this step,
+        /// stored URLs that signed at upload time go 403 once the TTL
+        /// expires and the listing's image grid silently breaks.
+        /// </summary>
+        private async Task<List<string>> ResolveImagesAsync(Listing listing)
         {
+            var raw = listing.Images ?? new List<string>();
+            if (raw.Count == 0) return new List<string>();
+
+            var resolved = new List<string>(raw.Count);
+            foreach (var img in raw)
+            {
+                var refreshed = await _storageUrlResolver.RefreshAsync(img) ?? img;
+                _logger.LogDebug(
+                    "[ListingImageResolver] listing={ListingId} stored={Stored} resolved={Resolved}",
+                    listing.Id, img, refreshed);
+                resolved.Add(refreshed);
+            }
+            return resolved;
+        }
+
+        private async Task<ListingDto> MapToDtoAsync(Listing listing)
+        {
+            var images = await ResolveImagesAsync(listing);
             return new ListingDto
             {
                 Id = listing.Id,
@@ -541,7 +585,7 @@ namespace ZansiHustle.Application.Listings
                 SellerSubcategoryName = listing.SellerSubcategory?.Name,
                 Province = listing.Province,
                 City = listing.City,
-                Images = listing.Images ?? new List<string>(),
+                Images = images,
                 IsFeatured = listing.IsFeatured,
                 IsBoosted = listing.IsBoosted,
                 // Source-of-truth correction — same as MerchantService
@@ -562,8 +606,9 @@ namespace ZansiHustle.Application.Listings
             };
         }
 
-        private static ListingListItemDto MapToListItem(Listing listing)
+        private async Task<ListingListItemDto> MapToListItemAsync(Listing listing)
         {
+            var images = await ResolveImagesAsync(listing);
             return new ListingListItemDto
             {
                 Id = listing.Id,
@@ -581,7 +626,7 @@ namespace ZansiHustle.Application.Listings
                 SellerCategoryName = listing.SellerCategory?.Name,
                 Province = listing.Province,
                 City = listing.City,
-                Images = listing.Images ?? new List<string>(),
+                Images = images,
                 IsFeatured = listing.IsFeatured,
                 IsBoosted = listing.IsBoosted,
                 // Source-of-truth correction — same as MerchantService
