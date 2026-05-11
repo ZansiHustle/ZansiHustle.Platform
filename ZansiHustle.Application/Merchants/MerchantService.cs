@@ -1092,14 +1092,25 @@ namespace ZansiHustle.Application.Merchants
                 BankBranchCode = merchant.BankBranchCode,
                 IsBankVerified = merchant.IsBankVerified,
                 BankUpdatedAtUtc = merchant.BankUpdatedAtUtc,
-                // Derived shop-existence signal. Any of these fields being
-                // populated means the merchant has moved past onboarding
-                // into shop presentation. Frontend reads this directly
-                // instead of re-deriving from individual fields.
-                HasShop =
-                    !string.IsNullOrWhiteSpace(merchant.Description) ||
-                    !string.IsNullOrWhiteSpace(merchant.LogoUrl) ||
-                    !string.IsNullOrWhiteSpace(merchant.BannerUrl),
+                // Derived shop-existence signal. INTERIM: a merchant counts
+                // as a "shop" only when its LogoUrl is set. Before this
+                // tighten the signal was "any of Description / LogoUrl /
+                // BannerUrl is set", which mis-counted every approved
+                // seller because SellerSetup at application time already
+                // captures Description — so newly-approved sellers were
+                // auto-promoted into the Shops surface (app My Shop +
+                // Portal /shops) without ever opting in.
+                //
+                // The right long-term model is a dedicated
+                // `HasShopProfile` BIT column on Merchant that the
+                // seller flips intentionally via a "Set up your shop"
+                // flow. Until that migration lands, requiring LogoUrl
+                // (which SellerSetup leaves empty unless the seller
+                // explicitly uploads a logo, which they never do during
+                // approval onboarding) is the safest interim signal:
+                // the seller has to deliberately upload branding to
+                // count as a shop.
+                HasShop = !string.IsNullOrWhiteSpace(merchant.LogoUrl),
                 FollowersCount = merchant.FollowersCount,
                 // Source-of-truth correction: when a merchant has zero
                 // reviews, `Rating` is meaningless (cached stale value
