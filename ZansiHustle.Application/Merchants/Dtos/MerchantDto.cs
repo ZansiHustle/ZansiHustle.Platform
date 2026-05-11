@@ -46,14 +46,6 @@ namespace ZansiHustle.Application.Merchants.Dtos
         public string? WebsiteUrl { get; set; }
         public string? LogoUrl { get; set; }
         public string? BannerUrl { get; set; }
-        /// <summary>
-        /// True when the merchant has enough shop-specific data on record
-        /// to be considered to have an "active shop" — today that means
-        /// any of Description, LogoUrl, BannerUrl is populated. Derived
-        /// server-side so the portal doesn't have to guess and so the
-        /// value stays stable across devices/sessions.
-        /// </summary>
-        public bool HasShop { get; set; }
 
         /// <summary>Bank / payout details.</summary>
         public string? BankName { get; set; }

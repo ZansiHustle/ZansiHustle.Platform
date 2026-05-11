@@ -20,6 +20,7 @@ using ZansiHustle.Domain.Podcasts;
 using ZansiHustle.Domain.Referrals;
 using ZansiHustle.Domain.Reviews;
 using ZansiHustle.Domain.SellerCategories;
+using ZansiHustle.Domain.Shops;
 using ZansiHustle.Domain.SellerLeads;
 
 namespace ZansiHustle.Infrastructure.Data;
@@ -139,4 +140,7 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
 
     // ── Polymorphic reviews (Store / Shop / Product / Service) ────────────
     public DbSet<Review> Reviews => Set<Review>();
+
+    // ── Shop storefronts (decoupled from Merchant; see ShopProfile) ──
+    public DbSet<ShopProfile> ShopProfiles => Set<ShopProfile>();
 }

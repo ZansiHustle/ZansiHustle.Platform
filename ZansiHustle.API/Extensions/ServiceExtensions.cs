@@ -460,6 +460,9 @@ public static class ServiceExtensions
         services.AddScoped<
             ZansiHustle.Application.Persistence.Reviews.IReviewRepository,
             ZansiHustle.Infrastructure.Persistence.Reviews.ReviewRepository>();
+        services.AddScoped<
+            ZansiHustle.Application.Persistence.Shops.IShopProfileRepository,
+            ZansiHustle.Infrastructure.Persistence.Shops.ShopProfileRepository>();
         services.AddScoped<IOrderRepository, OrderRepository>();
         services.AddScoped<IEventPlanRepository, EventPlanRepository>();
         services.AddScoped<IValuationRepository, ValuationRepository>();
@@ -492,6 +495,9 @@ public static class ServiceExtensions
         services.AddScoped<
             ZansiHustle.Application.Reviews.IReviewService,
             ZansiHustle.Application.Reviews.ReviewService>();
+        services.AddScoped<
+            ZansiHustle.Application.Shops.IShopProfileService,
+            ZansiHustle.Application.Shops.ShopProfileService>();
         services.AddScoped<IOrderService, OrderService>();
         services.AddScoped<IPaymentRepository, PaymentRepository>();
         services.AddScoped<IPaymentService, PaymentService>();
