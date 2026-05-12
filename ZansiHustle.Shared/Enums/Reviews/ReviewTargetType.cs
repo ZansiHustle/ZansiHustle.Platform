@@ -5,16 +5,21 @@ namespace ZansiHustle.Shared.Enums.Reviews
     /// table backs every reviewable surface (Store, Shop, Product,
     /// Service) — the (TargetType, TargetId) pair scopes the review.
     ///
-    /// V1 implements `Store` fully. The other values are reserved so
-    /// future review surfaces (online shop, individual product /
-    /// service listings) plug in without a schema change.
+    /// Currently implemented: Store (PhysicalStore merchant) and Shop
+    /// (ShopProfile storefront). Product / Service targets are
+    /// reserved — adding them is target-validation + aggregate-refresh
+    /// work in <c>ReviewService</c>, no schema change needed.
     /// </summary>
     public enum ReviewTargetType
     {
-        /// <summary>Review of a PhysicalStore merchant. (V1.)</summary>
+        /// <summary>Review of a PhysicalStore merchant. TargetId = Merchant.Id.</summary>
         Store = 1,
 
-        /// <summary>Review of an OnlineStore merchant. (Reserved.)</summary>
+        /// <summary>
+        /// Review of an OnlineStore storefront. TargetId = ShopProfile.Id
+        /// (NOT the owning Merchant.Id — owner lookup goes through
+        /// ShopProfile.MerchantId at validation time).
+        /// </summary>
         Shop = 2,
 
         /// <summary>Review of an individual product Listing. (Reserved.)</summary>

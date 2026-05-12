@@ -40,6 +40,14 @@ namespace ZansiHustle.Infrastructure.Persistence.Shops
             entity.Property(x => x.BillingReference).HasMaxLength(200);
             entity.Property(x => x.SuspensionReason).HasMaxLength(500);
 
+            // Review aggregates. Same precision as Merchant.Rating so a
+            // single decimal projection works across both surfaces.
+            // ReviewCount gets an explicit 0 default to keep "no reviews
+            // yet" arithmetic correct on freshly-created shops without
+            // a follow-up update.
+            entity.Property(x => x.Rating).HasPrecision(5, 2);
+            entity.Property(x => x.ReviewCount).HasDefaultValue(0);
+
             entity.Property(x => x.CreatedAtUtc).IsRequired();
 
             // Slug must be globally unique — used in public URLs.

@@ -42,6 +42,9 @@ namespace ZansiHustle.Application.Shops.Dtos
         public DateTime? SuspendedAtUtc { get; set; }
         public string? SuspensionReason { get; set; }
 
+        public decimal? Rating { get; set; }
+        public int ReviewCount { get; set; }
+
         public DateTime CreatedAtUtc { get; set; }
         public DateTime? UpdatedAtUtc { get; set; }
     }

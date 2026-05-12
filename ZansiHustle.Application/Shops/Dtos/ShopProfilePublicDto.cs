@@ -22,5 +22,11 @@ namespace ZansiHustle.Application.Shops.Dtos
         public string? SellerSubcategoryName { get; set; }
         public string? Province { get; set; }
         public string? City { get; set; }
+
+        // Review aggregates surfaced to buyers. Null Rating + 0
+        // ReviewCount means "no reviews yet" — the client renders an
+        // empty-state pill rather than "0.0 (0)".
+        public decimal? Rating { get; set; }
+        public int ReviewCount { get; set; }
     }
 }

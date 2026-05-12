@@ -406,6 +406,8 @@ namespace ZansiHustle.Application.Shops
                 ActivatedAtUtc = s.ActivatedAtUtc,
                 SuspendedAtUtc = s.SuspendedAtUtc,
                 SuspensionReason = s.SuspensionReason,
+                Rating = s.Rating,
+                ReviewCount = s.ReviewCount,
                 CreatedAtUtc = s.CreatedAtUtc,
                 UpdatedAtUtc = s.UpdatedAtUtc,
             };
@@ -439,6 +441,8 @@ namespace ZansiHustle.Application.Shops
                 SellerSubcategoryName = subcategoryName,
                 Province = s.Province,
                 City = s.City,
+                Rating = s.Rating,
+                ReviewCount = s.ReviewCount,
             };
         }
 

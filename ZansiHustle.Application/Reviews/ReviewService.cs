@@ -5,10 +5,12 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using ZansiHustle.Application.Persistence.Merchants;
 using ZansiHustle.Application.Persistence.Reviews;
+using ZansiHustle.Application.Persistence.Shops;
 using ZansiHustle.Application.Reviews.Dtos;
 using ZansiHustle.Domain.Reviews;
 using ZansiHustle.Shared.Enums.Merchants;
 using ZansiHustle.Shared.Enums.Reviews;
+using ZansiHustle.Shared.Enums.Shops;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
 
@@ -29,15 +31,18 @@ namespace ZansiHustle.Application.Reviews
     {
         private readonly IReviewRepository _reviews;
         private readonly IMerchantRepository _merchants;
+        private readonly IShopProfileRepository _shops;
         private readonly ILogger<ReviewService> _logger;
 
         public ReviewService(
             IReviewRepository reviews,
             IMerchantRepository merchants,
+            IShopProfileRepository shops,
             ILogger<ReviewService> logger)
         {
             _reviews = reviews;
             _merchants = merchants;
+            _shops = shops;
             _logger = logger;
         }
 
@@ -304,6 +309,37 @@ namespace ZansiHustle.Application.Reviews
                 }
 
                 case ReviewTargetType.Shop:
+                {
+                    // Buyer-facing storefront. Distinct from Store
+                    // (PhysicalStore merchant) — the targetId here is a
+                    // ShopProfile id, not a Merchant id. We still resolve
+                    // ownership via the shop's owning merchant since the
+                    // OwnerUserId lives on Merchant, not ShopProfile.
+                    var shop = await _shops.GetByIdAsync(targetId);
+                    if (shop is null)
+                        return Result.Failure(ErrorCodes.NotFound, "Shop not found.");
+
+                    if (shop.Status != ShopProfileStatus.Active)
+                        return Result.Failure(
+                            ErrorCodes.BadRequest,
+                            "This shop isn't accepting reviews yet.");
+
+                    var shopOwner = await _merchants.GetByIdAsync(shop.MerchantId);
+                    // A shop can't exist without its owning merchant (FK
+                    // is Restrict on delete), but treat a missing owner
+                    // as not-found rather than a 500 — it would be a
+                    // data-corruption case, not a user error.
+                    if (shopOwner is null)
+                        return Result.Failure(ErrorCodes.NotFound, "Shop owner not found.");
+
+                    if (shopOwner.OwnerUserId == currentUserId)
+                        return Result.Failure(
+                            ErrorCodes.Forbidden,
+                            "You can't review your own shop.");
+
+                    return Result.Success();
+                }
+
                 case ReviewTargetType.Product:
                 case ReviewTargetType.Service:
                     return Result.Failure(
@@ -336,20 +372,44 @@ namespace ZansiHustle.Application.Reviews
         /// </summary>
         private async Task RefreshAggregateAsync(ReviewTargetType targetType, Guid targetId)
         {
-            if (targetType != ReviewTargetType.Store) return;
+            // Compute the post-save summary once, then update whichever
+            // aggregate table the targetType points at. Product / Service
+            // targets currently have no aggregate row to refresh (Listing
+            // aggregates ship when those review surfaces enable) so we
+            // bail out early for them.
+            if (targetType != ReviewTargetType.Store && targetType != ReviewTargetType.Shop)
+                return;
 
             var (avg, count) = await _reviews.GetSummaryAsync(targetType, targetId);
 
-            var merchant = await _merchants.GetByIdAsync(targetId);
-            if (merchant is null) return;
-            merchant.Rating = avg;
-            merchant.ReviewCount = count;
-            _merchants.Update(merchant);
-            // MerchantRepository.Update doesn't itself save — calling
-            // through to its SaveChangesAsync flushes the change in
-            // the same DbContext (scoped per-request, shared with
-            // ReviewRepository above).
-            await _merchants.SaveChangesAsync();
+            switch (targetType)
+            {
+                case ReviewTargetType.Store:
+                {
+                    var merchant = await _merchants.GetByIdAsync(targetId);
+                    if (merchant is null) return;
+                    merchant.Rating = avg;
+                    merchant.ReviewCount = count;
+                    _merchants.Update(merchant);
+                    // MerchantRepository.Update doesn't itself save —
+                    // calling through to its SaveChangesAsync flushes
+                    // the change in the same DbContext (scoped per
+                    // request, shared with ReviewRepository above).
+                    await _merchants.SaveChangesAsync();
+                    return;
+                }
+
+                case ReviewTargetType.Shop:
+                {
+                    var shop = await _shops.GetByIdAsync(targetId);
+                    if (shop is null) return;
+                    shop.Rating = avg;
+                    shop.ReviewCount = count;
+                    _shops.Update(shop);
+                    await _shops.SaveChangesAsync();
+                    return;
+                }
+            }
         }
 
         // ── Projection helpers ───────────────────────────────────────

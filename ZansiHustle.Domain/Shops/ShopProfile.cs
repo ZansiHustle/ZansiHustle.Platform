@@ -77,6 +77,15 @@ namespace ZansiHustle.Domain.Shops
         public DateTime? SuspendedAtUtc { get; set; }
         public string? SuspensionReason { get; set; }
 
+        // Denormalised review aggregates. Mirrors the same pattern used
+        // on Merchant.Rating / Merchant.ReviewCount: the canonical source
+        // is the Reviews table, but the buyer-facing DTOs need a snappy
+        // "4.7 (12)" without a join per row. ReviewService refreshes
+        // these in the same DbContext after every create / update /
+        // delete (see RefreshAggregateAsync) — never edited manually.
+        public decimal? Rating { get; set; }
+        public int ReviewCount { get; set; }
+
         public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
         public DateTime? UpdatedAtUtc { get; set; }
     }
