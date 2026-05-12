@@ -226,7 +226,23 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
         {
             ArgumentNullException.ThrowIfNull(listing);
 
-            _context.Listings.Update(listing);
+            // CRITICAL: only attach via DbSet.Update when the entity is
+            // detached. Calling `_context.Listings.Update(trackedListing)`
+            // runs a graph traversal that *re-marks every reachable
+            // entity as Modified, including new child rows we just
+            // added via `listing.Variants.Add(new ListingVariant {...})`
+            // in ApplyVariantDiff. EF then tries to UPDATE the freshly-
+            // added variant by its PK, the row doesn't exist yet, and
+            // SaveChanges throws DbUpdateConcurrencyException ("1 row
+            // expected, 0 affected"). The service flow always loads
+            // via the same context (tracked), so this branch is a
+            // no-op for our hot path — the change tracker has already
+            // captured the scalar edits + the variant diff.
+            var entry = _context.Entry(listing);
+            if (entry.State == EntityState.Detached)
+            {
+                _context.Listings.Update(listing);
+            }
         }
 
         /// <inheritdoc />

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using ZansiHustle.Application.Common.Paging;
 using ZansiHustle.Application.Listings.Dtos;
@@ -462,13 +463,45 @@ namespace ZansiHustle.Application.Listings
                     if (!variantCheck.IsSuccess)
                         return Result<ListingDto>.Failure(variantCheck.Code, variantCheck.Message);
 
-                    ApplyVariantDiff(listing, request.Variants);
+                    var diffCheck = ApplyVariantDiff(listing, request.Variants);
+                    if (!diffCheck.IsSuccess)
+                        return Result<ListingDto>.Failure(diffCheck.Code, diffCheck.Message);
                 }
 
                 listing.UpdatedAtUtc = DateTime.UtcNow;
 
-                _listingRepository.Update(listing);
-                var saved = await _listingRepository.SaveChangesAsync();
+                // No DbSet.Update() on the tracked listing — the change
+                // tracker already has every scalar edit + the variant
+                // diff (Add for new rows, Modified for matched rows,
+                // Deleted for orphans). Calling Update() here would
+                // re-mark Added variants as Modified, causing EF to
+                // generate an UPDATE for a non-existent row and throw
+                // a DbUpdateConcurrencyException ("1 row expected, 0
+                // affected"). See ListingRepository.Update() doc for
+                // the full incident note.
+                bool saved;
+                try
+                {
+                    saved = await _listingRepository.SaveChangesAsync();
+                }
+                catch (DbUpdateConcurrencyException ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Concurrency conflict updating listing {ListingId}. Affected entries: {Entries}",
+                        listingId,
+                        string.Join(",", ex.Entries.Select(e => e.Entity.GetType().Name)));
+                    return Result<ListingDto>.Failure(
+                        ErrorCodes.Conflict,
+                        "This listing was updated or deleted in another session. Refresh and try again.");
+                }
+                catch (DbUpdateException ex)
+                {
+                    _logger.LogError(ex, "Database error updating listing {ListingId}.", listingId);
+                    return Result<ListingDto>.Failure(
+                        ErrorCodes.Exception,
+                        "Could not save your listing. Please try again.");
+                }
 
                 if (!saved)
                     return Result<ListingDto>.Failure(ErrorCodes.Exception, "Failed to update listing.");
@@ -763,8 +796,13 @@ namespace ZansiHustle.Application.Listings
         /// new rows; delete existing rows that are absent from the
         /// request. Keeps variant ids stable for unchanged rows so
         /// future cart / wishlist references survive an edit.
+        ///
+        /// Returns a <see cref="Result"/> rather than void so a request
+        /// referencing a variant id that doesn't belong to this listing
+        /// surfaces as a clean 404 instead of silently re-inserting the
+        /// row (the silent path masks stale-client-state bugs).
         /// </summary>
-        private static void ApplyVariantDiff(
+        private static Result ApplyVariantDiff(
             Listing listing, List<ListingVariantRequestDto> incoming)
         {
             var now = DateTime.UtcNow;
@@ -774,12 +812,24 @@ namespace ZansiHustle.Application.Listings
 
             foreach (var v in incoming)
             {
-                // Match by id when supplied. A request id that doesn't
-                // match the listing's existing variants is treated as a
-                // fresh insert (defensive — could happen if the seller
-                // re-saves stale client state after a delete).
-                if (v.Id is Guid id && id != Guid.Empty && existingById.TryGetValue(id, out var existing))
+                if (v.Id is Guid id && id != Guid.Empty)
                 {
+                    // Client claims this id exists on this listing. If
+                    // it doesn't, that's a stale-state or wrong-listing
+                    // mismatch — surface it rather than silently
+                    // promoting the row to a new insert.
+                    if (!existingById.TryGetValue(id, out var existing))
+                    {
+                        return Result.Failure(
+                            ErrorCodes.NotFound,
+                            $"Variant {id} doesn't belong to this listing. Refresh and try again.");
+                    }
+                    if (seenIds.Contains(id))
+                    {
+                        return Result.Failure(
+                            ErrorCodes.BadRequest,
+                            $"Variant {id} appears more than once in the request.");
+                    }
                     existing.Name = v.Name.Trim();
                     existing.Description = string.IsNullOrWhiteSpace(v.Description) ? null : v.Description.Trim();
                     existing.UsesCustomPrice = v.UsesCustomPrice;
@@ -793,6 +843,9 @@ namespace ZansiHustle.Application.Listings
                 }
                 else
                 {
+                    // No id supplied → fresh insert. Don't reuse a
+                    // client-provided GUID even if present; the server
+                    // is authoritative on variant identity.
                     listing.Variants.Add(new ListingVariant
                     {
                         Id = Guid.NewGuid(),
@@ -813,13 +866,17 @@ namespace ZansiHustle.Application.Listings
             }
 
             // Anything in the existing collection that wasn't matched
-            // by an incoming id is a deletion. The cascade FK in the
-            // EF config ensures the rows actually drop on save.
+            // by an incoming id is a deletion. Removing from the
+            // tracked navigation collection flags the child as Deleted
+            // — the required FK + cascade config issues the DELETE on
+            // SaveChanges.
             var toRemove = listing.Variants
                 .Where(v => existingById.ContainsKey(v.Id) && !seenIds.Contains(v.Id))
                 .ToList();
             foreach (var v in toRemove)
                 listing.Variants.Remove(v);
+
+            return Result.Success();
         }
 
         private static ListingVariantDto MapVariantToDto(ListingVariant variant)
