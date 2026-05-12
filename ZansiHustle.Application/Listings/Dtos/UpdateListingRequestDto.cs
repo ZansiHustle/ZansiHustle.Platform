@@ -46,13 +46,26 @@ namespace ZansiHustle.Application.Listings.Dtos
         public List<string>? BookingMethods { get; set; }
 
         /// <summary>
-        /// Variant set after the update. Omit / send null to leave the
-        /// existing variants untouched. Send an empty list to clear all
-        /// variants. Diff semantics: variants with a matching <c>Id</c>
-        /// are updated in place; rows without an <c>Id</c> (or with one
-        /// that doesn't match an existing variant of this listing) are
-        /// inserted; existing variants absent from the request are
-        /// removed.
+        /// Variant set after the update.
+        ///
+        ///   • <c>null</c> / omitted → existing variants untouched.
+        ///   • <c>[]</c>             → all existing variants are deleted.
+        ///   • non-empty             → existing variants are REPLACED
+        ///                             wholesale with this list.
+        ///
+        /// REPLACE semantics, NOT a diff. Any <c>Id</c> field on an
+        /// incoming variant is ignored — the server issues fresh PKs
+        /// for every row. The previous diff-by-id strategy produced
+        /// false <c>DbUpdateConcurrencyException</c>s on normal edits
+        /// when the tracker / navigation-collection state got tangled
+        /// between matched-Modified and Added rows in the same
+        /// SaveChanges. Wholesale replace is atomic (single transaction)
+        /// and tracker-free.
+        ///
+        /// Trade-off: variant ids are not stable across an update.
+        /// Acceptable today — no order / cart / wishlist references
+        /// variant ids yet. Buyers always refetch listing detail after
+        /// a seller save, so the new ids land naturally.
         /// </summary>
         public List<ListingVariantRequestDto>? Variants { get; set; }
     }

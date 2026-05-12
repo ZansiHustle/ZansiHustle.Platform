@@ -453,37 +453,52 @@ namespace ZansiHustle.Application.Listings
                         listing.BookingMethods = Clean(request.BookingMethods);
                 }
 
-                // Variants: null in the request means "leave variants
-                // untouched". A non-null list — empty included — means
-                // "replace the set with this exact list, diffing by id
-                // where possible so unchanged rows keep their ids".
+                // Variants: null in the request → leave variants
+                // untouched. Non-null (empty included) → REPLACE the
+                // full set. We previously tried a diff-by-id strategy
+                // and it kept producing false DbUpdateConcurrency
+                // failures on perfectly normal edits — the tracker /
+                // navigation-collection state got fragile around new
+                // Added rows + matched Modified rows in the same
+                // SaveChanges. The replace strategy is simpler and
+                // production-safe: ExecuteDelete every row for this
+                // listing, then INSERT the requested set with fresh
+                // server-issued PKs. Wrapped in a single transaction
+                // so a half-replace can't happen.
+                //
+                // Trade-off: variant IDs are NOT stable across an
+                // update. That's acceptable today because no order /
+                // cart / wishlist references variant ids yet; when
+                // those ship we'll move to a soft-delete / versioning
+                // model. For now, the buyer detail screen always
+                // refetches after the seller saves, so it picks up
+                // the new ids automatically.
+                IReadOnlyList<ListingVariant>? newVariants = null;
                 if (request.Variants is not null)
                 {
                     var variantCheck = ValidateVariants(request.Variants);
                     if (!variantCheck.IsSuccess)
                         return Result<ListingDto>.Failure(variantCheck.Code, variantCheck.Message);
 
-                    var diffCheck = ApplyVariantDiff(listing, request.Variants);
-                    if (!diffCheck.IsSuccess)
-                        return Result<ListingDto>.Failure(diffCheck.Code, diffCheck.Message);
+                    // BuildVariantsForCreate already issues fresh Guids
+                    // and ignores any client-supplied `Id` field — same
+                    // function the create path uses. Reusing it keeps
+                    // the variant construction in one place.
+                    newVariants = BuildVariantsForCreate(request.Variants, listing.Id);
                 }
 
                 listing.UpdatedAtUtc = DateTime.UtcNow;
 
-                // No DbSet.Update() call on the tracked listing — change
-                // tracking already has every edit:
-                //   • scalar field assignments  → auto-detected as Modified
-                //   • new variants Added via Variants.Add(...) → tracked as Added
-                //   • variants removed via Variants.Remove(...)  → tracked as Deleted
-                //   • matched-id variant updates                  → auto-detected as Modified
-                // Re-attaching the listing here would re-classify Added
-                // children as Modified, causing EF to issue UPDATE
-                // statements against rows that don't exist yet and throw
-                // DbUpdateConcurrencyException ("expected 1 row, affected 0").
+                // Atomic save: scalar listing changes + variant replace
+                // in one transaction. The repo handles tracker cleanup
+                // around the ExecuteDelete so the navigation collection
+                // doesn't drag stale-tracked entities into SaveChanges.
                 bool saved;
                 try
                 {
-                    saved = await _listingRepository.SaveChangesAsync();
+                    saved = await _listingRepository.SaveListingAndReplaceVariantsAsync(
+                        listing,
+                        newVariants);
                 }
                 catch (DbUpdateConcurrencyException ex)
                 {
@@ -805,94 +820,12 @@ namespace ZansiHustle.Application.Listings
             return result;
         }
 
-        /// <summary>
-        /// Reconcile the persisted variant collection with the
-        /// request: match by id when present, update in place; insert
-        /// new rows; delete existing rows that are absent from the
-        /// request. Keeps variant ids stable for unchanged rows so
-        /// future cart / wishlist references survive an edit.
-        ///
-        /// Returns a <see cref="Result"/> rather than void so a request
-        /// referencing a variant id that doesn't belong to this listing
-        /// surfaces as a clean 404 instead of silently re-inserting the
-        /// row (the silent path masks stale-client-state bugs).
-        /// </summary>
-        private static Result ApplyVariantDiff(
-            Listing listing, List<ListingVariantRequestDto> incoming)
-        {
-            var now = DateTime.UtcNow;
-            var existingById = listing.Variants.ToDictionary(v => v.Id);
-            var seenIds = new HashSet<Guid>();
-            var nextOrder = 0;
-
-            foreach (var v in incoming)
-            {
-                if (v.Id is Guid id && id != Guid.Empty)
-                {
-                    // Client claims this id exists on this listing. If
-                    // it doesn't, that's a stale-state or wrong-listing
-                    // mismatch — surface it rather than silently
-                    // promoting the row to a new insert.
-                    if (!existingById.TryGetValue(id, out var existing))
-                    {
-                        return Result.Failure(
-                            ErrorCodes.NotFound,
-                            $"Variant {id} doesn't belong to this listing. Refresh and try again.");
-                    }
-                    if (seenIds.Contains(id))
-                    {
-                        return Result.Failure(
-                            ErrorCodes.BadRequest,
-                            $"Variant {id} appears more than once in the request.");
-                    }
-                    existing.Name = v.Name.Trim();
-                    existing.Description = string.IsNullOrWhiteSpace(v.Description) ? null : v.Description.Trim();
-                    existing.UsesCustomPrice = v.UsesCustomPrice;
-                    existing.Price = v.UsesCustomPrice ? v.Price : null;
-                    existing.Stock = v.Stock;
-                    existing.Sku = string.IsNullOrWhiteSpace(v.Sku) ? null : v.Sku.Trim();
-                    existing.SortOrder = v.SortOrder == 0 ? nextOrder : v.SortOrder;
-                    existing.IsActive = v.IsActive;
-                    existing.UpdatedAtUtc = now;
-                    seenIds.Add(id);
-                }
-                else
-                {
-                    // No id supplied → fresh insert. Don't reuse a
-                    // client-provided GUID even if present; the server
-                    // is authoritative on variant identity.
-                    listing.Variants.Add(new ListingVariant
-                    {
-                        Id = Guid.NewGuid(),
-                        ListingId = listing.Id,
-                        Name = v.Name.Trim(),
-                        Description = string.IsNullOrWhiteSpace(v.Description) ? null : v.Description.Trim(),
-                        UsesCustomPrice = v.UsesCustomPrice,
-                        Price = v.UsesCustomPrice ? v.Price : null,
-                        Stock = v.Stock,
-                        Sku = string.IsNullOrWhiteSpace(v.Sku) ? null : v.Sku.Trim(),
-                        SortOrder = v.SortOrder == 0 ? nextOrder : v.SortOrder,
-                        IsActive = v.IsActive,
-                        CreatedAtUtc = now,
-                    });
-                }
-
-                nextOrder++;
-            }
-
-            // Anything in the existing collection that wasn't matched
-            // by an incoming id is a deletion. Removing from the
-            // tracked navigation collection flags the child as Deleted
-            // — the required FK + cascade config issues the DELETE on
-            // SaveChanges.
-            var toRemove = listing.Variants
-                .Where(v => existingById.ContainsKey(v.Id) && !seenIds.Contains(v.Id))
-                .ToList();
-            foreach (var v in toRemove)
-                listing.Variants.Remove(v);
-
-            return Result.Success();
-        }
+        // NOTE: ApplyVariantDiff is gone. Variant updates now use a
+        // wholesale-replace strategy via
+        // IListingRepository.SaveListingAndReplaceVariantsAsync — see
+        // the doc comment on that method for the why. Construction of
+        // the new variant entities flows through BuildVariantsForCreate
+        // for both create and update paths.
 
         private static ListingVariantDto MapVariantToDto(ListingVariant variant)
         {

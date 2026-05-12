@@ -27,17 +27,24 @@ namespace ZansiHustle.Application.Listings.Dtos
     }
 
     /// <summary>
-    /// Seller payload for adding or updating a single variant inside
-    /// a create/update listing request. The optional <see cref="Id"/>
-    /// is the diff signal: when supplied AND it matches an existing
-    /// variant of the parent listing, that row is updated in place
-    /// (so client references like cart/wishlist stay stable). When
-    /// omitted (or unmatched), a new variant is inserted. Variants
-    /// missing from the request are removed.
+    /// Seller payload for a single variant inside a create / update
+    /// listing request.
+    ///
+    /// IMPORTANT — replace semantics on update: when this DTO appears
+    /// inside <c>UpdateListingRequestDto.Variants</c>, the entire
+    /// variant set on the listing is REPLACED with the supplied list.
+    /// The optional <see cref="Id"/> field is therefore IGNORED on
+    /// update — the server issues a fresh PK for every row. (The
+    /// field is kept on the wire for symmetry with the read DTO; the
+    /// frontend can omit it on new rows or pass it on existing rows,
+    /// either is accepted but neither is honoured.)
+    ///
+    /// See <see cref="UpdateListingRequestDto.Variants"/> for the
+    /// full rationale on why we switched away from a diff strategy.
     /// </summary>
     public class ListingVariantRequestDto
     {
-        /// <summary>Existing variant id for diff updates. Null/empty = new row.</summary>
+        /// <summary>Ignored on update (variants are replaced wholesale). Null/empty on new rows.</summary>
         public Guid? Id { get; set; }
         public string Name { get; set; } = string.Empty;
         public string? Description { get; set; }

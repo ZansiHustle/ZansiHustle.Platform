@@ -259,6 +259,76 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
             return await _context.SaveChangesAsync() > 0;
         }
 
+        /// <inheritdoc />
+        public async Task<bool> SaveListingAndReplaceVariantsAsync(
+            Listing listing,
+            IReadOnlyList<ListingVariant>? newVariantsOrNull)
+        {
+            ArgumentNullException.ThrowIfNull(listing);
+
+            // Fast path: caller doesn't want to touch variants.
+            if (newVariantsOrNull is null)
+            {
+                return await _context.SaveChangesAsync() > 0;
+            }
+
+            // Atomic variant replace. ExecuteDeleteAsync runs immediately
+            // against the DB (bypasses the change tracker) so we must
+            // wrap it together with the deferred SaveChangesAsync in an
+            // explicit transaction — otherwise a failure between the
+            // delete and the inserts would leave the listing with no
+            // variants.
+            await using var tx = await _context.Database.BeginTransactionAsync();
+            try
+            {
+                // Detach any variants EF picked up via `.Include(Variants)`
+                // earlier in the request. We're about to delete those
+                // rows out-of-band; leaving them tracked would let EF
+                // try to UPDATE / DELETE rows that no longer exist when
+                // SaveChanges fires for the scalar listing changes.
+                foreach (var v in listing.Variants.ToList())
+                {
+                    _context.Entry(v).State = EntityState.Detached;
+                }
+                listing.Variants.Clear();
+
+                // Single SQL DELETE for every variant of this listing —
+                // safer than tracker-based removal because there's no
+                // row-by-row Modified/Deleted state for EF to confuse.
+                await _context.ListingVariants
+                    .Where(v => v.ListingId == listing.Id)
+                    .ExecuteDeleteAsync();
+
+                // Stage new variants for INSERT. Each must carry a
+                // pre-assigned Id (set by the service in BuildVariants…)
+                // because we don't rely on store-generated PK here.
+                if (newVariantsOrNull.Count > 0)
+                {
+                    await _context.ListingVariants.AddRangeAsync(newVariantsOrNull);
+                }
+
+                // SaveChanges commits: listing UPDATE + new variant
+                // INSERTs in this transaction. Affected rows always >= 1
+                // because the listing's UpdatedAtUtc bump is a tracked
+                // scalar change.
+                var affected = await _context.SaveChangesAsync();
+
+                await tx.CommitAsync();
+
+                // Drop the tracker so the next reload (for the
+                // response DTO) starts clean and doesn't see the now-
+                // stale references to the detached old variants.
+                _context.ChangeTracker.Clear();
+
+                return affected > 0;
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        }
+
         private static IQueryable<Listing> ApplySort(IQueryable<Listing> query, string? sort)
         {
             return (sort ?? "newest").ToLowerInvariant() switch

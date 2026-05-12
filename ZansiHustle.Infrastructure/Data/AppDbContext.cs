@@ -112,6 +112,7 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     public DbSet<SellerSubcategory> SellerSubcategories => Set<SellerSubcategory>();
 
     public DbSet<Listing> Listings => Set<Listing>();
+    public DbSet<ListingVariant> ListingVariants => Set<ListingVariant>();
 
     // ── Casual peer-to-peer Marketplace (separate from merchant Listings) ──
     public DbSet<MarketplaceListing> MarketplaceListings => Set<MarketplaceListing>();
