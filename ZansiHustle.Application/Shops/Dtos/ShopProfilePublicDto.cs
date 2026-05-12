@@ -28,5 +28,39 @@ namespace ZansiHustle.Application.Shops.Dtos
         // empty-state pill rather than "0.0 (0)".
         public decimal? Rating { get; set; }
         public int ReviewCount { get; set; }
+
+        // ── About-tab enrichment ─────────────────────────────────────
+        // Populated by the DETAIL endpoint (GET /api/shops/{id}) only.
+        // The list endpoint (GET /api/shops/public) leaves these at
+        // their defaults (null / false / DateTime.MinValue) to avoid an
+        // N+1 join across the page of merchants + owner users — cards
+        // don't need this data, only the profile screen does.
+
+        /// <summary>When the shop opened. Public — used for the
+        /// "Shop opened May 2026" trust line on the About tab.</summary>
+        public DateTime CreatedAtUtc { get; set; }
+
+        /// <summary>
+        /// Public display name of the shop's owning user
+        /// (FirstName + LastName). Same source the reviews surface uses
+        /// for reviewer names — so this leaks no information that isn't
+        /// already visible elsewhere in the app. Null when the owning
+        /// user record has neither first nor last name.
+        /// </summary>
+        public string? OwnerDisplayName { get; set; }
+
+        /// <summary>
+        /// Owning <c>Merchant.WebsiteUrl</c>. Surfaced as the shop's
+        /// "Online presence" link. Never includes raw shop email/phone —
+        /// those stay on the owner's private merchant record.
+        /// </summary>
+        public string? WebsiteUrl { get; set; }
+
+        /// <summary>
+        /// Trust badge derived from the owning Merchant's KYC. True iff
+        /// <c>Merchant.KycStatus == Verified</c>. Not a payment / payout
+        /// claim — purely identity verification.
+        /// </summary>
+        public bool IsVerified { get; set; }
     }
 }

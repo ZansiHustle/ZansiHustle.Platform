@@ -6,6 +6,7 @@ using ZansiHustle.Application.Common.Paging;
 using ZansiHustle.Application.Persistence.Merchants;
 using ZansiHustle.Application.Persistence.SellerCategories;
 using ZansiHustle.Application.Persistence.Shops;
+using ZansiHustle.Application.Persistence.Users;
 using ZansiHustle.Application.Shops.Dtos;
 using ZansiHustle.Domain.Shops;
 using ZansiHustle.Shared.Enums.Merchants;
@@ -32,15 +33,18 @@ namespace ZansiHustle.Application.Shops
         private readonly IShopProfileRepository _shopRepository;
         private readonly IMerchantRepository _merchantRepository;
         private readonly ISellerCategoryRepository _categoryRepository;
+        private readonly IUserRepository _userRepository;
 
         public ShopProfileService(
             IShopProfileRepository shopRepository,
             IMerchantRepository merchantRepository,
-            ISellerCategoryRepository categoryRepository)
+            ISellerCategoryRepository categoryRepository,
+            IUserRepository userRepository)
         {
             _shopRepository = shopRepository;
             _merchantRepository = merchantRepository;
             _categoryRepository = categoryRepository;
+            _userRepository = userRepository;
         }
 
         // ─── Mine (owner-facing) ────────────────────────────────────
@@ -229,7 +233,12 @@ namespace ZansiHustle.Application.Shops
                 if (shop is null || shop.Status != ShopProfileStatus.Active)
                     return Result<ShopProfilePublicDto>.Failure(ErrorCodes.NotFound, "Shop not found.");
 
-                return Result<ShopProfilePublicDto>.Success(await MapToPublicDtoAsync(shop));
+                // Detail endpoint uses the enriched projection (joins
+                // Merchant + owner User for the About-tab fields). The
+                // list endpoint stays on the lean projection — paging
+                // through 100 shops shouldn't pay N+1 join cost for
+                // data the cards don't render.
+                return Result<ShopProfilePublicDto>.Success(await MapToPublicDetailDtoAsync(shop));
             }
             catch (Exception ex)
             {
@@ -443,7 +452,52 @@ namespace ZansiHustle.Application.Shops
                 City = s.City,
                 Rating = s.Rating,
                 ReviewCount = s.ReviewCount,
+                CreatedAtUtc = s.CreatedAtUtc,
+                // OwnerDisplayName / WebsiteUrl / IsVerified are
+                // intentionally left at their defaults on the list path.
+                // The detail-only enrichment lives in
+                // MapToPublicDetailDtoAsync.
             };
+        }
+
+        /// <summary>
+        /// Enriched public projection used by the shop-detail endpoint.
+        /// Adds owner display name, the merchant's website, and a KYC-
+        /// derived verified flag on top of the lean list mapping.
+        ///
+        /// Failures of the merchant / user join are swallowed: the About
+        /// tab simply hides whatever row's data is missing rather than
+        /// failing the whole detail load. Shop data corruption (e.g.
+        /// orphan ShopProfile with no Merchant) should not surface as a
+        /// 500 to a buyer trying to view the page.
+        /// </summary>
+        private async Task<ShopProfilePublicDto> MapToPublicDetailDtoAsync(ShopProfile s)
+        {
+            var dto = await MapToPublicDtoAsync(s);
+
+            var merchant = await _merchantRepository.GetByIdAsync(s.MerchantId);
+            if (merchant is null) return dto;
+
+            dto.WebsiteUrl = string.IsNullOrWhiteSpace(merchant.WebsiteUrl) ? null : merchant.WebsiteUrl;
+            dto.IsVerified = merchant.KycStatus == MerchantKycStatus.Verified;
+
+            if (merchant.OwnerUserId.HasValue && merchant.OwnerUserId.Value != Guid.Empty)
+            {
+                var owner = await _userRepository.GetByIdAsync(merchant.OwnerUserId.Value);
+                if (owner != null)
+                {
+                    // Same display-name formula the Reviews surface uses
+                    // for `ReviewerDisplayName` — keeps both surfaces in
+                    // lockstep so the owner shows up consistently on
+                    // their own shop's About tab and on any reviews they
+                    // leave elsewhere. Null when the user record has no
+                    // populated name (the About row is then hidden).
+                    var name = $"{owner.FirstName} {owner.LastName}".Trim();
+                    dto.OwnerDisplayName = string.IsNullOrWhiteSpace(name) ? null : name;
+                }
+            }
+
+            return dto;
         }
 
         private async Task<Result> ValidateCategoriesAsync(Guid? categoryId, Guid? subcategoryId)
