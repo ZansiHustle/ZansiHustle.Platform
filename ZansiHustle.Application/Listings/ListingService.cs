@@ -330,6 +330,20 @@ namespace ZansiHustle.Application.Listings
                     listing.BookingMethods = Clean(request.BookingMethods);
                 }
 
+                // Variants: optional on create. Validated here and
+                // attached to the entity so the same SaveChangesAsync
+                // call below persists everything in one round-trip.
+                // Ids from the request are ignored on create — every
+                // variant is a fresh insert under the new listing.
+                var variantCheck = ValidateVariants(request.Variants);
+                if (!variantCheck.IsSuccess)
+                    return Result<ListingDto>.Failure(variantCheck.Code, variantCheck.Message);
+
+                if (request.Variants is { Count: > 0 })
+                {
+                    listing.Variants = BuildVariantsForCreate(request.Variants, listing.Id);
+                }
+
                 await _listingRepository.AddAsync(listing);
                 var saved = await _listingRepository.SaveChangesAsync();
 
@@ -436,6 +450,19 @@ namespace ZansiHustle.Application.Listings
 
                     if (request.BookingMethods is not null)
                         listing.BookingMethods = Clean(request.BookingMethods);
+                }
+
+                // Variants: null in the request means "leave variants
+                // untouched". A non-null list — empty included — means
+                // "replace the set with this exact list, diffing by id
+                // where possible so unchanged rows keep their ids".
+                if (request.Variants is not null)
+                {
+                    var variantCheck = ValidateVariants(request.Variants);
+                    if (!variantCheck.IsSuccess)
+                        return Result<ListingDto>.Failure(variantCheck.Code, variantCheck.Message);
+
+                    ApplyVariantDiff(listing, request.Variants);
                 }
 
                 listing.UpdatedAtUtc = DateTime.UtcNow;
@@ -623,6 +650,197 @@ namespace ZansiHustle.Application.Listings
             return cleaned.Count == 0 ? null : cleaned;
         }
 
+        // ── Variants ────────────────────────────────────────────────
+
+        /// <summary>
+        /// Hard cap on variants per listing. Keeps a single saved
+        /// listing from ballooning into a giant payload and forces the
+        /// seller to think in terms of meaningful options rather than
+        /// listing every permutation.
+        /// </summary>
+        private const int MaxVariantsPerListing = 20;
+
+        /// <summary>
+        /// Shape-only validation for a variant request set. Null input
+        /// (i.e. caller didn't send a variants section) is success.
+        /// </summary>
+        private static Result ValidateVariants(List<ListingVariantRequestDto>? variants)
+        {
+            if (variants is null) return Result.Success();
+            if (variants.Count > MaxVariantsPerListing)
+                return Result.Failure(
+                    ErrorCodes.BadRequest,
+                    $"A listing can have at most {MaxVariantsPerListing} variants.");
+
+            for (var i = 0; i < variants.Count; i++)
+            {
+                var v = variants[i];
+                if (v is null)
+                    return Result.Failure(ErrorCodes.BadRequest, $"Variant #{i + 1} is missing.");
+
+                if (string.IsNullOrWhiteSpace(v.Name))
+                    return Result.Failure(ErrorCodes.BadRequest, $"Variant #{i + 1} needs a name.");
+
+                if (v.Name.Trim().Length > 80)
+                    return Result.Failure(ErrorCodes.BadRequest, $"Variant name is too long (max 80 chars).");
+
+                if (!string.IsNullOrEmpty(v.Description) && v.Description.Length > 300)
+                    return Result.Failure(ErrorCodes.BadRequest, $"Variant description is too long (max 300 chars).");
+
+                if (!string.IsNullOrEmpty(v.Sku) && v.Sku.Length > 64)
+                    return Result.Failure(ErrorCodes.BadRequest, "Variant SKU is too long (max 64 chars).");
+
+                if (v.UsesCustomPrice)
+                {
+                    if (!v.Price.HasValue)
+                        return Result.Failure(
+                            ErrorCodes.BadRequest,
+                            $"Variant \"{v.Name.Trim()}\" needs a custom price (or untick custom pricing).");
+                    if (v.Price.Value < 0)
+                        return Result.Failure(
+                            ErrorCodes.BadRequest,
+                            $"Variant \"{v.Name.Trim()}\" price can't be negative.");
+                }
+
+                if (v.Stock is < 0)
+                    return Result.Failure(
+                        ErrorCodes.BadRequest,
+                        $"Variant \"{v.Name.Trim()}\" stock can't be negative.");
+            }
+
+            // Reject duplicate names (case-insensitive) — two "White"
+            // rows on the same listing is almost always a user error
+            // and would confuse buyers + the future cart snapshot.
+            var dupGroup = variants
+                .Where(v => !string.IsNullOrWhiteSpace(v.Name))
+                .GroupBy(v => v.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault(g => g.Count() > 1);
+            if (dupGroup is not null)
+                return Result.Failure(
+                    ErrorCodes.BadRequest,
+                    $"Variant \"{dupGroup.Key}\" appears more than once.");
+
+            return Result.Success();
+        }
+
+        /// <summary>
+        /// Build a fresh variant collection for a brand-new listing.
+        /// Any client-supplied <c>Id</c> is intentionally ignored —
+        /// every row gets a new server-issued id on create. SortOrder
+        /// falls back to the request order when not supplied.
+        /// </summary>
+        private static List<ListingVariant> BuildVariantsForCreate(
+            List<ListingVariantRequestDto> variants, Guid listingId)
+        {
+            var now = DateTime.UtcNow;
+            var result = new List<ListingVariant>(variants.Count);
+            for (var i = 0; i < variants.Count; i++)
+            {
+                var v = variants[i];
+                result.Add(new ListingVariant
+                {
+                    Id = Guid.NewGuid(),
+                    ListingId = listingId,
+                    Name = v.Name.Trim(),
+                    Description = string.IsNullOrWhiteSpace(v.Description) ? null : v.Description.Trim(),
+                    UsesCustomPrice = v.UsesCustomPrice,
+                    Price = v.UsesCustomPrice ? v.Price : null,
+                    Stock = v.Stock,
+                    Sku = string.IsNullOrWhiteSpace(v.Sku) ? null : v.Sku.Trim(),
+                    // Empty SortOrder → fall back to request index so the
+                    // saved order matches the seller's input order.
+                    SortOrder = v.SortOrder == 0 ? i : v.SortOrder,
+                    IsActive = v.IsActive,
+                    CreatedAtUtc = now,
+                });
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Reconcile the persisted variant collection with the
+        /// request: match by id when present, update in place; insert
+        /// new rows; delete existing rows that are absent from the
+        /// request. Keeps variant ids stable for unchanged rows so
+        /// future cart / wishlist references survive an edit.
+        /// </summary>
+        private static void ApplyVariantDiff(
+            Listing listing, List<ListingVariantRequestDto> incoming)
+        {
+            var now = DateTime.UtcNow;
+            var existingById = listing.Variants.ToDictionary(v => v.Id);
+            var seenIds = new HashSet<Guid>();
+            var nextOrder = 0;
+
+            foreach (var v in incoming)
+            {
+                // Match by id when supplied. A request id that doesn't
+                // match the listing's existing variants is treated as a
+                // fresh insert (defensive — could happen if the seller
+                // re-saves stale client state after a delete).
+                if (v.Id is Guid id && id != Guid.Empty && existingById.TryGetValue(id, out var existing))
+                {
+                    existing.Name = v.Name.Trim();
+                    existing.Description = string.IsNullOrWhiteSpace(v.Description) ? null : v.Description.Trim();
+                    existing.UsesCustomPrice = v.UsesCustomPrice;
+                    existing.Price = v.UsesCustomPrice ? v.Price : null;
+                    existing.Stock = v.Stock;
+                    existing.Sku = string.IsNullOrWhiteSpace(v.Sku) ? null : v.Sku.Trim();
+                    existing.SortOrder = v.SortOrder == 0 ? nextOrder : v.SortOrder;
+                    existing.IsActive = v.IsActive;
+                    existing.UpdatedAtUtc = now;
+                    seenIds.Add(id);
+                }
+                else
+                {
+                    listing.Variants.Add(new ListingVariant
+                    {
+                        Id = Guid.NewGuid(),
+                        ListingId = listing.Id,
+                        Name = v.Name.Trim(),
+                        Description = string.IsNullOrWhiteSpace(v.Description) ? null : v.Description.Trim(),
+                        UsesCustomPrice = v.UsesCustomPrice,
+                        Price = v.UsesCustomPrice ? v.Price : null,
+                        Stock = v.Stock,
+                        Sku = string.IsNullOrWhiteSpace(v.Sku) ? null : v.Sku.Trim(),
+                        SortOrder = v.SortOrder == 0 ? nextOrder : v.SortOrder,
+                        IsActive = v.IsActive,
+                        CreatedAtUtc = now,
+                    });
+                }
+
+                nextOrder++;
+            }
+
+            // Anything in the existing collection that wasn't matched
+            // by an incoming id is a deletion. The cascade FK in the
+            // EF config ensures the rows actually drop on save.
+            var toRemove = listing.Variants
+                .Where(v => existingById.ContainsKey(v.Id) && !seenIds.Contains(v.Id))
+                .ToList();
+            foreach (var v in toRemove)
+                listing.Variants.Remove(v);
+        }
+
+        private static ListingVariantDto MapVariantToDto(ListingVariant variant)
+        {
+            return new ListingVariantDto
+            {
+                Id = variant.Id,
+                ListingId = variant.ListingId,
+                Name = variant.Name,
+                Description = variant.Description,
+                Price = variant.UsesCustomPrice ? variant.Price : null,
+                UsesCustomPrice = variant.UsesCustomPrice,
+                Stock = variant.Stock,
+                Sku = variant.Sku,
+                SortOrder = variant.SortOrder,
+                IsActive = variant.IsActive,
+                CreatedAtUtc = variant.CreatedAtUtc,
+                UpdatedAtUtc = variant.UpdatedAtUtc,
+            };
+        }
+
         /// <summary>
         /// Refresh every stored image URL through <see cref="IStorageUrlResolver"/>.
         /// Mirrors the pattern in <c>MarketplaceListingService.MapDtoAsync</c> and
@@ -694,6 +912,15 @@ namespace ZansiHustle.Application.Listings
                 Turnaround = listing.Turnaround,
                 Availability = listing.Availability,
                 BookingMethods = listing.BookingMethods,
+                // Project variants in stable seller-defined order. The
+                // seller-side edit flow round-trips on this list, so we
+                // surface ALL variants (including inactive) — the buyer
+                // detail screen filters by IsActive for display.
+                Variants = listing.Variants
+                    .OrderBy(v => v.SortOrder)
+                    .ThenBy(v => v.CreatedAtUtc)
+                    .Select(MapVariantToDto)
+                    .ToList(),
                 CreatedAtUtc = listing.CreatedAtUtc,
                 UpdatedAtUtc = listing.UpdatedAtUtc
             };
@@ -733,6 +960,9 @@ namespace ZansiHustle.Application.Listings
                 Stock = listing.Stock,
                 Condition = listing.Condition,
                 PricingModel = listing.PricingModel,
+                // Active-only count for the buyer feed cards — soft-
+                // hidden variants don't influence the "X options" hint.
+                VariantCount = listing.Variants.Count(v => v.IsActive),
                 CreatedAtUtc = listing.CreatedAtUtc
             };
         }

@@ -28,7 +28,8 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
                 .Include(x => x.Merchant)
                 .Include(x => x.ShopProfile)
                 .Include(x => x.SellerCategory)
-                .Include(x => x.SellerSubcategory);
+                .Include(x => x.SellerSubcategory)
+                .Include(x => x.Variants);
 
             // Hard contract for the public listing search:
             //
@@ -134,6 +135,7 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
                 .Include(x => x.ShopProfile)
                 .Include(x => x.SellerCategory)
                 .Include(x => x.SellerSubcategory)
+                .Include(x => x.Variants)
                 .FirstOrDefaultAsync(x => x.Id == id);
         }
 
@@ -150,6 +152,7 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
                 .Include(x => x.ShopProfile)
                 .Include(x => x.SellerCategory)
                 .Include(x => x.SellerSubcategory)
+                .Include(x => x.Variants)
                 .FirstOrDefaultAsync(x => x.Slug == normalized);
         }
 
@@ -162,6 +165,7 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
                 .Include(x => x.ShopProfile)
                 .Include(x => x.SellerCategory)
                 .Include(x => x.SellerSubcategory)
+                .Include(x => x.Variants)
                 .Where(x => x.MerchantId == merchantId)
                 .OrderByDescending(x => x.CreatedAtUtc)
                 .ToListAsync();
@@ -176,6 +180,7 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
                 .Include(x => x.ShopProfile)
                 .Include(x => x.SellerCategory)
                 .Include(x => x.SellerSubcategory)
+                .Include(x => x.Variants)
                 .Where(x => x.ListingSource == ListingSource.ShopProfile
                     && x.ShopProfileId == shopProfileId)
                 .OrderByDescending(x => x.CreatedAtUtc)
@@ -191,6 +196,7 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
                 .Include(x => x.ShopProfile)
                 .Include(x => x.SellerCategory)
                 .Include(x => x.SellerSubcategory)
+                .Include(x => x.Variants)
                 .Where(x => x.Merchant != null && x.Merchant.OwnerUserId == ownerUserId)
                 .OrderByDescending(x => x.CreatedAtUtc)
                 .ToListAsync();

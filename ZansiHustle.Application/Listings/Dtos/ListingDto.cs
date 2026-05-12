@@ -69,6 +69,16 @@ namespace ZansiHustle.Application.Listings.Dtos
         public List<string>? Availability { get; set; }
         public List<string>? BookingMethods { get; set; }
 
+        /// <summary>
+        /// Variants for this listing. Empty when the seller hasn't
+        /// added any — the listing is sold as a single SKU at
+        /// <see cref="Price"/>. Ordered by <c>SortOrder</c>. Public
+        /// callers only ever see active variants; the seller-side
+        /// edit round-trip surfaces the full set (including inactive)
+        /// so it can be re-saved without data loss.
+        /// </summary>
+        public List<ListingVariantDto> Variants { get; set; } = new();
+
         public DateTime CreatedAtUtc { get; set; }
         public DateTime? UpdatedAtUtc { get; set; }
     }

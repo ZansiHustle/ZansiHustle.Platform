@@ -69,5 +69,14 @@ namespace ZansiHustle.Application.Listings.Dtos
         public string? Turnaround { get; set; }
         public List<string>? Availability { get; set; }
         public List<string>? BookingMethods { get; set; }
+
+        /// <summary>
+        /// Optional flat list of variants (colour / size / storage /
+        /// package). Omit or send empty → "no variants", listing
+        /// behaves as a single SKU. Variants without
+        /// <c>UsesCustomPrice = true</c> inherit the listing's
+        /// <see cref="Price"/>. Capped at 20 entries by the service.
+        /// </summary>
+        public List<ListingVariantRequestDto>? Variants { get; set; }
     }
 }

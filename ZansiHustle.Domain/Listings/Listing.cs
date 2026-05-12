@@ -100,6 +100,14 @@ namespace ZansiHustle.Domain.Listings
         public List<string>? Availability { get; set; }
         public List<string>? BookingMethods { get; set; }
 
+        /// <summary>
+        /// Child variants (colour / size / storage / package options).
+        /// Empty list = "no variants" — the listing is sold as a single
+        /// SKU with this row's <see cref="Price"/> + <see cref="Stock"/>.
+        /// Variants are cascade-deleted with the parent listing.
+        /// </summary>
+        public List<ListingVariant> Variants { get; set; } = new();
+
         public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
         public DateTime? UpdatedAtUtc { get; set; }
     }

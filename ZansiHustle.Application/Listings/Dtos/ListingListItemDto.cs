@@ -60,6 +60,14 @@ namespace ZansiHustle.Application.Listings.Dtos
         // Service-only.
         public PricingModel? PricingModel { get; set; }
 
+        /// <summary>
+        /// Number of active variants attached to this listing. Cards
+        /// can decorate themselves with a "Variants available" hint
+        /// without needing to ship the full variant collection in the
+        /// list response.
+        /// </summary>
+        public int VariantCount { get; set; }
+
         public DateTime CreatedAtUtc { get; set; }
     }
 }

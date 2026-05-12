@@ -44,5 +44,16 @@ namespace ZansiHustle.Application.Listings.Dtos
         public string? Turnaround { get; set; }
         public List<string>? Availability { get; set; }
         public List<string>? BookingMethods { get; set; }
+
+        /// <summary>
+        /// Variant set after the update. Omit / send null to leave the
+        /// existing variants untouched. Send an empty list to clear all
+        /// variants. Diff semantics: variants with a matching <c>Id</c>
+        /// are updated in place; rows without an <c>Id</c> (or with one
+        /// that doesn't match an existing variant of this listing) are
+        /// inserted; existing variants absent from the request are
+        /// removed.
+        /// </summary>
+        public List<ListingVariantRequestDto>? Variants { get; set; }
     }
 }
