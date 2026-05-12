@@ -470,15 +470,16 @@ namespace ZansiHustle.Application.Listings
 
                 listing.UpdatedAtUtc = DateTime.UtcNow;
 
-                // No DbSet.Update() on the tracked listing — the change
-                // tracker already has every scalar edit + the variant
-                // diff (Add for new rows, Modified for matched rows,
-                // Deleted for orphans). Calling Update() here would
-                // re-mark Added variants as Modified, causing EF to
-                // generate an UPDATE for a non-existent row and throw
-                // a DbUpdateConcurrencyException ("1 row expected, 0
-                // affected"). See ListingRepository.Update() doc for
-                // the full incident note.
+                // No DbSet.Update() call on the tracked listing — change
+                // tracking already has every edit:
+                //   • scalar field assignments  → auto-detected as Modified
+                //   • new variants Added via Variants.Add(...) → tracked as Added
+                //   • variants removed via Variants.Remove(...)  → tracked as Deleted
+                //   • matched-id variant updates                  → auto-detected as Modified
+                // Re-attaching the listing here would re-classify Added
+                // children as Modified, causing EF to issue UPDATE
+                // statements against rows that don't exist yet and throw
+                // DbUpdateConcurrencyException ("expected 1 row, affected 0").
                 bool saved;
                 try
                 {
@@ -486,11 +487,25 @@ namespace ZansiHustle.Application.Listings
                 }
                 catch (DbUpdateConcurrencyException ex)
                 {
+                    // Verbose log so the next concurrency report in
+                    // prod tells us exactly which entity / state / PK
+                    // tripped the 0-rows check, instead of just the
+                    // entity-type name.
+                    var entries = string.Join(
+                        " | ",
+                        ex.Entries.Select(e =>
+                        {
+                            var pkProp = e.Metadata.FindPrimaryKey()?.Properties.FirstOrDefault();
+                            var pk = pkProp is null
+                                ? "?"
+                                : e.Property(pkProp.Name).CurrentValue?.ToString() ?? "(null)";
+                            return $"{e.Entity.GetType().Name}#{pk}[{e.State}]";
+                        }));
                     _logger.LogWarning(
                         ex,
-                        "Concurrency conflict updating listing {ListingId}. Affected entries: {Entries}",
+                        "Concurrency conflict updating listing {ListingId}. Failing entries: {Entries}",
                         listingId,
-                        string.Join(",", ex.Entries.Select(e => e.Entity.GetType().Name)));
+                        entries);
                     return Result<ListingDto>.Failure(
                         ErrorCodes.Conflict,
                         "This listing was updated or deleted in another session. Refresh and try again.");
