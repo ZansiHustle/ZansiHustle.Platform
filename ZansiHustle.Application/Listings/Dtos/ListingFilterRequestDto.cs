@@ -22,6 +22,19 @@ namespace ZansiHustle.Application.Listings.Dtos
         public AvailabilityMode? AvailabilityMode { get; set; }
 
         public Guid? MerchantId { get; set; }
+
+        /// <summary>
+        /// Filter to listings explicitly attached to a specific
+        /// ShopProfile (i.e. <c>ListingSource == ShopProfile</c> AND
+        /// <c>ShopProfileId == this</c>). The public ShopProfile page
+        /// uses this so SellerAccount listings under the same merchant
+        /// don't bleed into the shop's catalog.
+        /// </summary>
+        public Guid? ShopProfileId { get; set; }
+
+        /// <summary>Optional source filter (e.g. "only show shop listings").</summary>
+        public ListingSource? ListingSource { get; set; }
+
         public Guid? SellerCategoryId { get; set; }
         public Guid? SellerSubcategoryId { get; set; }
         public string? Province { get; set; }

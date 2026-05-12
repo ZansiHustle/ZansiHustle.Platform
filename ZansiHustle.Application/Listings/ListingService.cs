@@ -12,9 +12,11 @@ using ZansiHustle.Application.Media.Storage;
 using ZansiHustle.Application.Persistence.Listings;
 using ZansiHustle.Application.Persistence.Merchants;
 using ZansiHustle.Application.Persistence.SellerCategories;
+using ZansiHustle.Application.Persistence.Shops;
 using ZansiHustle.Domain.Listings;
 using ZansiHustle.Shared.Enums.Listings;
 using ZansiHustle.Shared.Enums.Merchants;
+using ZansiHustle.Shared.Enums.Shops;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
 
@@ -25,6 +27,7 @@ namespace ZansiHustle.Application.Listings
         private readonly IListingRepository _listingRepository;
         private readonly IMerchantRepository _merchantRepository;
         private readonly ISellerCategoryRepository _sellerCategoryRepository;
+        private readonly IShopProfileRepository _shopProfileRepository;
         private readonly IStorageUrlResolver _storageUrlResolver;
         private readonly ILogger<ListingService> _logger;
 
@@ -32,12 +35,14 @@ namespace ZansiHustle.Application.Listings
             IListingRepository listingRepository,
             IMerchantRepository merchantRepository,
             ISellerCategoryRepository sellerCategoryRepository,
+            IShopProfileRepository shopProfileRepository,
             IStorageUrlResolver storageUrlResolver,
             ILogger<ListingService> logger)
         {
             _listingRepository = listingRepository;
             _merchantRepository = merchantRepository;
             _sellerCategoryRepository = sellerCategoryRepository;
+            _shopProfileRepository = shopProfileRepository;
             _storageUrlResolver = storageUrlResolver;
             _logger = logger;
         }
@@ -119,6 +124,30 @@ namespace ZansiHustle.Application.Listings
         }
 
         /// <inheritdoc />
+        public async Task<Result<List<ListingListItemDto>>> GetByShopProfileAsync(Guid shopProfileId)
+        {
+            try
+            {
+                // We don't 404 on a missing shop here — return an empty
+                // list. The mobile client's ShopProfile page already
+                // handles "shop loaded with zero listings" gracefully,
+                // and an empty list is also the correct response for a
+                // brand-new shop with no items yet.
+                var listings = await _listingRepository.GetByShopProfileAsync(shopProfileId);
+                var data = new List<ListingListItemDto>(listings.Count);
+                foreach (var item in listings)
+                    data.Add(await MapToListItemAsync(item));
+
+                return Result<List<ListingListItemDto>>.Success(data, "Shop listings retrieved successfully.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to retrieve listings for shop profile {ShopProfileId}.", shopProfileId);
+                return Result<List<ListingListItemDto>>.Failure(ErrorCodes.Exception, $"Failed to retrieve shop listings. {ex.Message}");
+            }
+        }
+
+        /// <inheritdoc />
         public async Task<Result<List<ListingListItemDto>>> GetMineAsync(Guid ownerUserId)
         {
             try
@@ -190,6 +219,63 @@ namespace ZansiHustle.Application.Listings
                         "InStoreOnly listings require a physical-store merchant.");
                 }
 
+                // Resolve ListingSource + validate ShopProfileId.
+                //   • Caller-supplied source wins. When omitted, infer
+                //     from the merchant type: PhysicalStore merchants
+                //     get PhysicalStore, OnlineStore merchants get
+                //     SellerAccount (the safe default — never silently
+                //     attach to a shop the caller didn't explicitly
+                //     pick).
+                //   • ShopProfileId MUST be set when source is
+                //     ShopProfile, MUST be null otherwise.
+                //   • The referenced ShopProfile MUST exist, NOT be
+                //     suspended, and belong to the SAME MerchantId as
+                //     the listing. This stops a seller from listing
+                //     under someone else's shop even if they guess
+                //     the GUID.
+                var resolvedSource = request.ListingSource
+                    ?? (merchant.Type == MerchantType.PhysicalStore
+                        ? ListingSource.PhysicalStore
+                        : ListingSource.SellerAccount);
+
+                if (resolvedSource == ListingSource.ShopProfile)
+                {
+                    if (request.ShopProfileId is null)
+                        return Result<ListingDto>.Failure(
+                            ErrorCodes.BadRequest,
+                            "ShopProfileId is required when listing under a shop storefront.");
+
+                    var shop = await _shopProfileRepository.GetByIdAsync(request.ShopProfileId.Value);
+                    if (shop is null)
+                        return Result<ListingDto>.Failure(
+                            ErrorCodes.NotFound,
+                            "The selected shop profile does not exist.");
+
+                    if (shop.MerchantId != request.MerchantId)
+                        return Result<ListingDto>.Failure(
+                            ErrorCodes.Forbidden,
+                            "The selected shop profile does not belong to this merchant.");
+
+                    if (shop.Status == ShopProfileStatus.Suspended)
+                        return Result<ListingDto>.Failure(
+                            ErrorCodes.Forbidden,
+                            "Cannot list under a suspended shop profile.");
+                }
+                else if (request.ShopProfileId is not null)
+                {
+                    return Result<ListingDto>.Failure(
+                        ErrorCodes.BadRequest,
+                        "ShopProfileId may only be provided when listing under a shop storefront.");
+                }
+
+                if (resolvedSource == ListingSource.PhysicalStore &&
+                    merchant.Type != MerchantType.PhysicalStore)
+                {
+                    return Result<ListingDto>.Failure(
+                        ErrorCodes.BadRequest,
+                        "PhysicalStore listings require a physical-store merchant.");
+                }
+
                 // Defensive guard against bad image strings. Mobile
                 // clients now upload to R2 before saving, but earlier
                 // builds were persisting picker URIs (`blob:`,
@@ -208,6 +294,10 @@ namespace ZansiHustle.Application.Listings
                     Type = request.Type,
                     Status = request.Status ?? ListingStatus.Active,
                     AvailabilityMode = resolvedAvailability,
+                    ListingSource = resolvedSource,
+                    ShopProfileId = resolvedSource == ListingSource.ShopProfile
+                        ? request.ShopProfileId
+                        : null,
                     MerchantId = request.MerchantId,
                     Title = request.Title.Trim(),
                     Description = request.Description?.Trim(),
@@ -571,6 +661,9 @@ namespace ZansiHustle.Application.Listings
                 Type = listing.Type,
                 Status = listing.Status,
                 AvailabilityMode = listing.AvailabilityMode,
+                ListingSource = listing.ListingSource,
+                ShopProfileId = listing.ShopProfileId,
+                ShopProfileName = listing.ShopProfile?.Name,
                 MerchantId = listing.MerchantId,
                 MerchantName = listing.Merchant?.Name,
                 MerchantSlug = listing.Merchant?.Slug,
@@ -616,6 +709,9 @@ namespace ZansiHustle.Application.Listings
                 Type = listing.Type,
                 Status = listing.Status,
                 AvailabilityMode = listing.AvailabilityMode,
+                ListingSource = listing.ListingSource,
+                ShopProfileId = listing.ShopProfileId,
+                ShopProfileName = listing.ShopProfile?.Name,
                 MerchantId = listing.MerchantId,
                 MerchantName = listing.Merchant?.Name,
                 MerchantSlug = listing.Merchant?.Slug,

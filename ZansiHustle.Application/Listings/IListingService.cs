@@ -16,6 +16,14 @@ namespace ZansiHustle.Application.Listings
         Task<Result<PagedResult<ListingListItemDto>>> SearchAsync(ListingFilterRequestDto filter);
         Task<Result<ListingDto>> GetByIdAsync(Guid id);
         Task<Result<List<ListingListItemDto>>> GetByMerchantAsync(Guid merchantId);
+
+        /// <summary>
+        /// Returns listings explicitly attached to a ShopProfile.
+        /// Used by the public ShopProfile catalog so SellerAccount
+        /// items under the same merchant don't bleed into the shop.
+        /// </summary>
+        Task<Result<List<ListingListItemDto>>> GetByShopProfileAsync(Guid shopProfileId);
+
         Task<Result<List<ListingListItemDto>>> GetMineAsync(Guid ownerUserId);
         Task<Result<ListingDto>> CreateAsync(Guid ownerUserId, CreateListingRequestDto request);
         Task<Result<ListingDto>> UpdateAsync(Guid ownerUserId, Guid listingId, UpdateListingRequestDto request);

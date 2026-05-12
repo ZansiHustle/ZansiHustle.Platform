@@ -53,6 +53,12 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Listings
             // on every public listing query — index supports the hot path.
             builder.HasIndex(x => x.AvailabilityMode);
             builder.HasIndex(x => x.MerchantId);
+            // Indexes for the new source / shop association fields.
+            // ShopProfile.ProductsTab filters by ShopProfileId; the
+            // index makes that the hot path (vs scanning all listings
+            // for that merchant).
+            builder.HasIndex(x => x.ListingSource);
+            builder.HasIndex(x => x.ShopProfileId);
             builder.HasIndex(x => x.SellerCategoryId);
             builder.HasIndex(x => x.SellerSubcategoryId);
             builder.HasIndex(x => x.Price);
@@ -103,6 +109,16 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Listings
                 .IsRequired()
                 .HasDefaultValue(AvailabilityMode.OnlineOnly);
 
+            // NOT NULL with DB-level default 1 (SellerAccount) so the
+            // migration backfills every existing listing without
+            // requiring a separate UPDATE — pre-existing rows were
+            // created before ShopProfile existed and are correctly
+            // categorised as seller-account listings.
+            builder.Property(x => x.ListingSource)
+                .HasConversion<int>()
+                .IsRequired()
+                .HasDefaultValue(ListingSource.SellerAccount);
+
             builder.Property(x => x.Condition)
                 .HasConversion<int?>();
 
@@ -152,6 +168,16 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Listings
                 .WithMany()
                 .HasForeignKey(x => x.MerchantId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            // Optional FK to ShopProfile — populated only when
+            // ListingSource == ShopProfile. Restrict on delete so a
+            // shop can't be deleted while listings still reference
+            // it; product flow has its own "Suspend" lifecycle for
+            // taking a shop offline without orphaning listings.
+            builder.HasOne(x => x.ShopProfile)
+                .WithMany()
+                .HasForeignKey(x => x.ShopProfileId)
+                .OnDelete(DeleteBehavior.Restrict);
 
             builder.HasOne(x => x.SellerCategory)
                 .WithMany()

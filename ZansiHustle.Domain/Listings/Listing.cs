@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using ZansiHustle.Domain.Merchants;
 using ZansiHustle.Domain.SellerCategories;
+using ZansiHustle.Domain.Shops;
 using ZansiHustle.Shared.Enums.Listings;
 
 namespace ZansiHustle.Domain.Listings
@@ -35,9 +36,31 @@ namespace ZansiHustle.Domain.Listings
         /// </summary>
         public AvailabilityMode AvailabilityMode { get; set; } = AvailabilityMode.OnlineOnly;
 
-        /// <summary>Owning shop. Required — a listing always belongs to a merchant.</summary>
+        /// <summary>Owning merchant. Required — a listing always belongs to a merchant.</summary>
         public Guid MerchantId { get; set; }
         public Merchant? Merchant { get; set; }
+
+        /// <summary>
+        /// The sales channel this listing was created under. Decides
+        /// which buyer surfaces render it and what display-owner pill
+        /// the card shows. See <see cref="ListingSource"/> for the
+        /// per-value contract. Defaults to SellerAccount so legacy
+        /// rows (created before this column existed) still appear in
+        /// the seller's My Listings without dragging into a shop they
+        /// were never listed under.
+        /// </summary>
+        public ListingSource ListingSource { get; set; } = ListingSource.SellerAccount;
+
+        /// <summary>
+        /// FK to <see cref="ShopProfile"/> when (and only when)
+        /// <see cref="ListingSource"/> is <c>ShopProfile</c>. The
+        /// ShopProfile's <c>MerchantId</c> MUST equal this listing's
+        /// <c>MerchantId</c> — same merchant owns both. Buyer-facing
+        /// shop catalog filters by THIS column (not by MerchantId) so
+        /// SellerAccount listings stay out of the shop's catalog.
+        /// </summary>
+        public Guid? ShopProfileId { get; set; }
+        public ShopProfile? ShopProfile { get; set; }
 
         public string Title { get; set; } = string.Empty;
         public string? Description { get; set; }

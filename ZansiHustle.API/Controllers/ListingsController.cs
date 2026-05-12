@@ -69,6 +69,21 @@ namespace ZansiHustle.API.Controllers
         }
 
         /// <summary>
+        /// Lists listings explicitly attached to a ShopProfile. Used
+        /// by the public ShopProfile catalog so SellerAccount listings
+        /// under the same merchant don't appear on the shop's page.
+        /// Anonymous: shop profiles are buyer-facing.
+        /// </summary>
+        [HttpGet("by-shop/{shopProfileId:guid}")]
+        [AllowAnonymous]
+        [ProducesResponseType(typeof(Result<List<ListingListItemDto>>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetByShopProfile(Guid shopProfileId)
+        {
+            var result = await _listingService.GetByShopProfileAsync(shopProfileId);
+            return ToActionResult(result);
+        }
+
+        /// <summary>
         /// Creates a listing in a shop owned by the current authenticated user.
         /// </summary>
         [HttpPost]

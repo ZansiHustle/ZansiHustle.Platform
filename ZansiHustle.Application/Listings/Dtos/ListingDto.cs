@@ -23,6 +23,15 @@ namespace ZansiHustle.Application.Listings.Dtos
         /// </summary>
         public AvailabilityMode AvailabilityMode { get; set; }
 
+        /// <summary>Sales channel under which this listing was created.</summary>
+        public ListingSource ListingSource { get; set; }
+
+        /// <summary>FK to ShopProfile when ListingSource == ShopProfile; null otherwise.</summary>
+        public Guid? ShopProfileId { get; set; }
+
+        /// <summary>Joined display name of the ShopProfile when ListingSource == ShopProfile.</summary>
+        public string? ShopProfileName { get; set; }
+
         public Guid MerchantId { get; set; }
         public string? MerchantName { get; set; }
         public string? MerchantSlug { get; set; }

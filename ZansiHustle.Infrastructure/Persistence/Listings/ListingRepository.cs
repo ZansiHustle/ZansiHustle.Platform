@@ -26,6 +26,7 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
             IQueryable<Listing> query = _context.Listings
                 .AsNoTracking()
                 .Include(x => x.Merchant)
+                .Include(x => x.ShopProfile)
                 .Include(x => x.SellerCategory)
                 .Include(x => x.SellerSubcategory);
 
@@ -64,6 +65,22 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
 
             if (filter.MerchantId.HasValue)
                 query = query.Where(x => x.MerchantId == filter.MerchantId.Value);
+
+            if (filter.ShopProfileId.HasValue)
+            {
+                // Filter by explicit shop association — the listing
+                // MUST be tagged ShopProfile source AND linked to this
+                // exact ShopProfileId. Skipping the source check would
+                // re-introduce the original bug: any matching FK row
+                // would surface even if the listing wasn't supposed to
+                // appear on the shop.
+                query = query
+                    .Where(x => x.ListingSource == ListingSource.ShopProfile
+                        && x.ShopProfileId == filter.ShopProfileId.Value);
+            }
+
+            if (filter.ListingSource.HasValue)
+                query = query.Where(x => x.ListingSource == filter.ListingSource.Value);
 
             if (filter.SellerCategoryId.HasValue)
                 query = query.Where(x => x.SellerCategoryId == filter.SellerCategoryId.Value);
@@ -114,6 +131,7 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
         {
             return await _context.Listings
                 .Include(x => x.Merchant)
+                .Include(x => x.ShopProfile)
                 .Include(x => x.SellerCategory)
                 .Include(x => x.SellerSubcategory)
                 .FirstOrDefaultAsync(x => x.Id == id);
@@ -129,6 +147,7 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
 
             return await _context.Listings
                 .Include(x => x.Merchant)
+                .Include(x => x.ShopProfile)
                 .Include(x => x.SellerCategory)
                 .Include(x => x.SellerSubcategory)
                 .FirstOrDefaultAsync(x => x.Slug == normalized);
@@ -140,9 +159,25 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
             return await _context.Listings
                 .AsNoTracking()
                 .Include(x => x.Merchant)
+                .Include(x => x.ShopProfile)
                 .Include(x => x.SellerCategory)
                 .Include(x => x.SellerSubcategory)
                 .Where(x => x.MerchantId == merchantId)
+                .OrderByDescending(x => x.CreatedAtUtc)
+                .ToListAsync();
+        }
+
+        /// <inheritdoc />
+        public async Task<List<Listing>> GetByShopProfileAsync(Guid shopProfileId)
+        {
+            return await _context.Listings
+                .AsNoTracking()
+                .Include(x => x.Merchant)
+                .Include(x => x.ShopProfile)
+                .Include(x => x.SellerCategory)
+                .Include(x => x.SellerSubcategory)
+                .Where(x => x.ListingSource == ListingSource.ShopProfile
+                    && x.ShopProfileId == shopProfileId)
                 .OrderByDescending(x => x.CreatedAtUtc)
                 .ToListAsync();
         }
@@ -153,6 +188,7 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
             return await _context.Listings
                 .AsNoTracking()
                 .Include(x => x.Merchant)
+                .Include(x => x.ShopProfile)
                 .Include(x => x.SellerCategory)
                 .Include(x => x.SellerSubcategory)
                 .Where(x => x.Merchant != null && x.Merchant.OwnerUserId == ownerUserId)

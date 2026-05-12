@@ -12,6 +12,27 @@ namespace ZansiHustle.Application.Listings.Dtos
     {
         public Guid MerchantId { get; set; }
         public ListingType Type { get; set; }
+
+        /// <summary>
+        /// Sales channel the listing is being created under. Optional
+        /// for back-compat: when omitted the service infers from the
+        /// owning merchant's type (PhysicalStore → PhysicalStore,
+        /// otherwise SellerAccount). Sellers with a ShopProfile MUST
+        /// send <c>ShopProfile</c> AND <see cref="ShopProfileId"/> to
+        /// list under the shop; otherwise the listing falls into the
+        /// seller's bare account and won't surface on the shop page.
+        /// </summary>
+        public ListingSource? ListingSource { get; set; }
+
+        /// <summary>
+        /// FK to the caller's ShopProfile. REQUIRED when
+        /// <see cref="ListingSource"/> is <c>ShopProfile</c>; MUST be
+        /// null otherwise. The shop's <c>MerchantId</c> is validated
+        /// against the request's <see cref="MerchantId"/> server-side
+        /// so a seller can't list under someone else's shop.
+        /// </summary>
+        public Guid? ShopProfileId { get; set; }
+
         public string Title { get; set; } = string.Empty;
         public string? Description { get; set; }
         public decimal Price { get; set; }
