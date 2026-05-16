@@ -76,6 +76,27 @@ public class AuthController : BaseController
     }
 
     /// <summary>
+    /// Returns whether the supplied email and/or phone number are still
+    /// available for registration. Pure read — no account is created.
+    /// Used by the mobile registration wizard's Step&nbsp;1 ("Contact")
+    /// so duplicates are surfaced before the user fills in the rest of
+    /// the form. At least one of <c>email</c> / <c>phoneNumber</c> must
+    /// be supplied.
+    /// </summary>
+    [HttpPost("check-availability")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(Result<CheckAvailabilityResponseDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> CheckAvailability([FromBody] CheckAvailabilityRequestDto dto)
+    {
+        if (dto is null)
+            return ToActionResult(Result<CheckAvailabilityResponseDto>.Failure(
+                ErrorCodes.BadRequest, "Request is required."));
+
+        var result = await _authService.CheckAvailabilityAsync(dto);
+        return ToActionResult(result);
+    }
+
+    /// <summary>
     /// Refreshes an access token using a valid refresh token.
     /// </summary>
     [HttpPost("refresh")]

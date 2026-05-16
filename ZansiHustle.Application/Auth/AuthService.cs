@@ -158,6 +158,61 @@ public sealed class AuthService : IAuthService
     }
 
     /// <inheritdoc />
+    public async Task<Result<CheckAvailabilityResponseDto>> CheckAvailabilityAsync(CheckAvailabilityRequestDto dto)
+    {
+        try
+        {
+            if (dto is null)
+                return Result<CheckAvailabilityResponseDto>.Failure(
+                    ErrorCodes.BadRequest, "Request is required.");
+
+            var hasEmail = !string.IsNullOrWhiteSpace(dto.Email);
+            var hasPhone = !string.IsNullOrWhiteSpace(dto.PhoneNumber);
+            if (!hasEmail && !hasPhone)
+                return Result<CheckAvailabilityResponseDto>.Failure(
+                    ErrorCodes.BadRequest,
+                    "Provide an email or phone number to check.");
+
+            // Default to "available" for any field the caller omitted —
+            // the wizard's Step 1 always sends both, but the API stays
+            // useful for callers that only want one half.
+            var response = new CheckAvailabilityResponseDto
+            {
+                EmailAvailable = true,
+                PhoneAvailable = true,
+            };
+
+            if (hasEmail)
+            {
+                var email = dto.Email!.Trim().ToLowerInvariant();
+                var existing = await _userManager.FindByEmailAsync(email);
+                response.EmailAvailable = existing is null;
+            }
+
+            if (hasPhone)
+            {
+                // Match against both the raw value the caller sent and the
+                // SA-normalised E.164 form, so historical accounts with
+                // looser phone formats still register as taken. Mirrors
+                // the lookup in RequestPasswordResetOtpAsync.
+                var phoneRaw = dto.PhoneNumber!.Trim();
+                var phoneNorm = NormalisePhone(phoneRaw);
+                var existing = await _userManager.Users.FirstOrDefaultAsync(u =>
+                    u.PhoneNumber == phoneRaw || u.PhoneNumber == phoneNorm);
+                response.PhoneAvailable = existing is null;
+            }
+
+            return Result<CheckAvailabilityResponseDto>.Success(response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Availability check failed.");
+            return Result<CheckAvailabilityResponseDto>.Failure(
+                ErrorCodes.Exception, "Could not check availability.");
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<Result<AuthTokenDto>> RefreshTokenAsync(string refreshToken)
     {
         try

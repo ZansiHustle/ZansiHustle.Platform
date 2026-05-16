@@ -19,6 +19,15 @@ public interface IAuthService
     Task<Result<Guid>> RegisterAsync(RegisterDto dto);
 
     /// <summary>
+    /// Checks whether an email and/or phone number are still available
+    /// for registration. Pure read — no account is created or modified.
+    /// Used by the registration wizard's Step&nbsp;1 ("Contact") so the
+    /// user is told about a duplicate before they fill in the rest of
+    /// the form.
+    /// </summary>
+    Task<Result<CheckAvailabilityResponseDto>> CheckAvailabilityAsync(CheckAvailabilityRequestDto dto);
+
+    /// <summary>
     /// Refreshes an access token using a valid refresh token.
     /// </summary>
     Task<Result<AuthTokenDto>> RefreshTokenAsync(string refreshToken);
