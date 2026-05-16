@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using ZansiHustle.Application.Auth;
 using ZansiHustle.Application.Communications.Email.Interfaces;
 using ZansiHustle.Application.Communications.Otp.Interfaces;
 using ZansiHustle.Application.Communications.Otp.Models;
@@ -22,6 +23,7 @@ public sealed class OtpService : IOtpService
 {
     private readonly IOtpStore _store;
     private readonly OtpSettings _settings;
+    private readonly AuthTestModeSettings _testMode;
     private readonly ISmsService _smsService;
     private readonly IWhatsAppService _whatsAppService;
     private readonly IEmailService _emailService;
@@ -30,6 +32,7 @@ public sealed class OtpService : IOtpService
     public OtpService(
         IOtpStore store,
         IOptions<OtpSettings> settings,
+        IOptions<AuthTestModeSettings> testModeSettings,
         ISmsService smsService,
         IWhatsAppService whatsAppService,
         IEmailService emailService,
@@ -37,6 +40,7 @@ public sealed class OtpService : IOtpService
     {
         _store = store;
         _settings = settings.Value ?? new OtpSettings();
+        _testMode = testModeSettings.Value ?? new AuthTestModeSettings();
         _smsService = smsService;
         _whatsAppService = whatsAppService;
         _emailService = emailService;
@@ -125,6 +129,31 @@ public sealed class OtpService : IOtpService
         {
             await _store.DeleteAsync(record.SessionId, cancellationToken);
             return Result<OtpVerifiedContext>.Failure(ErrorCodes.OtpExhausted, "Too many incorrect attempts. Please request a new code.");
+        }
+
+        // ── Test-mode bypass ───────────────────────────────────────────
+        // Accept the configured bypass code (default "111111") iff
+        // Auth:TestMode:Enabled is true. Session must still exist, be
+        // unconsumed, unexpired, and within attempts — see guards
+        // above — so a bypass cannot manufacture an OtpVerifiedContext
+        // out of thin air. The real hashed-compare branch below is
+        // untouched. Never log the submitted code.
+        if (_testMode.Enabled
+            && !string.IsNullOrEmpty(_testMode.BypassCode)
+            && request.Code.Trim() == _testMode.BypassCode)
+        {
+            record.IsConsumed = true;
+            await _store.UpdateAsync(record, cancellationToken);
+            _logger.LogWarning(
+                "[TEST_MODE] OTP bypass accepted (session) for SessionId={SessionId} Channel={Channel} Purpose={Purpose}.",
+                record.SessionId, record.Channel, record.Purpose);
+            return Result<OtpVerifiedContext>.Success(new OtpVerifiedContext
+            {
+                Destination = record.Destination,
+                UserId = record.UserId,
+                Purpose = record.Purpose,
+                Channel = record.Channel
+            }, "Verification successful.");
         }
 
         var submittedHash = HashCode(request.Code.Trim(), record.Destination);

@@ -25,7 +25,7 @@ builder.Services.AddInfrastructureServices();
 // ============================================================================
 // 5. AUTHENTICATION SERVICES
 // ============================================================================
-builder.Services.AddAuthServices();
+builder.Services.AddAuthServices(builder.Configuration);
 
 // ============================================================================
 // 6. API SERVICES

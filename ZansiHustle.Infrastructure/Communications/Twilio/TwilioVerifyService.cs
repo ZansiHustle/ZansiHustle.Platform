@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Twilio.Exceptions;
 using Twilio.Rest.Verify.V2.Service;
+using ZansiHustle.Application.Auth;
 using ZansiHustle.Application.Communications.PhoneVerification;
 using ZansiHustle.Shared.Enums.Communications;
 using ZansiHustle.Shared.Errors;
@@ -44,17 +45,20 @@ public sealed class TwilioVerifyService : IPhoneVerificationService
 
     private readonly ITwilioClientProvider _clientProvider;
     private readonly TwilioSettings _settings;
+    private readonly AuthTestModeSettings _testMode;
     private readonly IMemoryCache _cache;
     private readonly ILogger<TwilioVerifyService> _logger;
 
     public TwilioVerifyService(
         ITwilioClientProvider clientProvider,
         IOptions<TwilioSettings> options,
+        IOptions<AuthTestModeSettings> testModeOptions,
         IMemoryCache cache,
         ILogger<TwilioVerifyService> logger)
     {
         _clientProvider = clientProvider;
         _settings = options.Value ?? new TwilioSettings();
+        _testMode = testModeOptions.Value ?? new AuthTestModeSettings();
         _cache = cache;
         _logger = logger;
     }
@@ -176,6 +180,32 @@ public sealed class TwilioVerifyService : IPhoneVerificationService
 
         if (string.IsNullOrWhiteSpace(code))
             return Result<VerifyOtpResult>.Failure(ErrorCodes.OtpInvalid, "Verification code is required.");
+
+        // ── Test-mode bypass ───────────────────────────────────────────
+        // When Auth:TestMode:Enabled is true AND the submitted code
+        // matches the configured bypass code (default "111111"), short
+        // circuit Twilio and return success. We STILL run the phone
+        // normalisation above so test mode can never "verify" a junk
+        // value — the destination has to be a valid phone shape. The
+        // real OTP path is untouched; we just add an alternate accept
+        // branch for QA.
+        //
+        // Default is OFF. Never log the actual code submitted by the
+        // user. The presence of the bypass is logged so any non-prod
+        // environment with it on is obvious in the log stream.
+        if (_testMode.Enabled
+            && !string.IsNullOrEmpty(_testMode.BypassCode)
+            && code.Trim() == _testMode.BypassCode)
+        {
+            _logger.LogWarning(
+                "[TEST_MODE] OTP bypass accepted (phone) for {Phone}.",
+                MaskPhone(normalized));
+            return Result<VerifyOtpResult>.Success(new VerifyOtpResult
+            {
+                PhoneNumber = normalized,
+                Verified = true
+            }, "Phone number verified.");
+        }
 
         if (!TryGetReadyClient(out var client, out var configError))
             return Result<VerifyOtpResult>.Failure(configError!.Code, configError!.Message);

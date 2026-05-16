@@ -279,8 +279,15 @@ public static class ServiceExtensions
     /// <summary>
     /// Registers application-layer auth services.
     /// </summary>
-    public static IServiceCollection AddAuthServices(this IServiceCollection services)
+    public static IServiceCollection AddAuthServices(this IServiceCollection services, IConfiguration configuration)
     {
+        // QA / staging-only OTP bypass. Default Enabled=false. When on,
+        // both phone-OTP (Twilio) and email-OTP (OtpService) accept
+        // the configured BypassCode (default "111111") in addition to
+        // their real check. Real OTP validation stays in place.
+        services.Configure<AuthTestModeSettings>(
+            configuration.GetSection(AuthTestModeSettings.SectionName));
+
         services.AddScoped<IAuthService, AuthService>();
         return services;
     }
