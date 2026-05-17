@@ -45,6 +45,11 @@ namespace ZansiHustle.Application.Shops.Dtos
         public decimal? Rating { get; set; }
         public int ReviewCount { get; set; }
 
+        // ── Engagement ───────────────────────────────────────────────
+        public int FollowersCount { get; set; }
+        /// <summary>True when the authenticated caller follows this shop. False on anonymous reads.</summary>
+        public bool IsFollowedByMe { get; set; }
+
         public DateTime CreatedAtUtc { get; set; }
         public DateTime? UpdatedAtUtc { get; set; }
     }

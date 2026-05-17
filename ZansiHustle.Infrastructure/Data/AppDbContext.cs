@@ -6,6 +6,7 @@ using ZansiHustle.Domain.Agents.AgentApplications;
 using ZansiHustle.Domain.BudgetTransactions;
 using ZansiHustle.Domain.Campaigns;
 using ZansiHustle.Domain.ContentTasks;
+using ZansiHustle.Domain.Engagement;
 using ZansiHustle.Domain.Events;
 using ZansiHustle.Domain.Fundraising;
 using ZansiHustle.Domain.Identity;
@@ -144,4 +145,16 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
 
     // ── Shop storefronts (decoupled from Merchant; see ShopProfile) ──
     public DbSet<ShopProfile> ShopProfiles => Set<ShopProfile>();
+
+    // ── Buyer engagement (likes / follows / saves) ─────────────────────────
+    // Four join tables, one per target domain. Counts are denormalised onto
+    // the parent entities (Listing.LikeCount, MarketplaceListing.LikeCount,
+    // ShopProfile.FollowersCount, Merchant.SavesCount) and updated
+    // transactionally with each row insert/delete. See
+    // ZansiHustle.Application.Engagement.EngagementService for the
+    // mutation flow.
+    public DbSet<ListingLike> ListingLikes => Set<ListingLike>();
+    public DbSet<MarketplaceListingLike> MarketplaceListingLikes => Set<MarketplaceListingLike>();
+    public DbSet<ShopFollow> ShopFollows => Set<ShopFollow>();
+    public DbSet<StoreSave> StoreSaves => Set<StoreSave>();
 }

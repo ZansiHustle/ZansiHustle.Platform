@@ -86,6 +86,15 @@ namespace ZansiHustle.Domain.Shops
         public decimal? Rating { get; set; }
         public int ReviewCount { get; set; }
 
+        /// <summary>
+        /// Denormalised count of buyers following this shop. Source of
+        /// truth is the <c>ShopFollows</c> table; updated transactionally
+        /// with each follow row. Deliberately separate from the legacy
+        /// <c>Merchant.FollowersCount</c> column — buyer "follow"
+        /// semantics attach to the storefront, not the payout-merchant.
+        /// </summary>
+        public int FollowersCount { get; set; }
+
         public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
         public DateTime? UpdatedAtUtc { get; set; }
     }

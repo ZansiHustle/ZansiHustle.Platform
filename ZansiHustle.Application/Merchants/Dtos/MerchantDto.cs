@@ -57,6 +57,13 @@ namespace ZansiHustle.Application.Merchants.Dtos
         public DateTime? BankUpdatedAtUtc { get; set; }
 
         public int FollowersCount { get; set; }
+        /// <summary>
+        /// Denormalised count of buyers who have saved this merchant.
+        /// Only meaningful when <c>Type == PhysicalStore</c>.
+        /// </summary>
+        public int SavesCount { get; set; }
+        /// <summary>True when the authenticated caller has saved this store. Always false on admin-context reads.</summary>
+        public bool IsSavedByMe { get; set; }
         public decimal? Rating { get; set; }
         public int ReviewCount { get; set; }
         public int TotalOrders { get; set; }

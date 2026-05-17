@@ -89,5 +89,16 @@ namespace ZansiHustle.Application.Merchants.Dtos
         public string? Phone { get; set; }
         public string? WhatsApp { get; set; }
         public string? WebsiteUrl { get; set; }
+
+        // ── Engagement (physical-store "save" only) ─────────────────
+        /// <summary>
+        /// Denormalised count of buyers who have saved this merchant.
+        /// Only meaningful when <see cref="Type"/> is <c>PhysicalStore</c>;
+        /// the field still serialises for other types (always 0) so
+        /// the DTO shape stays uniform.
+        /// </summary>
+        public int SavesCount { get; set; }
+        /// <summary>True when the authenticated caller has saved this store. False on anonymous reads.</summary>
+        public bool IsSavedByMe { get; set; }
     }
 }

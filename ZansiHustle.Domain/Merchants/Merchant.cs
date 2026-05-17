@@ -86,6 +86,17 @@ namespace ZansiHustle.Domain.Merchants
         public DateTime? BankUpdatedAtUtc { get; set; }
 
         public int FollowersCount { get; set; }
+
+        /// <summary>
+        /// Denormalised count of buyers who have "saved" this merchant
+        /// for later. Only meaningful when <see cref="Type"/> is
+        /// <c>PhysicalStore</c>; saves against other merchant types are
+        /// refused at the service layer. Source of truth is the
+        /// <c>StoreSaves</c> table; updated transactionally with each
+        /// save row.
+        /// </summary>
+        public int SavesCount { get; set; }
+
         public decimal? Rating { get; set; }
         public int ReviewCount { get; set; }
         public int TotalOrders { get; set; }

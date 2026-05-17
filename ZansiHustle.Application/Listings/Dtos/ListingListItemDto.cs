@@ -68,6 +68,15 @@ namespace ZansiHustle.Application.Listings.Dtos
         /// </summary>
         public int VariantCount { get; set; }
 
+        // ── Engagement ───────────────────────────────────────────────
+        /// <summary>Denormalised heart count from <c>Listing.LikeCount</c>.</summary>
+        public int LikeCount { get; set; }
+        /// <summary>
+        /// True when the authenticated caller has liked this listing.
+        /// Always <c>false</c> for anonymous / unauthenticated reads.
+        /// </summary>
+        public bool IsLikedByMe { get; set; }
+
         public DateTime CreatedAtUtc { get; set; }
     }
 }

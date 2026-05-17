@@ -560,6 +560,18 @@ public static class ServiceExtensions
         services.AddScoped<ZansiHustle.Application.Media.Storage.IStorageUrlResolver,
                            ZansiHustle.Application.Media.Storage.StorageUrlResolver>();
 
+        // Buyer engagement — likes / follows / saves. One service +
+        // one repository drive all four target domains (Listing /
+        // MarketplaceListing / ShopProfile / Merchant) so the
+        // controller, the React Query hooks, and the future Saved
+        // screen all share a uniform Result envelope.
+        services.AddScoped<
+            ZansiHustle.Application.Persistence.Engagement.IEngagementRepository,
+            ZansiHustle.Infrastructure.Persistence.Engagement.EngagementRepository>();
+        services.AddScoped<
+            ZansiHustle.Application.Engagement.IEngagementService,
+            ZansiHustle.Application.Engagement.EngagementService>();
+
         return services;
     }
 

@@ -60,6 +60,13 @@ namespace ZansiHustle.Domain.Marketplace
 
         public MarketplaceListingStatus Status { get; set; } = MarketplaceListingStatus.Active;
 
+        /// <summary>
+        /// Denormalised count of buyer "hearts" / likes on this casual
+        /// listing. Source of truth is the <c>MarketplaceListingLikes</c>
+        /// table; updated transactionally with each like row.
+        /// </summary>
+        public int LikeCount { get; set; }
+
         /// <summary>Ordered set of images attached to this listing.</summary>
         public List<MarketplaceListingImage> Images { get; set; } = new();
 

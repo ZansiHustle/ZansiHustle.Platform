@@ -49,6 +49,16 @@ namespace ZansiHustle.Application.Marketplace.Dtos
 
         public MarketplaceListingStatus Status { get; set; }
 
+        // ── Engagement ───────────────────────────────────────────────
+        /// <summary>Denormalised heart count from <c>MarketplaceListing.LikeCount</c>.</summary>
+        public int LikeCount { get; set; }
+        /// <summary>
+        /// True when the authenticated caller has liked this casual
+        /// listing. Always <c>false</c> for anonymous / unauthenticated
+        /// reads.
+        /// </summary>
+        public bool IsLikedByMe { get; set; }
+
         public DateTime CreatedAtUtc { get; set; }
         public DateTime? UpdatedAtUtc { get; set; }
     }

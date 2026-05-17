@@ -88,6 +88,15 @@ namespace ZansiHustle.Domain.Listings
         public decimal? Rating { get; set; }
         public int ReviewCount { get; set; }
 
+        /// <summary>
+        /// Denormalised count of buyer "hearts" / likes on this listing.
+        /// Source of truth is the <c>ListingLikes</c> table; the
+        /// engagement service updates this column inside the same
+        /// transaction as the like-row insert/delete so reads don't
+        /// have to aggregate per row.
+        /// </summary>
+        public int LikeCount { get; set; }
+
         // Product-only fields.
         public int? Stock { get; set; }
         public ListingCondition? Condition { get; set; }

@@ -62,5 +62,14 @@ namespace ZansiHustle.Application.Shops.Dtos
         /// claim — purely identity verification.
         /// </summary>
         public bool IsVerified { get; set; }
+
+        // ── Engagement ───────────────────────────────────────────────
+        /// <summary>Denormalised follower count from <c>ShopProfile.FollowersCount</c>.</summary>
+        public int FollowersCount { get; set; }
+        /// <summary>
+        /// True when the authenticated caller follows this shop.
+        /// Always <c>false</c> for anonymous / unauthenticated reads.
+        /// </summary>
+        public bool IsFollowedByMe { get; set; }
     }
 }
