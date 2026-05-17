@@ -18,6 +18,27 @@ namespace ZansiHustle.Application.Agents.AgentMappings
                   UserFullName = "@zansi.hustle Tiktok"
               }
             },
+            { "2", new AgentMappingDto
+              {
+                  AffiliateCode = "2",
+                  UserId = Guid.Parse("8b2b1576-5713-4f8a-8858-a5f3f6eb1297"),
+                  UserFullName = "@zh.meta.agent"
+              }
+            },
+            { "3", new AgentMappingDto
+              {
+                  AffiliateCode = "3",
+                  UserId = Guid.Parse("e84119f8-5387-49bc-9485-e9a3c736c272"),
+                  UserFullName = "@zh.x.agent"
+              }
+            },
+            { "4", new AgentMappingDto
+              {
+                  AffiliateCode = "4",
+                  UserId = Guid.Parse("7e8c2f79-d390-40e6-8a92-ebae8664211f"),
+                  UserFullName = "@zh.yt.agent"
+              }
+            },
             { "120", new AgentMappingDto
               {
                   AffiliateCode = "120",
