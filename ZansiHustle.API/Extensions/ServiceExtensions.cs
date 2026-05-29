@@ -479,6 +479,16 @@ public static class ServiceExtensions
         services.AddScoped<IAgentApplicationService, AgentApplicationService>();
         services.AddScoped<ZansiHustle.Application.Agents.AgentProvisioning.IAgentProvisioningService,
                            ZansiHustle.Application.Agents.AgentProvisioning.AgentProvisioningService>();
+        // Agent payout ledger. Settings bound from the `Agents` config
+        // section (CommissionPerApprovedLead, default R10). Service
+        // implementation lives in Infrastructure because it talks to
+        // AppDbContext directly — no repository indirection needed for
+        // this single feature.
+        services.Configure<ZansiHustle.Application.Agents.AgentPayouts.AgentEarningsSettings>(
+            configuration.GetSection(
+                ZansiHustle.Application.Agents.AgentPayouts.AgentEarningsSettings.SectionName));
+        services.AddScoped<ZansiHustle.Application.Agents.AgentPayouts.IAgentPayoutService,
+                           ZansiHustle.Infrastructure.Agents.AgentPayoutService>();
         services.AddScoped<ISellerLeadService, SellerLeadService>();
         services.AddScoped<IInfluencerService, InfluencerService>();
         services.AddScoped<IPodcastService, PodcastService>();

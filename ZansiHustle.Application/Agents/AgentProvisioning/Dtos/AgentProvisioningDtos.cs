@@ -56,5 +56,26 @@ namespace ZansiHustle.Application.Agents.AgentProvisioning.Dtos
         /// fresh one (the old one is invalidated server-side).
         /// </summary>
         public string? InitialPassword { get; set; }
+
+        // ── Source-of-truth earnings ──────────────────────────────────
+        // Populated by AgentProvisioningService against the live
+        // AgentPayouts ledger + SellerLeads.AssignedUserId == agent.
+        // Frontend used to hardcode `paidOut: 0` and compute
+        // `earningsOwed = approved × R10` locally; both values now come
+        // from the server so the admin drawer and the agent self-view
+        // see the same numbers.
+
+        /// <summary>Approved leads × commission rate. Rand.</summary>
+        public decimal TotalEarned { get; set; }
+
+        /// <summary>SUM(AgentPayouts.Amount) for this agent. Rand.</summary>
+        public decimal TotalPaidOut { get; set; }
+
+        /// <summary>TotalEarned − TotalPaidOut, clamped at 0. Rand.</summary>
+        public decimal Outstanding { get; set; }
+
+        public int SubmittedLeadsCount { get; set; }
+        public int ApprovedLeadsCount { get; set; }
+        public int RejectedLeadsCount { get; set; }
     }
 }

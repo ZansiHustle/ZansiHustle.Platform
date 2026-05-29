@@ -2,9 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using ZansiHustle.Application.Agents.AgentPayouts;
 using ZansiHustle.Application.Agents.AgentProvisioning.Dtos;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Shared.Enums.User;
@@ -18,10 +20,14 @@ namespace ZansiHustle.Application.Agents.AgentProvisioning
         private const string AgentRoleName = nameof(UserRole.Agent);
 
         private readonly UserManager<User> _userManager;
+        private readonly IAgentPayoutService _payouts;
 
-        public AgentProvisioningService(UserManager<User> userManager)
+        public AgentProvisioningService(
+            UserManager<User> userManager,
+            IAgentPayoutService payouts)
         {
             _userManager = userManager;
+            _payouts = payouts;
         }
 
         // ── Read ───────────────────────────────────────────────────
@@ -33,10 +39,17 @@ namespace ZansiHustle.Application.Agents.AgentProvisioning
                 var agents = await _userManager.GetUsersInRoleAsync(AgentRoleName);
                 // Ordering here is cheap — fetch count is low and stable
                 // enough that sorting in-memory won't blow up.
-                var data = agents
+                var ordered = agents
                     .OrderBy(u => u.FirstName).ThenBy(u => u.LastName)
-                    .Select(ToDto)
                     .ToList();
+
+                var data = new List<AgentDetailsDto>(ordered.Count);
+                foreach (var u in ordered)
+                {
+                    var dto = ToDto(u);
+                    await FillEarningsAsync(dto, u.Id);
+                    data.Add(dto);
+                }
                 return Result<List<AgentDetailsDto>>.Success(data, "Agents retrieved successfully.");
             }
             catch (Exception ex)
@@ -58,13 +71,34 @@ namespace ZansiHustle.Application.Agents.AgentProvisioning
                 if (!roles.Contains(AgentRoleName))
                     return Result<AgentDetailsDto>.Failure(ErrorCodes.NotFound, "Agent not found.");
 
-                return Result<AgentDetailsDto>.Success(ToDto(user), "Agent retrieved.");
+                var dto = ToDto(user);
+                await FillEarningsAsync(dto, user.Id);
+                return Result<AgentDetailsDto>.Success(dto, "Agent retrieved.");
             }
             catch (Exception ex)
             {
                 return Result<AgentDetailsDto>.Failure(ErrorCodes.Exception,
                     $"An error occurred while retrieving the agent. {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Hydrates the earnings fields on a single dto from the payout
+        /// service. Silently leaves them at default (0) on failure —
+        /// these fields are display data, not auth-critical; a transient
+        /// summary read failure should not 500 the agents list.
+        /// </summary>
+        private async Task FillEarningsAsync(AgentDetailsDto dto, Guid agentUserId, CancellationToken ct = default)
+        {
+            var result = await _payouts.GetSummaryAsync(agentUserId, ct);
+            if (!result.IsSuccess || result.Data is null) return;
+            var s = result.Data;
+            dto.TotalEarned = s.TotalEarned;
+            dto.TotalPaidOut = s.TotalPaidOut;
+            dto.Outstanding = s.Outstanding;
+            dto.SubmittedLeadsCount = s.SubmittedLeadsCount;
+            dto.ApprovedLeadsCount = s.ApprovedLeadsCount;
+            dto.RejectedLeadsCount = s.RejectedLeadsCount;
         }
 
         // ── Create ─────────────────────────────────────────────────

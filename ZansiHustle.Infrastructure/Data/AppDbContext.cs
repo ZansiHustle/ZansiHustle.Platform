@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using System.Reflection;
 using ZansiHustle.Domain.Agents.AgentApplications;
+using ZansiHustle.Domain.Agents.AgentPayouts;
 using ZansiHustle.Domain.BudgetTransactions;
 using ZansiHustle.Domain.Campaigns;
 using ZansiHustle.Domain.ContentTasks;
@@ -145,6 +146,14 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
 
     // ── Shop storefronts (decoupled from Merchant; see ShopProfile) ──
     public DbSet<ShopProfile> ShopProfiles => Set<ShopProfile>();
+
+    // ── Agent payout ledger ───────────────────────────────────────────────
+    // Auditable history of money paid to agents (lead-affiliate commissions).
+    // Source of truth for `Outstanding = TotalEarned − TotalPaidOut`. See
+    // ZansiHustle.Application.Agents.AgentPayouts.AgentPayoutService for the
+    // transactional record path; configuration lives in
+    // ZansiHustle.Infrastructure.Persistence.Agents.AgentPayoutConfiguration.
+    public DbSet<AgentPayout> AgentPayouts => Set<AgentPayout>();
 
     // ── Buyer engagement (likes / follows / saves) ─────────────────────────
     // Four join tables, one per target domain. Counts are denormalised onto
