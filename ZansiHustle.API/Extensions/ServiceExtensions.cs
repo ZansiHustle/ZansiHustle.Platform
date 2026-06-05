@@ -662,31 +662,85 @@ public static class ServiceExtensions
 
     /// <summary>
     /// Applies migrations and seeds startup data.
+    ///
+    /// Failure model — split between the two phases:
+    ///   • Migration phase (<see cref="RelationalDatabaseFacadeExtensions.MigrateAsync"/>):
+    ///     stays <b>fatal</b>. If the schema cannot be brought up to the
+    ///     compiled model, the running code's queries WILL break at request
+    ///     time. Better to refuse to boot — IIS surfaces 500.30 with the
+    ///     real reason in stdout, and ops can roll forward / fix DDL
+    ///     permissions / reconcile <c>__EFMigrationsHistory</c>.
+    ///   • Seeder phase (Identity roles / EventType templates / ZansiPulse
+    ///     setting defaults): <b>non-fatal</b>. Seeders insert tuning rows
+    ///     that the runtime already has code-level fallbacks for
+    ///     (<c>ZansiPulseDefaults</c>, code-defined role names, baked
+    ///     event-type templates). A broken seeder no longer takes the
+    ///     whole API down — the failure is logged and the host continues.
+    ///     The CEO/admin dashboard surfaces the missing rows separately;
+    ///     ops can retune them out-of-band.
     /// </summary>
     public static async Task SeedApplicationAsync(this WebApplication app)
     {
         await using var scope = app.Services.CreateAsyncScope();
         var services = scope.ServiceProvider;
+        var logger = services.GetRequiredService<ILogger<Program>>();
 
+        // ── Phase 1: migrations (FATAL on failure) ────────────────────────
         try
         {
             var dbContext = services.GetRequiredService<AppDbContext>();
             await dbContext.Database.MigrateAsync();
-
-            var roleManager = services.GetRequiredService<RoleManager<IdentityRole<Guid>>>();
-            await IdentitySeeder.SeedRolesAsync(roleManager);
-
-            await EventTypeTemplateSeeder.SeedAsync(dbContext);
-
-            // ZansiPulse tuning knobs (event weights / recommendation blend /
-            // interest bounds). Idempotent — only inserts missing keys.
-            await ZansiPulseSettingsSeeder.SeedAsync(dbContext);
         }
         catch (Exception ex)
         {
-            var logger = services.GetRequiredService<ILogger<Program>>();
-            logger.LogError(ex, "An error occurred during application startup seeding.");
+            logger.LogCritical(ex,
+                "Database migration failed during startup. Host will not start. " +
+                "Check stdout (web.config: stdoutLogEnabled=true) for the underlying SQL exception, " +
+                "and verify the app DB user has DDL rights (CREATE TABLE / CREATE INDEX). " +
+                "Migrations can be applied out-of-band with: dotnet ef database update " +
+                "--project ZansiHustle.Infrastructure --startup-project ZansiHustle.API.");
             throw;
+        }
+
+        // ── Phase 2: seeders (NON-FATAL on failure) ───────────────────────
+        // Each seeder is wrapped individually so a failure in one does not
+        // skip the rest. Order is preserved from the original implementation.
+        var roleManager = services.GetRequiredService<RoleManager<IdentityRole<Guid>>>();
+        var dbContextForSeed = services.GetRequiredService<AppDbContext>();
+
+        await SafeSeedAsync(logger, "IdentityRoles",
+            () => IdentitySeeder.SeedRolesAsync(roleManager));
+
+        await SafeSeedAsync(logger, "EventTypeTemplates",
+            () => EventTypeTemplateSeeder.SeedAsync(dbContextForSeed));
+
+        // ZansiPulse tuning knobs (event weights / recommendation blend /
+        // interest bounds). Idempotent — only inserts missing keys, and
+        // ZansiPulseDefaults provides code-level fallbacks if the rows are
+        // ever missing, so a transient failure here cannot affect correctness.
+        await SafeSeedAsync(logger, "ZansiPulseSettings",
+            () => ZansiPulseSettingsSeeder.SeedAsync(dbContextForSeed));
+    }
+
+    /// <summary>
+    /// Runs a single seeder and converts any exception into a logged
+    /// warning. The host keeps booting — the dashboard / admin surface
+    /// will show the absent tuning rows separately, and ops can retry
+    /// out-of-band without redeploying.
+    /// </summary>
+    private static async Task SafeSeedAsync(ILogger logger, string name, Func<Task> seed)
+    {
+        try
+        {
+            await seed();
+            logger.LogInformation("Seeder '{Name}' completed.", name);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex,
+                "Seeder '{Name}' failed during startup. Host will continue; " +
+                "the missing data can be reapplied out-of-band. See exception for the root cause.",
+                name);
         }
     }
 }
