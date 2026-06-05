@@ -63,6 +63,34 @@ namespace ZansiHustle.Application.Orders
                     if (listing.Status != ZansiHustle.Shared.Enums.Listings.ListingStatus.Active)
                         return Result<OrderDto>.Failure(ErrorCodes.BadRequest, $"Listing '{listing.Title}' is not available for purchase.");
 
+                    // ── Stock validation ────────────────────────────────────
+                    // `Listing.Stock` is nullable — null means "not tracked"
+                    // (typical for services + open-stock products). When it
+                    // IS tracked, requested quantity must fit. The check uses
+                    // the grouped quantity, so two cart lines of the same
+                    // listing collapse first → no false "in stock" because
+                    // each line individually fits while the sum doesn't.
+                    //
+                    // No reservation / decrement here — that requires a
+                    // transactional inventory model with refund-on-cancel
+                    // semantics. Pre-checking is enough to stop the obvious
+                    // overselling case at the moment of order placement.
+                    // Variant-level stock (ListingVariant.Stock) is NOT
+                    // consulted yet because OrderItem can't yet carry a
+                    // VariantId — see "Variant order support" follow-up.
+                    if (listing.Stock is int available)
+                    {
+                        if (available <= 0)
+                            return Result<OrderDto>.Failure(
+                                ErrorCodes.BadRequest,
+                                $"'{listing.Title}' is out of stock.");
+
+                        if (line.Quantity > available)
+                            return Result<OrderDto>.Failure(
+                                ErrorCodes.BadRequest,
+                                $"Only {available} left in stock for '{listing.Title}'.");
+                    }
+
                     listings.Add(listing);
                 }
 

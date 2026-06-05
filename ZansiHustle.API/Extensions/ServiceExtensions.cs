@@ -588,6 +588,15 @@ public static class ServiceExtensions
             ZansiHustle.Application.Engagement.IEngagementService,
             ZansiHustle.Application.Engagement.EngagementService>();
 
+        // ZansiPulse — the ZansiHustle intelligence layer. Event tracking,
+        // interest scoring, recommendations, trending, supply/demand and
+        // dashboard rollups. Service lives in Infrastructure (talks to
+        // AppDbContext directly, same as ChatService) so it can run the
+        // cross-entity joins recommendations need without a wide repository.
+        services.AddScoped<
+            ZansiHustle.Application.ZansiPulse.IZansiPulseService,
+            ZansiHustle.Infrastructure.ZansiPulse.ZansiPulseService>();
+
         return services;
     }
 
@@ -668,6 +677,10 @@ public static class ServiceExtensions
             await IdentitySeeder.SeedRolesAsync(roleManager);
 
             await EventTypeTemplateSeeder.SeedAsync(dbContext);
+
+            // ZansiPulse tuning knobs (event weights / recommendation blend /
+            // interest bounds). Idempotent — only inserts missing keys.
+            await ZansiPulseSettingsSeeder.SeedAsync(dbContext);
         }
         catch (Exception ex)
         {

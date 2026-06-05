@@ -43,6 +43,22 @@ public sealed class OzowConfigReporter : IHostedService
             "[OzowConfig] Validating Ozow configuration for environment '{Env}'…",
             _env.EnvironmentName);
 
+        // ── Production guard: UAT TEST MODE must NEVER be on in Production ──
+        // This is a hard fail rather than a warning. The whole point of
+        // UatTestMode is to cap real-money charges at R5 for safe live-bank
+        // testing. Leaving it on in Production would silently turn every
+        // checkout into an R5 charge, which would be a far worse outage
+        // than refusing to boot. Fail loud, fail early.
+        if (_env.IsProduction() && _settings.UatTestMode)
+        {
+            const string msg =
+                "[OzowConfig] FATAL: Ozow:UatTestMode is true but the host environment is Production. " +
+                "UatTestMode caps every charged amount and would corrupt live takings. " +
+                "Set Ozow__UatTestMode=false (or remove it) on the Production host and redeploy.";
+            _logger.LogCritical(msg);
+            throw new InvalidOperationException(msg);
+        }
+
         // ── Credentials + NotifyUrl ──────────────────────────────────────────
         var missing = _settings.GetMissingFieldEnvVars();
 
@@ -83,10 +99,20 @@ public sealed class OzowConfigReporter : IHostedService
         // ── UAT controlled-testing announcement ──────────────────────────────
         if (_settings.UatTestMode)
         {
-            _logger.LogWarning(
-                "[OzowConfig] UAT TEST MODE is ON. Every Ozow payment will be capped at R{Cap} " +
-                "and tagged with UAT-TEST-/IsTest=true. Disable Ozow:UatTestMode for production.",
-                _settings.UatTestAmount);
+            if (_settings.UatTestAmount <= 0m)
+            {
+                _logger.LogError(
+                    "[OzowConfig] UatTestMode is ON but UatTestAmount is {Amount}. " +
+                    "Set a positive Ozow__UatTestAmount (e.g. 5.00) before testing.",
+                    _settings.UatTestAmount);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "[OzowConfig] UAT TEST MODE is ON. Every Ozow payment will be capped at R{Cap} " +
+                    "and tagged with UAT-TEST-/IsTest=true. Disable Ozow:UatTestMode for production.",
+                    _settings.UatTestAmount);
+            }
         }
 
         return Task.CompletedTask;

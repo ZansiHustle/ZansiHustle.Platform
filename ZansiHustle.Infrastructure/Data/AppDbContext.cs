@@ -25,6 +25,7 @@ using ZansiHustle.Domain.Reviews;
 using ZansiHustle.Domain.SellerCategories;
 using ZansiHustle.Domain.Shops;
 using ZansiHustle.Domain.SellerLeads;
+using ZansiHustle.Domain.ZansiPulse;
 
 namespace ZansiHustle.Infrastructure.Data;
 
@@ -176,4 +177,24 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     public DbSet<MarketplaceListingLike> MarketplaceListingLikes => Set<MarketplaceListingLike>();
     public DbSet<ShopFollow> ShopFollows => Set<ShopFollow>();
     public DbSet<StoreSave> StoreSaves => Set<StoreSave>();
+
+    // ── ZansiPulse — the ZansiHustle intelligence layer ────────────────────
+    // Event stream + derived metrics, scores, recommendations, trending,
+    // supply/demand and dashboard snapshots. Reference ids are loose
+    // (un-FK'd) analytics columns; joins happen in ZansiPulseService. EF
+    // configurations live in
+    // ZansiHustle.Infrastructure.Persistence.ZansiPulse.ZansiPulseConfigurations
+    // and are auto-applied via ApplyConfigurationsFromAssembly above.
+    public DbSet<ZansiPulseEvent> ZansiPulseEvents => Set<ZansiPulseEvent>();
+    public DbSet<ZansiPulseUserInterestScore> ZansiPulseUserInterestScores => Set<ZansiPulseUserInterestScore>();
+    public DbSet<ZansiPulseListingMetric> ZansiPulseListingMetrics => Set<ZansiPulseListingMetric>();
+    public DbSet<ZansiPulseSellerMetric> ZansiPulseSellerMetrics => Set<ZansiPulseSellerMetric>();
+    public DbSet<ZansiPulseShopMetric> ZansiPulseShopMetrics => Set<ZansiPulseShopMetric>();
+    public DbSet<ZansiPulseCategoryMetric> ZansiPulseCategoryMetrics => Set<ZansiPulseCategoryMetric>();
+    public DbSet<ZansiPulseRegionMetric> ZansiPulseRegionMetrics => Set<ZansiPulseRegionMetric>();
+    public DbSet<ZansiPulseSearchTermMetric> ZansiPulseSearchTermMetrics => Set<ZansiPulseSearchTermMetric>();
+    public DbSet<ZansiPulseSupplyDemandGap> ZansiPulseSupplyDemandGaps => Set<ZansiPulseSupplyDemandGap>();
+    public DbSet<ZansiPulseRecommendationLog> ZansiPulseRecommendationLogs => Set<ZansiPulseRecommendationLog>();
+    public DbSet<ZansiPulseSnapshot> ZansiPulseSnapshots => Set<ZansiPulseSnapshot>();
+    public DbSet<ZansiPulseSetting> ZansiPulseSettings => Set<ZansiPulseSetting>();
 }

@@ -113,6 +113,16 @@ namespace ZansiHustle.Infrastructure.Payments.Ozow
                 request.ErrorUrl = string.IsNullOrWhiteSpace(request.ErrorUrl) ? _settings.ErrorUrl : request.ErrorUrl;
                 request.NotifyUrl = string.IsNullOrWhiteSpace(request.NotifyUrl) ? _settings.NotifyUrl : request.NotifyUrl;
 
+                // Normalise the decimal scale to 2 places so the JSON wire
+                // body and the hash input agree on the exact string form.
+                //   • Math.Round(5m, 2) → 5m       (scale 0, JSON emits "5")
+                //   • Math.Round(5m, 2) + 0.00m → 5.00m (scale 2, JSON emits "5.00")
+                // OzowHashService formats the amount as "0.00" invariant for
+                // the SHA512 input regardless, but pinning the scale here
+                // keeps the wire body unambiguous and matches what other
+                // Ozow integrations send. The numeric value is unchanged.
+                request.Amount = Math.Round(request.Amount, 2, MidpointRounding.AwayFromZero) + 0.00m;
+
                 request.HashCheck = _hashService.GenerateRequestHash(request);
 
                 // Pre-call log. Never log ApiKey/PrivateKey/HashCheck — only
