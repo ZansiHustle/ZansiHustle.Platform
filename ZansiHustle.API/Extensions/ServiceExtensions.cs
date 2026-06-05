@@ -489,6 +489,12 @@ public static class ServiceExtensions
                 ZansiHustle.Application.Agents.AgentPayouts.AgentEarningsSettings.SectionName));
         services.AddScoped<ZansiHustle.Application.Agents.AgentPayouts.IAgentPayoutService,
                            ZansiHustle.Infrastructure.Agents.AgentPayoutService>();
+        // Buyer ↔ seller / buyer ↔ merchant chat. Service lives in
+        // Infrastructure because it queries AppDbContext directly
+        // (same pattern as AgentPayoutService). See
+        // ZansiHustle.Application.Chat.IChatService for the contract.
+        services.AddScoped<ZansiHustle.Application.Chat.IChatService,
+                           ZansiHustle.Infrastructure.Chat.ChatService>();
         services.AddScoped<ISellerLeadService, SellerLeadService>();
         services.AddScoped<IInfluencerService, InfluencerService>();
         services.AddScoped<IPodcastService, PodcastService>();

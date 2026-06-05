@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using System.Reflection;
 using ZansiHustle.Domain.Agents.AgentApplications;
 using ZansiHustle.Domain.Agents.AgentPayouts;
+using ZansiHustle.Domain.Chat;
 using ZansiHustle.Domain.BudgetTransactions;
 using ZansiHustle.Domain.Campaigns;
 using ZansiHustle.Domain.ContentTasks;
@@ -146,6 +147,15 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
 
     // ── Shop storefronts (decoupled from Merchant; see ShopProfile) ──
     public DbSet<ShopProfile> ShopProfiles => Set<ShopProfile>();
+
+    // ── Chat / Messaging ──────────────────────────────────────────────────
+    // Buyer↔seller and buyer↔merchant text conversations. See
+    // ZansiHustle.Application.Chat.ChatService for the read/write flows
+    // and ZansiHustle.Infrastructure.Persistence.Chat.ChatConfigurations
+    // for table / index / FK shapes.
+    public DbSet<Conversation> Conversations => Set<Conversation>();
+    public DbSet<ConversationParticipant> ConversationParticipants => Set<ConversationParticipant>();
+    public DbSet<Message> ChatMessages => Set<Message>();
 
     // ── Agent payout ledger ───────────────────────────────────────────────
     // Auditable history of money paid to agents (lead-affiliate commissions).
