@@ -24,6 +24,8 @@ namespace ZansiHustle.Application.Orders.Dtos
         public PaymentStatus PaymentStatus { get; set; }
 
         public decimal Subtotal { get; set; }
+        /// <summary>ZansiDispatch delivery fee included in <see cref="Total"/>. Null = no managed delivery.</summary>
+        public decimal? DeliveryFee { get; set; }
         public decimal Total { get; set; }
         public string Currency { get; set; } = "ZAR";
 

@@ -597,6 +597,43 @@ public static class ServiceExtensions
             ZansiHustle.Application.ZansiPulse.IZansiPulseService,
             ZansiHustle.Infrastructure.ZansiPulse.ZansiPulseService>();
 
+        // ZansiDispatch — the logistics control layer. Provider-agnostic
+        // checkout quotes + shipment/reconciliation command centre. Bind the
+        // provider config section (all-optional; missing Courier Guy/Shiplogic
+        // credentials never crash startup — they're validated only when that
+        // provider is enabled, which Phase 1 never does). Both Phase 1 quote
+        // providers register against the same interface; the service resolves
+        // the configured one and falls back to ManualFallback.
+        services.Configure<ZansiHustle.Infrastructure.Configuration.ZansiDispatchOptions>(
+            configuration.GetSection(ZansiHustle.Infrastructure.Configuration.ZansiDispatchOptions.SectionName));
+
+        // Deterministic in-house providers (always available, no credentials).
+        services.AddScoped<
+            ZansiHustle.Application.ZansiDispatch.Providers.IZansiDispatchQuoteProvider,
+            ZansiHustle.Infrastructure.ZansiDispatch.Providers.InternalEstimateProvider>();
+        services.AddScoped<
+            ZansiHustle.Application.ZansiDispatch.Providers.IZansiDispatchQuoteProvider,
+            ZansiHustle.Infrastructure.ZansiDispatch.Providers.ManualFallbackProvider>();
+
+        // Courier Guy / Shiplogic (Provider #1). Typed HttpClient so the base
+        // address/timeout are managed by IHttpClientFactory; the Bearer key is
+        // attached per request inside the provider (never logged). The SAME
+        // provider implements both quote + shipment interfaces. It self-gates on
+        // Enabled + IsConfigured, so a deployment without credentials binds fine
+        // and the API starts — the provider simply reports IsEnabled == false.
+        services.AddHttpClient<ZansiHustle.Infrastructure.ZansiDispatch.Providers.CourierGuy.CourierGuyProvider>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(30);
+        });
+        services.AddScoped<ZansiHustle.Application.ZansiDispatch.Providers.IZansiDispatchQuoteProvider>(
+            sp => sp.GetRequiredService<ZansiHustle.Infrastructure.ZansiDispatch.Providers.CourierGuy.CourierGuyProvider>());
+        services.AddScoped<ZansiHustle.Application.ZansiDispatch.Providers.IZansiDispatchShipmentProvider>(
+            sp => sp.GetRequiredService<ZansiHustle.Infrastructure.ZansiDispatch.Providers.CourierGuy.CourierGuyProvider>());
+
+        services.AddScoped<
+            ZansiHustle.Application.ZansiDispatch.IZansiDispatchService,
+            ZansiHustle.Infrastructure.ZansiDispatch.ZansiDispatchService>();
+
         return services;
     }
 
@@ -720,6 +757,12 @@ public static class ServiceExtensions
         // ever missing, so a transient failure here cannot affect correctness.
         await SafeSeedAsync(logger, "ZansiPulseSettings",
             () => ZansiPulseSettingsSeeder.SeedAsync(dbContextForSeed));
+
+        // ZansiDispatch logistics settings (fees / buffers / expiry / flags).
+        // Idempotent; ZansiDispatchDefaults provides code-level fallbacks, so a
+        // transient failure here cannot affect quoting correctness.
+        await SafeSeedAsync(logger, "ZansiDispatchSettings",
+            () => ZansiDispatchSettingsSeeder.SeedAsync(dbContextForSeed));
     }
 
     /// <summary>

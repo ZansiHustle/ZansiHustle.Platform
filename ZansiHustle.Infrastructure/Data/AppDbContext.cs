@@ -26,6 +26,7 @@ using ZansiHustle.Domain.SellerCategories;
 using ZansiHustle.Domain.Shops;
 using ZansiHustle.Domain.SellerLeads;
 using ZansiHustle.Domain.ZansiPulse;
+using ZansiHustle.Domain.ZansiDispatch;
 
 namespace ZansiHustle.Infrastructure.Data;
 
@@ -197,4 +198,18 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     public DbSet<ZansiPulseRecommendationLog> ZansiPulseRecommendationLogs => Set<ZansiPulseRecommendationLog>();
     public DbSet<ZansiPulseSnapshot> ZansiPulseSnapshots => Set<ZansiPulseSnapshot>();
     public DbSet<ZansiPulseSetting> ZansiPulseSettings => Set<ZansiPulseSetting>();
+
+    // ── ZansiDispatch — logistics control layer ────────────────────────────
+    // Checkout delivery quotes/options, shipment lifecycle + reconciliation,
+    // audit ledger, provider request logs, and tunable settings. Reference ids
+    // are loose (un-FK'd) operational columns; configs live in
+    // ZansiHustle.Infrastructure.Persistence.ZansiDispatch.ZansiDispatchConfigurations
+    // (auto-applied above).
+    public DbSet<ZansiDispatchQuote> ZansiDispatchQuotes => Set<ZansiDispatchQuote>();
+    public DbSet<ZansiDispatchQuoteOption> ZansiDispatchQuoteOptions => Set<ZansiDispatchQuoteOption>();
+    public DbSet<ZansiDispatchShipment> ZansiDispatchShipments => Set<ZansiDispatchShipment>();
+    public DbSet<ZansiDispatchShipmentEvent> ZansiDispatchShipmentEvents => Set<ZansiDispatchShipmentEvent>();
+    public DbSet<ZansiDispatchLedgerEntry> ZansiDispatchLedgerEntries => Set<ZansiDispatchLedgerEntry>();
+    public DbSet<ZansiDispatchProviderRequestLog> ZansiDispatchProviderRequestLogs => Set<ZansiDispatchProviderRequestLog>();
+    public DbSet<ZansiDispatchSetting> ZansiDispatchSettings => Set<ZansiDispatchSetting>();
 }

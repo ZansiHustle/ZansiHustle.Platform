@@ -1,0 +1,73 @@
+using System;
+using System.Collections.Generic;
+using ZansiHustle.Shared.Enums.ZansiDispatch;
+
+namespace ZansiHustle.Application.ZansiDispatch.Dtos
+{
+    /// <summary>A pickup/delivery contact (Courier Guy needs email and/or mobile).</summary>
+    public sealed class DispatchContactDto
+    {
+        public string? Name { get; set; }
+        public string? MobileNumber { get; set; }
+        public string? Email { get; set; }
+    }
+
+    /// <summary>Body for <c>POST /api/zansidispatch/shipments/create-from-quote</c>.</summary>
+    public sealed class CreateShipmentFromQuoteRequestDto
+    {
+        public Guid OrderId { get; set; }
+        public Guid QuoteOptionId { get; set; }
+
+        public DispatchContactDto CollectionContact { get; set; } = new();
+        public DispatchContactDto DeliveryContact { get; set; } = new();
+
+        public string? CustomerReference { get; set; }
+        public string? CustomerReferenceName { get; set; } = "Order no.";
+        public string? SpecialInstructionsCollection { get; set; }
+        public string? SpecialInstructionsDelivery { get; set; }
+        public bool MuteNotifications { get; set; }
+    }
+
+    /// <summary>One tracking event surfaced to ops.</summary>
+    public sealed class ShipmentEventDto
+    {
+        public string ProviderStatus { get; set; } = string.Empty;
+        public ZansiDispatchShipmentStatus InternalStatus { get; set; }
+        public string? Message { get; set; }
+        public string? Location { get; set; }
+        public DateTime EventTime { get; set; }
+    }
+
+    /// <summary>Result of <c>GET /api/zansidispatch/shipments/{id}/track</c>.</summary>
+    public sealed class TrackingResultDto
+    {
+        public Guid ShipmentId { get; set; }
+        public ZansiDispatchShipmentStatus Status { get; set; }
+        public ZansiDispatchReconciliationStatus ReconciliationStatus { get; set; }
+        public string? TrackingNumber { get; set; }
+        public DateTime? DeliveredAt { get; set; }
+        public List<ShipmentEventDto> Events { get; set; } = new();
+    }
+
+    /// <summary>Result of <c>GET /api/zansidispatch/shipments/{id}/label</c>.</summary>
+    public sealed class ShipmentLabelDto
+    {
+        public Guid ShipmentId { get; set; }
+        public string LabelUrl { get; set; } = string.Empty;
+        public DateTime? ExpiresAt { get; set; }
+    }
+
+    /// <summary>Optional body for the cancel endpoint.</summary>
+    public sealed class CancelShipmentRequestDto
+    {
+        public string? Reason { get; set; }
+    }
+
+    /// <summary>Lightweight ack for the webhook endpoint.</summary>
+    public sealed class WebhookAckDto
+    {
+        public bool Received { get; set; }
+        public bool ShipmentMatched { get; set; }
+        public int EventsRecorded { get; set; }
+    }
+}

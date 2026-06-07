@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using ZansiHustle.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using ZansiHustle.Infrastructure.Data;
 namespace ZansiHustle.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260605154242_AddZansiDispatch")]
+    partial class AddZansiDispatch
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -3039,9 +3042,6 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.Property<string>("ResponseJson")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<int?>("StatusCode")
-                        .HasColumnType("int");
-
                     b.HasKey("Id");
 
                     b.HasIndex("CreatedAt");
@@ -3063,47 +3063,16 @@ namespace ZansiHustle.Infrastructure.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
-                    b.Property<int?>("BuyerAddressType")
-                        .HasColumnType("int");
-
                     b.Property<string>("BuyerCity")
                         .HasMaxLength(150)
                         .HasColumnType("nvarchar(150)");
-
-                    b.Property<string>("BuyerCountry")
-                        .HasMaxLength(4)
-                        .HasColumnType("nvarchar(4)");
-
-                    b.Property<decimal?>("BuyerLat")
-                        .HasPrecision(18, 7)
-                        .HasColumnType("decimal(18,7)");
-
-                    b.Property<decimal?>("BuyerLng")
-                        .HasPrecision(18, 7)
-                        .HasColumnType("decimal(18,7)");
-
-                    b.Property<string>("BuyerLocalArea")
-                        .HasMaxLength(150)
-                        .HasColumnType("nvarchar(150)");
-
-                    b.Property<string>("BuyerPostalCode")
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
 
                     b.Property<string>("BuyerProvince")
                         .HasMaxLength(150)
                         .HasColumnType("nvarchar(150)");
 
-                    b.Property<string>("BuyerStreetAddress")
-                        .HasMaxLength(300)
-                        .HasColumnType("nvarchar(300)");
-
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
-
-                    b.Property<decimal?>("DeclaredValue")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal?>("DistanceKm")
                         .HasPrecision(18, 3)
@@ -3128,66 +3097,23 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.Property<Guid?>("OrderId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("ParcelDescription")
-                        .HasMaxLength(300)
-                        .HasColumnType("nvarchar(300)");
-
                     b.Property<string>("SellerAddressSummary")
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
-
-                    b.Property<int?>("SellerAddressType")
-                        .HasColumnType("int");
 
                     b.Property<string>("SellerCity")
                         .HasMaxLength(150)
                         .HasColumnType("nvarchar(150)");
 
-                    b.Property<string>("SellerCountry")
-                        .HasMaxLength(4)
-                        .HasColumnType("nvarchar(4)");
-
-                    b.Property<decimal?>("SellerLat")
-                        .HasPrecision(18, 7)
-                        .HasColumnType("decimal(18,7)");
-
-                    b.Property<decimal?>("SellerLng")
-                        .HasPrecision(18, 7)
-                        .HasColumnType("decimal(18,7)");
-
-                    b.Property<string>("SellerLocalArea")
-                        .HasMaxLength(150)
-                        .HasColumnType("nvarchar(150)");
-
-                    b.Property<string>("SellerPostalCode")
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
                     b.Property<string>("SellerProvince")
                         .HasMaxLength(150)
                         .HasColumnType("nvarchar(150)");
-
-                    b.Property<string>("SellerStreetAddress")
-                        .HasMaxLength(300)
-                        .HasColumnType("nvarchar(300)");
 
                     b.Property<Guid?>("ShopId")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<int>("Status")
                         .HasColumnType("int");
-
-                    b.Property<decimal?>("SubmittedHeightCm")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<decimal?>("SubmittedLengthCm")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<decimal?>("SubmittedWidthCm")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("datetime2");
@@ -3249,10 +3175,6 @@ namespace ZansiHustle.Infrastructure.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
-                    b.Property<string>("ProviderServiceLevelId")
-                        .HasMaxLength(120)
-                        .HasColumnType("nvarchar(120)");
-
                     b.Property<int>("ProviderType")
                         .HasColumnType("int");
 
@@ -3269,24 +3191,8 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.Property<int>("ServiceLevel")
                         .HasColumnType("int");
 
-                    b.Property<string>("ServiceLevelCode")
-                        .HasMaxLength(60)
-                        .HasColumnType("nvarchar(60)");
-
-                    b.Property<string>("ServiceLevelName")
-                        .HasMaxLength(120)
-                        .HasColumnType("nvarchar(120)");
-
-                    b.Property<decimal?>("TotalAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("datetime2");
-
-                    b.Property<decimal?>("VatAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
 
                     b.HasKey("Id");
 
@@ -3361,13 +3267,6 @@ namespace ZansiHustle.Infrastructure.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
-                    b.Property<string>("LabelUrl")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
-                    b.Property<DateTime?>("LabelUrlExpiresAt")
-                        .HasColumnType("datetime2");
-
                     b.Property<Guid?>("MerchantId")
                         .HasColumnType("uniqueidentifier");
 
@@ -3389,10 +3288,6 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.Property<DateTime?>("PickupScheduledAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("ProviderShipmentId")
-                        .HasMaxLength(120)
-                        .HasColumnType("nvarchar(120)");
-
                     b.Property<string>("ProviderShipmentReference")
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
@@ -3410,29 +3305,14 @@ namespace ZansiHustle.Infrastructure.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
-                    b.Property<string>("RawProviderResponseJson")
-                        .HasColumnType("nvarchar(max)");
-
                     b.Property<int>("ReconciliationStatus")
                         .HasColumnType("int");
 
                     b.Property<int>("ServiceLevel")
                         .HasColumnType("int");
 
-                    b.Property<string>("ServiceLevelCode")
-                        .HasMaxLength(60)
-                        .HasColumnType("nvarchar(60)");
-
-                    b.Property<string>("ServiceLevelName")
-                        .HasMaxLength(120)
-                        .HasColumnType("nvarchar(120)");
-
                     b.Property<Guid?>("ShopId")
                         .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("ShortTrackingReference")
-                        .HasMaxLength(120)
-                        .HasColumnType("nvarchar(120)");
 
                     b.Property<int>("Status")
                         .HasColumnType("int");
@@ -3460,69 +3340,13 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.HasIndex("OrderId")
                         .IsUnique();
 
-                    b.HasIndex("ProviderShipmentId");
-
                     b.HasIndex("ReconciliationStatus");
 
-                    b.HasIndex("ShortTrackingReference");
-
                     b.HasIndex("Status");
-
-                    b.HasIndex("TrackingNumber");
 
                     b.HasIndex("UserId");
 
                     b.ToTable("ZansiDispatchShipments", (string)null);
-                });
-
-            modelBuilder.Entity("ZansiHustle.Domain.ZansiDispatch.ZansiDispatchShipmentEvent", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime>("EventTime")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("InternalStatus")
-                        .HasColumnType("int");
-
-                    b.Property<string>("Location")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<string>("Message")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<string>("ProviderEventId")
-                        .HasMaxLength(120)
-                        .HasColumnType("nvarchar(120)");
-
-                    b.Property<string>("ProviderStatus")
-                        .IsRequired()
-                        .HasMaxLength(80)
-                        .HasColumnType("nvarchar(80)");
-
-                    b.Property<int>("ProviderType")
-                        .HasColumnType("int");
-
-                    b.Property<string>("RawEventJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<Guid>("ShipmentId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ShipmentId");
-
-                    b.HasIndex("ShipmentId", "EventTime");
-
-                    b.ToTable("ZansiDispatchShipmentEvents", (string)null);
                 });
 
             modelBuilder.Entity("ZansiHustle.Domain.ZansiPulse.ZansiPulseCategoryMetric", b =>

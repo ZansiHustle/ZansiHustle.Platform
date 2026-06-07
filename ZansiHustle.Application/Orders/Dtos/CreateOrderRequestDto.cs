@@ -13,6 +13,16 @@ namespace ZansiHustle.Application.Orders.Dtos
         public List<CreateOrderItemDto> Items { get; set; } = new();
         public string? DeliveryAddress { get; set; }
         public string? Notes { get; set; }
+
+        /// <summary>
+        /// Optional ZansiDispatch delivery quote option the buyer selected at
+        /// checkout. When supplied, the backend validates it (ownership +
+        /// unexpired), adds its fee to the order total, and creates the
+        /// shipment. When omitted the order behaves exactly as before
+        /// ZansiDispatch (no delivery fee, Total == Subtotal) — fully
+        /// backward-compatible.
+        /// </summary>
+        public Guid? DeliveryQuoteOptionId { get; set; }
     }
 
     public class CreateOrderItemDto

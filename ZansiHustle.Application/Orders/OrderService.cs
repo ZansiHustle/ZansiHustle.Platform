@@ -7,6 +7,8 @@ using Microsoft.Extensions.Logging;
 using ZansiHustle.Application.Orders.Dtos;
 using ZansiHustle.Application.Persistence.Listings;
 using ZansiHustle.Application.Persistence.Orders;
+using ZansiHustle.Application.ZansiDispatch;
+using ZansiHustle.Application.ZansiDispatch.Dtos;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Domain.Orders;
 using ZansiHustle.Shared.Enums.Orders;
@@ -20,13 +22,15 @@ namespace ZansiHustle.Application.Orders
         private readonly IOrderRepository _orderRepository;
         private readonly IListingRepository _listingRepository;
         private readonly UserManager<User> _userManager;
+        private readonly IZansiDispatchService _dispatch;
         private readonly ILogger<OrderService> _logger;
 
-        public OrderService(IOrderRepository orderRepository, IListingRepository listingRepository, UserManager<User> userManager, ILogger<OrderService> logger)
+        public OrderService(IOrderRepository orderRepository, IListingRepository listingRepository, UserManager<User> userManager, IZansiDispatchService dispatch, ILogger<OrderService> logger)
         {
             _orderRepository = orderRepository;
             _listingRepository = listingRepository;
             _userManager = userManager;
+            _dispatch = dispatch;
             _logger = logger;
         }
 
@@ -105,6 +109,20 @@ namespace ZansiHustle.Application.Orders
                 if (firstListing.Merchant?.OwnerUserId == buyerUserId)
                     return Result<OrderDto>.Failure(ErrorCodes.BadRequest, "You cannot place an order against your own shop.");
 
+                // ── ZansiDispatch delivery (optional, additive) ──────────────
+                // When checkout passed a selected delivery quote option, resolve
+                // + validate it BEFORE building the order so a bad/expired
+                // option fails fast and is never charged. When absent, delivery
+                // stays null and Total == Subtotal exactly as before.
+                SelectableQuoteOptionDto? deliveryOption = null;
+                if (request.DeliveryQuoteOptionId is Guid deliveryOptionId)
+                {
+                    var optionResult = await _dispatch.GetSelectableOptionAsync(buyerUserId, deliveryOptionId);
+                    if (!optionResult.IsSuccess || optionResult.Data is null)
+                        return Result<OrderDto>.Failure(optionResult.Code, optionResult.Message);
+                    deliveryOption = optionResult.Data;
+                }
+
                 var buyer = await _userManager.FindByIdAsync(buyerUserId.ToString());
 
                 var currency = firstListing.Currency ?? "ZAR";
@@ -150,14 +168,40 @@ namespace ZansiHustle.Application.Orders
                     });
                 }
 
+                // Delivery fee comes from the validated ZansiDispatch option
+                // (server-side; never trusted from the client). No option →
+                // null fee, Total == Subtotal (unchanged legacy behaviour).
+                var deliveryFee = deliveryOption?.Amount ?? 0m;
                 order.Subtotal = subtotal;
-                order.Total = subtotal; // v1: no tax/delivery charges computed server-side.
+                order.DeliveryFee = deliveryOption is null ? (decimal?)null : deliveryFee;
+                order.DeliveryQuoteOptionId = deliveryOption?.QuoteOptionId;
+                order.Total = subtotal + deliveryFee;
 
                 await _orderRepository.AddAsync(order);
                 var saved = await _orderRepository.SaveChangesAsync();
 
                 if (!saved)
                     return Result<OrderDto>.Failure(ErrorCodes.Exception, "Failed to create order.");
+
+                // Spin up the shipment from the selected option (post-save,
+                // best-effort — never fails the order if logistics hiccups).
+                if (deliveryOption is not null)
+                {
+                    await _dispatch.CreateShipmentForOrderAsync(new CreateShipmentForOrderInput
+                    {
+                        OrderId = order.Id,
+                        UserId = buyerUserId,
+                        MerchantId = merchantId,
+                        ShopId = deliveryOption.ShopId,
+                        QuoteId = deliveryOption.QuoteId,
+                        QuoteOptionId = deliveryOption.QuoteOptionId,
+                        ProviderType = deliveryOption.ProviderType,
+                        ServiceLevel = deliveryOption.ServiceLevel,
+                        QuotedDeliveryFee = deliveryFee,
+                        PickupAddressSummary = deliveryOption.PickupAddressSummary,
+                        DropoffAddressSummary = deliveryOption.DropoffAddressSummary ?? order.DeliveryAddress,
+                    });
+                }
 
                 var reloaded = await _orderRepository.GetByIdAsync(order.Id);
                 return Result<OrderDto>.Success(MapToDto(reloaded ?? order), "Order placed successfully.");
@@ -362,6 +406,7 @@ namespace ZansiHustle.Application.Orders
                 Status = order.Status,
                 PaymentStatus = order.PaymentStatus,
                 Subtotal = order.Subtotal,
+                DeliveryFee = order.DeliveryFee,
                 Total = order.Total,
                 Currency = order.Currency,
                 DeliveryAddress = order.DeliveryAddress,

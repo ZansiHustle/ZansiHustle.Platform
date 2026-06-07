@@ -37,6 +37,15 @@ namespace ZansiHustle.Domain.Orders
         public decimal Total { get; set; }
         public string Currency { get; set; } = "ZAR";
 
+        // ── ZansiDispatch delivery (additive, nullable, backward-compatible) ──
+        // Set only when checkout passed a selected ZansiDispatch quote option.
+        // When null the order has no managed delivery fee and Total == Subtotal,
+        // exactly as before ZansiDispatch existed.
+        /// <summary>Delivery fee from the selected ZansiDispatch quote option. Null = none.</summary>
+        public decimal? DeliveryFee { get; set; }
+        /// <summary>The ZansiDispatch quote option the buyer selected at checkout.</summary>
+        public Guid? DeliveryQuoteOptionId { get; set; }
+
         /// <summary>Optional delivery/fulfilment hints; v1 plain-text only.</summary>
         public string? DeliveryAddress { get; set; }
         public string? Notes { get; set; }

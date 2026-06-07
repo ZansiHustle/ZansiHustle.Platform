@@ -43,6 +43,11 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Orders
                 .HasPrecision(18, 2)
                 .IsRequired();
 
+            // ZansiDispatch delivery fee — nullable, additive. Null on every
+            // pre-ZansiDispatch order (Total == Subtotal there).
+            builder.Property(x => x.DeliveryFee)
+                .HasPrecision(18, 2);
+
             builder.Property(x => x.Currency)
                 .IsRequired()
                 .HasMaxLength(8);
