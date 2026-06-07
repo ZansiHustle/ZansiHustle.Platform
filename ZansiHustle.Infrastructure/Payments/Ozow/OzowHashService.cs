@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -59,6 +60,10 @@ namespace ZansiHustle.Infrastructure.Payments.Ozow
 
         /// <inheritdoc />
         public string GenerateRequestHash(OzowPaymentRequest request)
+            => GenerateRequestHashWithDiagnostic(request).Hash;
+
+        /// <inheritdoc />
+        public (string Hash, OzowHashDiagnostic Diagnostic) GenerateRequestHashWithDiagnostic(OzowPaymentRequest request)
         {
             if (request is null) throw new ArgumentNullException(nameof(request));
 
@@ -74,36 +79,135 @@ namespace ZansiHustle.Infrastructure.Payments.Ozow
                     "Ozow PrivateKey is not configured. Set Ozow__PrivateKey before initiating payments.");
             }
 
-            // Canonical field order for the request hashCheck. Copied directly
-            // from Ozow's "Generating the hashCheck" section. Do NOT reorder.
+            // ── Trim PrivateKey ─────────────────────────────────────────────
+            // Trailing newlines or spaces from copy-pasting an env var value
+            // into a hosting-platform secrets UI are a frequent cause of
+            // "HashCheck value has failed". Trim BOTH ways: log when it
+            // changed so an operator sees the lurking config bug, but use
+            // the trimmed value for the hash so it actually works.
+            var rawPk = _settings.PrivateKey ?? string.Empty;
+            var trimmedPk = rawPk.Trim();
+            var pkTrimChanged = !string.Equals(rawPk, trimmedPk, StringComparison.Ordinal);
+            if (pkTrimChanged)
+            {
+                _logger.LogWarning(
+                    "[Ozow][Hash] PrivateKey had surrounding whitespace (raw length={Raw}, trimmed length={Trimmed}). " +
+                    "Trimmed for hash. Fix the env var to remove trailing whitespace.",
+                    rawPk.Length, trimmedPk.Length);
+            }
+
+            // Canonical field order. Per Ozow's current PostPaymentRequest
+            // specification (docs.ozow.com), Optional1..5 + Customer ARE
+            // included in the hash AFTER BankReference and BEFORE the URLs.
+            // Older docs / community SDKs omit them — that's the bug here:
+            // we send `optional1: <orderId>` on the wire but didn't include
+            // it in the hash, so Ozow's server-side recompute saw a
+            // different string and rejected the request.
             //
             //   SiteCode
             //   CountryCode
             //   CurrencyCode
-            //   Amount            (decimal as "0.00", invariant culture)
+            //   Amount               (decimal as "0.00", invariant culture)
             //   TransactionReference
             //   BankReference
-            //   Cancel URL
-            //   Error URL
-            //   Success URL
-            //   Notify URL
-            //   IsTest            ("true" / "false")
-            //   PrivateKey        (trailing salt — never sent on the wire)
-            var sb = new StringBuilder(512);
-            sb.Append(request.SiteCode ?? string.Empty);
-            sb.Append(request.CountryCode ?? string.Empty);
-            sb.Append(request.CurrencyCode ?? string.Empty);
-            sb.Append(FormatAmount(request.Amount));
-            sb.Append(request.TransactionReference ?? string.Empty);
-            sb.Append(request.BankReference ?? string.Empty);
-            sb.Append(request.CancelUrl ?? string.Empty);
-            sb.Append(request.ErrorUrl ?? string.Empty);
-            sb.Append(request.SuccessUrl ?? string.Empty);
-            sb.Append(request.NotifyUrl ?? string.Empty);
-            sb.Append(request.IsTest ? "true" : "false");
-            sb.Append(_settings.PrivateKey);
+            //   Optional1            (empty string when null)
+            //   Optional2
+            //   Optional3
+            //   Optional4
+            //   Optional5
+            //   Customer
+            //   CancelUrl
+            //   ErrorUrl
+            //   SuccessUrl
+            //   NotifyUrl
+            //   IsTest               ("true" / "false")
+            //   PrivateKey           (trailing salt — never sent on the wire)
+            //
+            // Empty optional fields are concatenated as "" — the canonical
+            // form, matching what Ozow's server does when recomputing.
+            var fields = new List<OzowHashField>
+            {
+                Field("SiteCode",             request.SiteCode),
+                Field("CountryCode",          request.CountryCode),
+                Field("CurrencyCode",         request.CurrencyCode),
+                AmountField(request.Amount),
+                Field("TransactionReference", request.TransactionReference),
+                Field("BankReference",        request.BankReference),
+                Field("Optional1",            request.Optional1),
+                Field("Optional2",            request.Optional2),
+                Field("Optional3",            request.Optional3),
+                Field("Optional4",            request.Optional4),
+                Field("Optional5",            request.Optional5),
+                Field("Customer",             request.Customer),
+                Field("CancelUrl",            request.CancelUrl),
+                Field("ErrorUrl",             request.ErrorUrl),
+                Field("SuccessUrl",           request.SuccessUrl),
+                Field("NotifyUrl",            request.NotifyUrl),
+                IsTestField(request.IsTest),
+            };
 
-            return Sha512HexLower(sb.ToString());
+            var sb = new StringBuilder(1024);
+            foreach (var f in fields) sb.Append(f.HashValue);
+            sb.Append(trimmedPk);
+
+            var hash = Sha512HexLower(sb.ToString());
+
+            // Whitespace-changed checks on the public-ish fields (never on
+            // PrivateKey value). Helps operators spot bad env vars without
+            // recompiling.
+            var siteCodeTrimChanged =
+                !string.Equals(request.SiteCode ?? string.Empty, (request.SiteCode ?? string.Empty).Trim(), StringComparison.Ordinal);
+            var anyUrlTrimChanged =
+                UrlTrimChanged(request.CancelUrl)
+                || UrlTrimChanged(request.ErrorUrl)
+                || UrlTrimChanged(request.SuccessUrl)
+                || UrlTrimChanged(request.NotifyUrl);
+
+            // Body-vs-hash mismatch detection. With the new canonical hash
+            // we wrote the hash input directly off the request DTO, so each
+            // OzowHashField has BodyValue == HashValue. If this flag ever
+            // flips true post-deploy, a future change introduced a side-of-
+            // hashing transformation and the caller's log will name it.
+            var anyMismatch = fields.Exists(f => !string.Equals(f.BodyValue, f.HashValue, StringComparison.Ordinal));
+
+            var diagnostic = new OzowHashDiagnostic
+            {
+                Fields = fields,
+                PrivateKeyLength = trimmedPk.Length,
+                PrivateKeyTrimChanged = pkTrimChanged,
+                SiteCodeTrimChanged = siteCodeTrimChanged,
+                AnyUrlTrimChanged = anyUrlTrimChanged,
+                AnyMismatch = anyMismatch,
+            };
+
+            return (hash, diagnostic);
+        }
+
+        // Field helper: body-value form == hash-input form. Null becomes "".
+        private static OzowHashField Field(string name, string? value)
+        {
+            var v = value ?? string.Empty;
+            return new OzowHashField(name, v, v);
+        }
+
+        // Amount renders identically in hash + body — "0.00" invariant.
+        private static OzowHashField AmountField(decimal amount)
+        {
+            var v = amount.ToString("0.00", CultureInfo.InvariantCulture);
+            return new OzowHashField("Amount", v, v);
+        }
+
+        // bool → "true"/"false" lowercase in both hash + body.
+        private static OzowHashField IsTestField(bool isTest)
+        {
+            var v = isTest ? "true" : "false";
+            return new OzowHashField("IsTest", v, v);
+        }
+
+        private static bool UrlTrimChanged(string? url)
+        {
+            if (string.IsNullOrEmpty(url)) return false;
+            return !string.Equals(url, url.Trim(), StringComparison.Ordinal);
         }
 
         /// <inheritdoc />

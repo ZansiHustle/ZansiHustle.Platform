@@ -1,5 +1,35 @@
+using System.Collections.Generic;
+
 namespace ZansiHustle.Application.Payments.Providers
 {
+    /// <summary>
+    /// Single field's contribution to the hash, captured for diagnostic
+    /// purposes. <c>HashValue</c> is the exact string the hash service
+    /// concatenated; <c>BodyValue</c> is the exact string the request DTO
+    /// will serialise. When the two diverge we have a hash/body mismatch
+    /// that Ozow will reject with "HashCheck value has failed".
+    /// PrivateKey is intentionally absent from this record.
+    /// </summary>
+    public sealed record OzowHashField(string Name, string BodyValue, string HashValue);
+
+    /// <summary>
+    /// Diagnostic snapshot returned alongside the computed hash. Renders
+    /// every hashable field, plus boot-time integrity flags
+    /// (<c>PrivateKeyTrimChanged</c>, <c>SiteCodeTrimChanged</c>, …) so
+    /// silent whitespace bugs in env-var values surface in stdout. The
+    /// hash itself is NOT included in this record — that's still secret.
+    /// </summary>
+    public sealed class OzowHashDiagnostic
+    {
+        public required IReadOnlyList<OzowHashField> Fields { get; init; }
+        public required int PrivateKeyLength { get; init; }
+        public required bool PrivateKeyTrimChanged { get; init; }
+        public required bool SiteCodeTrimChanged { get; init; }
+        public required bool AnyUrlTrimChanged { get; init; }
+        /// <summary>True when at least one field's hash-input string ≠ its body-render string. Triggers the precheck warning.</summary>
+        public required bool AnyMismatch { get; init; }
+    }
+
     /// <summary>
     /// SHA512 hash generation + validation for the Ozow integration.
     ///
@@ -36,6 +66,15 @@ namespace ZansiHustle.Application.Payments.Providers
         /// implemented — callers must check <see cref="IsImplemented"/> first.
         /// </summary>
         string GenerateRequestHash(OzowPaymentRequest request);
+
+        /// <summary>
+        /// Same as <see cref="GenerateRequestHash"/> but also returns a
+        /// per-field diagnostic snapshot so the caller can log a sanitized
+        /// body-vs-hash comparison alongside the call. Used when a
+        /// "HashCheck value has failed" response forces us to bisect which
+        /// field is differing. PrivateKey is never returned.
+        /// </summary>
+        (string Hash, OzowHashDiagnostic Diagnostic) GenerateRequestHashWithDiagnostic(OzowPaymentRequest request);
 
         /// <summary>
         /// Validates the <c>Hash</c> field on an inbound

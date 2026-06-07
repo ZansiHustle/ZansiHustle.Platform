@@ -111,14 +111,41 @@ namespace ZansiHustle.Infrastructure.Payments.Ozow
 
             try
             {
-                request.SiteCode = _settings.SiteCode;
+                // ── Env-var trim guards ─────────────────────────────────
+                // Trim everything from settings BEFORE assigning to the
+                // request so a copy-paste-introduced trailing newline /
+                // space silently doesn't poison either the wire body or
+                // the hash. We log when a trim actually changed the value
+                // so an operator can fix the env-var configuration.
+                var siteCodeRaw   = _settings.SiteCode   ?? string.Empty;
+                var siteCode      = siteCodeRaw.Trim();
+                var successRaw    = _settings.SuccessUrl ?? string.Empty;
+                var successUrl    = successRaw.Trim();
+                var cancelRaw     = _settings.CancelUrl  ?? string.Empty;
+                var cancelUrl     = cancelRaw.Trim();
+                var errorRaw      = _settings.ErrorUrl   ?? string.Empty;
+                var errorUrl      = errorRaw.Trim();
+                var notifyRaw     = _settings.NotifyUrl  ?? string.Empty;
+                var notifyUrl     = notifyRaw.Trim();
+                var countryRaw    = _settings.CountryCode ?? "ZA";
+                var countryCode   = countryRaw.Trim();
+                var currencyRaw   = _settings.CurrencyCode ?? "ZAR";
+                var currencyCode  = currencyRaw.Trim();
+
+                if (siteCodeRaw  != siteCode)  _logger.LogWarning("[Ozow] SiteCode env var has surrounding whitespace.");
+                if (successRaw   != successUrl) _logger.LogWarning("[Ozow] SuccessUrl env var has surrounding whitespace.");
+                if (cancelRaw    != cancelUrl)  _logger.LogWarning("[Ozow] CancelUrl env var has surrounding whitespace.");
+                if (errorRaw     != errorUrl)   _logger.LogWarning("[Ozow] ErrorUrl env var has surrounding whitespace.");
+                if (notifyRaw    != notifyUrl)  _logger.LogWarning("[Ozow] NotifyUrl env var has surrounding whitespace.");
+
+                request.SiteCode = siteCode;
                 request.IsTest = _settings.IsTest;
-                request.CountryCode = string.IsNullOrWhiteSpace(request.CountryCode) ? _settings.CountryCode : request.CountryCode;
-                request.CurrencyCode = string.IsNullOrWhiteSpace(request.CurrencyCode) ? _settings.CurrencyCode : request.CurrencyCode;
-                request.SuccessUrl = string.IsNullOrWhiteSpace(request.SuccessUrl) ? _settings.SuccessUrl : request.SuccessUrl;
-                request.CancelUrl = string.IsNullOrWhiteSpace(request.CancelUrl) ? _settings.CancelUrl : request.CancelUrl;
-                request.ErrorUrl = string.IsNullOrWhiteSpace(request.ErrorUrl) ? _settings.ErrorUrl : request.ErrorUrl;
-                request.NotifyUrl = string.IsNullOrWhiteSpace(request.NotifyUrl) ? _settings.NotifyUrl : request.NotifyUrl;
+                request.CountryCode = string.IsNullOrWhiteSpace(request.CountryCode) ? countryCode : request.CountryCode.Trim();
+                request.CurrencyCode = string.IsNullOrWhiteSpace(request.CurrencyCode) ? currencyCode : request.CurrencyCode.Trim();
+                request.SuccessUrl = string.IsNullOrWhiteSpace(request.SuccessUrl) ? successUrl : request.SuccessUrl.Trim();
+                request.CancelUrl  = string.IsNullOrWhiteSpace(request.CancelUrl)  ? cancelUrl  : request.CancelUrl.Trim();
+                request.ErrorUrl   = string.IsNullOrWhiteSpace(request.ErrorUrl)   ? errorUrl   : request.ErrorUrl.Trim();
+                request.NotifyUrl  = string.IsNullOrWhiteSpace(request.NotifyUrl)  ? notifyUrl  : request.NotifyUrl.Trim();
 
                 // Normalise the decimal scale to 2 places so the JSON wire
                 // body and the hash input agree on the exact string form.
@@ -130,7 +157,48 @@ namespace ZansiHustle.Infrastructure.Payments.Ozow
                 // Ozow integrations send. The numeric value is unchanged.
                 request.Amount = Math.Round(request.Amount, 2, MidpointRounding.AwayFromZero) + 0.00m;
 
-                request.HashCheck = _hashService.GenerateRequestHash(request);
+                // Diagnostic version → returns the hash AND each field's
+                // body-vs-hash value so we can log a sanitized comparison
+                // and surface mismatches. PrivateKey never in the diagnostic.
+                var (hash, diag) = _hashService.GenerateRequestHashWithDiagnostic(request);
+                request.HashCheck = hash;
+
+                // Pre-call comparison log. Every hashable field, both
+                // forms. Anyone debugging "HashCheck value has failed" can
+                // diff the body column vs the hash column in one glance.
+                // Truncates long values (e.g., URLs over 80 chars) for the
+                // sanitized line; the hash precheck below catches divergences.
+                foreach (var f in diag.Fields)
+                {
+                    _logger.LogInformation(
+                        "[Ozow][HashFields] field={Field} body={Body} hash={Hash}",
+                        f.Name, Truncate(f.BodyValue, 80), Truncate(f.HashValue, 80));
+                }
+
+                _logger.LogInformation(
+                    "[Ozow][HashGuard] ref={Ref} privateKeyPresent=True privateKeyLength={Len} " +
+                    "privateKeyTrimChanged={PkTrim} siteCodeTrimChanged={ScTrim} anyUrlTrimChanged={UrlTrim}",
+                    request.TransactionReference,
+                    diag.PrivateKeyLength,
+                    diag.PrivateKeyTrimChanged,
+                    diag.SiteCodeTrimChanged,
+                    diag.AnyUrlTrimChanged);
+
+                // Hard precheck: any divergence between body string and
+                // hash string for ANY field is a bug. Loud warning per
+                // field so it can't be missed in stdout.
+                if (diag.AnyMismatch)
+                {
+                    foreach (var f in diag.Fields)
+                    {
+                        if (!string.Equals(f.BodyValue, f.HashValue, StringComparison.Ordinal))
+                        {
+                            _logger.LogError(
+                                "[Ozow][HashMismatchPrecheck] field={Field} body={Body} hash={Hash}",
+                                f.Name, f.BodyValue, f.HashValue);
+                        }
+                    }
+                }
 
                 // Pre-call log. Never log ApiKey/PrivateKey/HashCheck — only
                 // the safe call-context fields. UAT debugging happens against
@@ -339,6 +407,15 @@ namespace ZansiHustle.Infrastructure.Payments.Ozow
             }
 
             client.Timeout = TimeSpan.FromSeconds(30);
+        }
+
+        // Truncate long values (URLs) for the sanitized comparison log so
+        // a single field doesn't blow up the line. Hashing uses the full
+        // value — only the LOG is truncated.
+        private static string Truncate(string value, int max)
+        {
+            if (string.IsNullOrEmpty(value)) return string.Empty;
+            return value.Length <= max ? value : value[..max] + "…";
         }
     }
 }
