@@ -11,6 +11,8 @@ namespace ZansiHustle.Application.ZansiDispatch.Dtos
         public Guid? QuoteId { get; set; }
         public Guid? QuoteOptionId { get; set; }
         public Guid UserId { get; set; }
+        /// <summary>Buyer display name (full name, falling back to email). Null if the user can't be resolved.</summary>
+        public string? CustomerName { get; set; }
         public Guid? MerchantId { get; set; }
         public Guid? ShopId { get; set; }
 
@@ -51,14 +53,20 @@ namespace ZansiHustle.Application.ZansiDispatch.Dtos
     {
         public Guid Id { get; set; }
         public Guid OrderId { get; set; }
+        public Guid UserId { get; set; }
+        /// <summary>Buyer display name (full name, falling back to email). Null if the user can't be resolved.</summary>
+        public string? CustomerName { get; set; }
         public ZansiDispatchProviderType ProviderType { get; set; }
         public ZansiDispatchServiceLevel ServiceLevel { get; set; }
         public ZansiDispatchShipmentStatus Status { get; set; }
         public ZansiDispatchReconciliationStatus ReconciliationStatus { get; set; }
         public decimal QuotedDeliveryFee { get; set; }
         public decimal? ActualCourierCost { get; set; }
+        public decimal SurplusAmount { get; set; }
+        public decimal DeficitAmount { get; set; }
         public decimal NetAmount { get; set; }
         public string? TrackingNumber { get; set; }
+        public string? ShortTrackingReference { get; set; }
         public DateTime CreatedAt { get; set; }
     }
 

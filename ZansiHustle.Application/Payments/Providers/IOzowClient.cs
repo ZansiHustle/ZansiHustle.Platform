@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using ZansiHustle.Shared.Results;
@@ -29,6 +30,16 @@ namespace ZansiHustle.Application.Payments.Providers
 
         /// <summary>Amount to use when <see cref="UatTestMode"/> is true (ZAR).</summary>
         decimal UatTestAmount { get; }
+
+        /// <summary>
+        /// Env-var names of any required Ozow configuration fields that are
+        /// missing on this host. Empty when fully configured. Used by the
+        /// payment service to log a per-request config-presence line and to
+        /// include the specific missing names in <see cref="ErrorCodes.ProviderNotConfigured"/>
+        /// failure responses, so an operator can see immediately which env
+        /// var to set on the deployed host.
+        /// </summary>
+        IReadOnlyList<string> GetMissingFieldEnvVars();
 
         /// <summary>
         /// POST <c>/token</c> (form-urlencoded). Most flows do NOT need

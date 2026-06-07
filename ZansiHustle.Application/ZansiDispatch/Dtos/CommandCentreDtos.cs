@@ -19,8 +19,12 @@ namespace ZansiHustle.Application.ZansiDispatch.Dtos
         public decimal NetLogisticsBalance { get; set; }
 
         public int ShipmentsPendingDispatch { get; set; }
+        /// <summary>Shipments booked with a courier (status BookedWithCourier).</summary>
+        public int ShipmentsBookedWithCourier { get; set; }
         public int ShipmentsInTransit { get; set; }
         public int ShipmentsDelivered { get; set; }
+        /// <summary>Shipments in an exception/failed state (Failed + Exception).</summary>
+        public int ShipmentsExceptions { get; set; }
         public int ShipmentsPendingReconciliation { get; set; }
         public int ShipmentsTotal { get; set; }
 

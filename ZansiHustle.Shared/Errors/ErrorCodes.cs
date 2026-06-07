@@ -45,4 +45,17 @@ public static class ErrorCodes
     public const string PaymentAlreadyPaid = "PAYMENT_ALREADY_PAID";
     public const string PaymentAmountMismatch = "PAYMENT_AMOUNT_MISMATCH";
     public const string WebhookSignatureInvalid = "WEBHOOK_SIGNATURE_INVALID";
+
+    /// <summary>
+    /// The configured payment provider (Ozow / Yoco / Paystack) was reachable
+    /// but returned a non-success response, or its HTTP call threw before a
+    /// status came back. Distinct from <see cref="PaymentInitFailed"/> in
+    /// intent: <c>PaymentInitFailed</c> is "the provider explicitly declined"
+    /// while <c>PaymentProviderUnavailable</c> is "we couldn't get a usable
+    /// answer right now — retry later". Mapped to HTTP 422 so Cloudflare
+    /// (which intercepts 5xx origin responses and replaces them with its own
+    /// branded error page) lets the structured envelope through to the
+    /// client unchanged.
+    /// </summary>
+    public const string PaymentProviderUnavailable = "PAYMENT_PROVIDER_UNAVAILABLE";
 }

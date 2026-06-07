@@ -59,31 +59,63 @@ namespace ZansiHustle.Application.Payments
         /// <inheritdoc />
         public async Task<Result<InitializePaymentResponseDto>> InitializeAsync(Guid buyerUserId, InitializePaymentRequestDto request, CancellationToken cancellationToken = default)
         {
+            // Stopwatch + structured-context logging. Each branch returns
+            // a Result.Failure with a specific ErrorCode, so failure modes
+            // are individually searchable in the log. Never logs request
+            // bodies wholesale — only OrderId, provider, elapsed, and the
+            // outcome code/short reason.
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
             try
             {
                 if (request is null || request.OrderId == Guid.Empty)
+                {
+                    _logger.LogWarning(
+                        "[Payments][Initialize][Svc] reject: empty OrderId. userId={UserId} elapsedMs={Elapsed}",
+                        buyerUserId, sw.ElapsedMilliseconds);
                     return Result<InitializePaymentResponseDto>.Failure(ErrorCodes.BadRequest, "OrderId is required.");
+                }
+
+                _logger.LogInformation(
+                    "[Payments][Initialize][Svc] start orderId={OrderId} userId={UserId} provider={Provider}",
+                    request.OrderId, buyerUserId, request.Provider ?? "<default>");
 
                 var order = await _orderRepository.GetByIdAsync(request.OrderId);
 
                 if (order is null)
+                {
+                    _logger.LogWarning(
+                        "[Payments][Initialize][Svc] reject: order not found. orderId={OrderId} userId={UserId} elapsedMs={Elapsed}",
+                        request.OrderId, buyerUserId, sw.ElapsedMilliseconds);
                     return Result<InitializePaymentResponseDto>.Failure(ErrorCodes.NotFound, "Order not found.");
+                }
 
                 if (order.BuyerUserId != buyerUserId)
+                {
+                    _logger.LogWarning(
+                        "[Payments][Initialize][Svc] reject: forbidden buyer. orderId={OrderId} orderBuyer={OrderBuyer} caller={UserId} elapsedMs={Elapsed}",
+                        order.Id, order.BuyerUserId, buyerUserId, sw.ElapsedMilliseconds);
                     return Result<InitializePaymentResponseDto>.Failure(ErrorCodes.Forbidden, "You do not have permission to pay for this order.");
+                }
 
                 var guard = EnsureOrderIsPayable(order);
 
                 if (!guard.IsSuccess)
+                {
+                    _logger.LogWarning(
+                        "[Payments][Initialize][Svc] reject: order not payable. orderId={OrderId} orderCode={OrderCode} status={OrderStatus} payStatus={PayStatus} code={Code} reason={Reason} elapsedMs={Elapsed}",
+                        order.Id, order.Code, order.Status, order.PaymentStatus, guard.Code, guard.Message, sw.ElapsedMilliseconds);
                     return Result<InitializePaymentResponseDto>.Failure(guard.Code, guard.Message);
+                }
 
                 // Reuse any in-flight attempt — same caller, same order → same checkout session.
                 var existing = await _paymentRepository.GetActiveAttemptForOrderAsync(order.Id);
 
                 if (existing != null)
                 {
-                    _logger.LogInformation("Reusing active payment {Code} for order {OrderCode} via {Provider}.",
-                        existing.Code, order.Code, existing.Provider);
+                    _logger.LogInformation(
+                        "[Payments][Initialize][Svc] reuse active attempt {Code} for order {OrderCode} via {Provider}. elapsedMs={Elapsed}",
+                        existing.Code, order.Code, existing.Provider, sw.ElapsedMilliseconds);
                     return Result<InitializePaymentResponseDto>.Success(MapInitializeResponse(existing), "Resumed pending payment.");
                 }
 
@@ -91,18 +123,43 @@ namespace ZansiHustle.Application.Payments
                 // active provider per the live capability matrix.
                 var providerName = ResolveProvider(request.Provider);
 
-                return providerName switch
+                _logger.LogInformation(
+                    "[Payments][Initialize][Svc] dispatch provider={Provider} orderId={OrderId} orderCode={OrderCode} amount={Amount} elapsedMs={Elapsed}",
+                    providerName, order.Id, order.Code, order.Total, sw.ElapsedMilliseconds);
+
+                Result<InitializePaymentResponseDto> result = providerName switch
                 {
                     PaymentProvider.Ozow => await InitializeOzowAsync(order, buyerUserId, cancellationToken),
                     PaymentProvider.Yoco => await InitializeYocoAsync(order, buyerUserId, cancellationToken),
                     PaymentProvider.Paystack => await InitializePaystackAsync(order, buyerUserId, request.CallbackUrl, cancellationToken),
                     _ => Result<InitializePaymentResponseDto>.Failure(ErrorCodes.BadRequest, $"Unknown payment provider '{providerName}'.")
                 };
+
+                _logger.LogInformation(
+                    "[Payments][Initialize][Svc] done provider={Provider} success={Success} code={Code} orderId={OrderId} elapsedMs={Elapsed}",
+                    providerName, result.IsSuccess, result.IsSuccess ? "OK" : result.Code, order.Id, sw.ElapsedMilliseconds);
+
+                return result;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Caller (or CF edge) disconnected mid-flight. Don't log as Error.
+                _logger.LogWarning(
+                    "[Payments][Initialize][Svc] CANCELLED. orderId={OrderId} userId={UserId} elapsedMs={Elapsed}",
+                    request?.OrderId, buyerUserId, sw.ElapsedMilliseconds);
+                throw;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Payment initialize failed for order {OrderId}.", request?.OrderId);
-                return Result<InitializePaymentResponseDto>.Failure(ErrorCodes.Exception, $"Failed to initialize payment. {ex.Message}");
+                _logger.LogError(ex,
+                    "[Payments][Initialize][Svc] EXCEPTION orderId={OrderId} userId={UserId} elapsedMs={Elapsed} exType={ExType}",
+                    request?.OrderId, buyerUserId, sw.ElapsedMilliseconds, ex.GetType().Name);
+                // PAYMENT_PROVIDER_UNAVAILABLE → HTTP 422 (see BaseController.MapFailure)
+                // → Cloudflare passes through unchanged so the client sees this
+                // envelope rather than CF's substituted 502 page.
+                return Result<InitializePaymentResponseDto>.Failure(
+                    ErrorCodes.PaymentProviderUnavailable,
+                    "Failed to initialize payment.");
             }
         }
 
@@ -197,9 +254,38 @@ namespace ZansiHustle.Application.Payments
             CancellationToken cancellationToken)
         {
             if (!_ozowClient.IsConfigured)
+            {
+                // Surface the specific missing env vars in BOTH the log AND
+                // the response message so an ops engineer hitting Swagger /
+                // Postman can fix the host without grepping a 50MB log file.
+                // Names only — never values; PrivateKey value never appears.
+                var missing = _ozowClient.GetMissingFieldEnvVars();
+                _logger.LogWarning(
+                    "[Payments][Initialize][Svc] Ozow not configured. missingEnvVars={Missing}",
+                    string.Join(",", missing));
+                var msg = missing.Count > 0
+                    ? $"Ozow is not configured on this environment. Missing: {string.Join(", ", missing)}."
+                    : "Ozow is not configured on this environment.";
                 return Result<InitializePaymentResponseDto>.Failure(
                     ErrorCodes.ProviderNotConfigured,
-                    "Ozow is not configured on this environment (credentials and/or hash service).");
+                    msg);
+            }
+
+            // Per-request config-presence trace. Booleans + UAT cap ONLY —
+            // never any key values. Anyone diagnosing a 502 from stdout can
+            // confirm at a glance that creds reached the running process.
+            // The full BaseUrl host is logged from OzowClient itself; we
+            // don't duplicate it here.
+            var ozowMissing = _ozowClient.GetMissingFieldEnvVars();
+            _logger.LogInformation(
+                "[Payments][Initialize][Svc][Ozow] config uatTestMode={UatTestMode} uatCap={UatCap} " +
+                "siteCodePresent={SiteCodePresent} apiKeyPresent={ApiKeyPresent} privateKeyPresent={PrivateKeyPresent} notifyUrlPresent={NotifyUrlPresent}",
+                _ozowClient.UatTestMode,
+                _ozowClient.UatTestAmount,
+                !ozowMissing.Contains("Ozow__SiteCode"),
+                !ozowMissing.Contains("Ozow__ApiKey"),
+                !ozowMissing.Contains("Ozow__PrivateKey"),
+                !ozowMissing.Contains("Ozow__NotifyUrl"));
 
             // ── UAT controlled-testing guard ─────────────────────────────────
             // When Ozow:UatTestMode is true (typically in the deployed UAT
@@ -267,7 +353,15 @@ namespace ZansiHustle.Application.Payments
                 _paymentRepository.Update(payment);
                 await _paymentRepository.SaveChangesAsync();
 
-                return Result<InitializePaymentResponseDto>.Failure(ErrorCodes.PaymentInitFailed, ozowResult.Message ?? "Failed to initialize Ozow payment.");
+                // Forward the specific provider-failure code OzowClient set.
+                //   PAYMENT_PROVIDER_UNAVAILABLE → couldn't reach Ozow / timeout / 5xx
+                //   PAYMENT_INIT_FAILED          → Ozow responded but with a non-actionable payload
+                // Both map to HTTP 422 in BaseController so Cloudflare doesn't
+                // intercept and substitute its own 502 page.
+                var forwardedCode = string.IsNullOrWhiteSpace(ozowResult.Code)
+                    ? ErrorCodes.PaymentProviderUnavailable
+                    : ozowResult.Code;
+                return Result<InitializePaymentResponseDto>.Failure(forwardedCode, ozowResult.Message ?? "Failed to initialize Ozow payment.");
             }
 
             payment.ProviderReference = payment.Code;

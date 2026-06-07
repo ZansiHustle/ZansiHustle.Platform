@@ -204,12 +204,23 @@ namespace ZansiHustle.Application.Orders
                 }
 
                 var reloaded = await _orderRepository.GetByIdAsync(order.Id);
+
+                // Success log. Safe fields only — id/code/status/totals/item count/
+                // merchant id. No buyer email/phone, no listing snapshots, no
+                // delivery address. Anyone debugging "where did my order go?"
+                // from Swagger / UAT just searches for the orderCode.
+                _logger.LogInformation(
+                    "[Orders][Create] OK orderId={OrderId} orderCode={OrderCode} buyerUserId={BuyerId} merchantId={MerchantId} status={Status} paymentStatus={PaymentStatus} subtotal={Subtotal} deliveryFee={DeliveryFee} total={Total} {Currency} itemCount={ItemCount}",
+                    order.Id, order.Code, buyerUserId, merchantId, order.Status, order.PaymentStatus,
+                    order.Subtotal, order.DeliveryFee, order.Total, order.Currency, order.Items.Count);
+
                 return Result<OrderDto>.Success(MapToDto(reloaded ?? order), "Order placed successfully.");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Order create failed for buyer {BuyerId}.", buyerUserId);
-                return Result<OrderDto>.Failure(ErrorCodes.Exception, $"Failed to place order. {ex.Message}");
+                // Keep buyer-facing message generic; detail stays in the log.
+                return Result<OrderDto>.Failure(ErrorCodes.Exception, "Failed to place order.");
             }
         }
 

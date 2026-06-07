@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using ZansiHustle.Application.Common.Interfaces.Shared;
 using ZansiHustle.Application.Orders;
 using ZansiHustle.Application.Orders.Dtos;
@@ -21,11 +23,16 @@ namespace ZansiHustle.API.Controllers
     {
         private readonly IOrderService _orderService;
         private readonly ICurrentUserService _currentUserService;
+        private readonly ILogger<OrdersController> _logger;
 
-        public OrdersController(IOrderService orderService, ICurrentUserService currentUserService)
+        public OrdersController(
+            IOrderService orderService,
+            ICurrentUserService currentUserService,
+            ILogger<OrdersController> logger)
         {
             _orderService = orderService;
             _currentUserService = currentUserService;
+            _logger = logger;
         }
 
         /// <summary>Places a new order as the current authenticated buyer.</summary>
@@ -33,12 +40,28 @@ namespace ZansiHustle.API.Controllers
         [ProducesResponseType(typeof(Result<OrderDto>), StatusCodes.Status200OK)]
         public async Task<IActionResult> Create([FromBody] CreateOrderRequestDto request)
         {
+            // Anchor log so anyone needing the orderId for Swagger testing
+            // can grep stdout for `[Orders][Create] OK orderId=…` and copy
+            // it straight into POST /api/Payments/initialize. Pair this
+            // with the Service-level success log + elapsed ms here.
+            var sw = Stopwatch.StartNew();
+
             var userId = _currentUserService.UserId;
 
             if (!userId.HasValue)
                 return ToActionResult(Result<OrderDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
 
             var result = await _orderService.CreateAsync(userId.Value, request);
+
+            _logger.LogInformation(
+                "[Orders][Create] settled success={Success} code={Code} userId={UserId} orderId={OrderId} orderCode={OrderCode} elapsedMs={Elapsed}",
+                result.IsSuccess,
+                result.IsSuccess ? "OK" : result.Code,
+                userId.Value,
+                result.IsSuccess ? result.Data?.Id : (Guid?)null,
+                result.IsSuccess ? result.Data?.Code : null,
+                sw.ElapsedMilliseconds);
+
             return ToActionResult(result);
         }
 

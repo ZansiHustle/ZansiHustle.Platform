@@ -51,13 +51,78 @@ namespace ZansiHustle.API.Controllers
         [ProducesResponseType(typeof(Result<InitializePaymentResponseDto>), StatusCodes.Status200OK)]
         public async Task<IActionResult> Initialize([FromBody] InitializePaymentRequestDto request, CancellationToken cancellationToken)
         {
+            // CF-Ray + elapsed-time correlation. Cloudflare 502 'origin_bad_gateway'
+            // means CF either couldn't reach the .NET host at all, or got a
+            // dropped connection mid-response. When that happens the buyer's
+            // mobile log shows a `ray_id` (e.g. a082149e...); this log line
+            // is the matching origin-side anchor so an engineer can search
+            // ApplicationInsights / stdout / IIS log for the exact request.
+            //
+            // We log: request received, user, orderId, provider, ray, elapsed,
+            // and on exit either Result.Success/Failure code or unhandled
+            // exception (caught by ExceptionHandlingMiddleware -> 500 JSON).
+            var rayId = Request.Headers.TryGetValue("CF-Ray", out var rayHdr) ? rayHdr.ToString() : null;
+            var traceId = HttpContext.TraceIdentifier;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
+            _logger.LogInformation(
+                "[Payments][Initialize] received provider={Provider} orderId={OrderId} cfRay={CfRay} trace={TraceId}",
+                request?.Provider ?? "<default>",
+                request?.OrderId,
+                string.IsNullOrEmpty(rayId) ? "<none>" : rayId,
+                traceId);
+
             var userId = _currentUserService.UserId;
 
             if (!userId.HasValue)
+            {
+                _logger.LogWarning(
+                    "[Payments][Initialize] denied: no userId in token. orderId={OrderId} cfRay={CfRay} trace={TraceId} elapsedMs={Elapsed}",
+                    request?.OrderId, rayId ?? "<none>", traceId, sw.ElapsedMilliseconds);
                 return ToActionResult(Result<InitializePaymentResponseDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+            }
 
-            var result = await _paymentService.InitializeAsync(userId.Value, request, cancellationToken);
-            return ToActionResult(result);
+            try
+            {
+                var result = await _paymentService.InitializeAsync(userId.Value, request, cancellationToken);
+
+                _logger.LogInformation(
+                    "[Payments][Initialize] settled success={Success} code={Code} orderId={OrderId} userId={UserId} cfRay={CfRay} trace={TraceId} elapsedMs={Elapsed}",
+                    result.IsSuccess,
+                    result.IsSuccess ? "OK" : result.Code,
+                    request?.OrderId,
+                    userId.Value,
+                    rayId ?? "<none>",
+                    traceId,
+                    sw.ElapsedMilliseconds);
+
+                return ToActionResult(result);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Client/CF disconnect — log at warning, don't pollute as Error.
+                _logger.LogWarning(
+                    "[Payments][Initialize] CANCELLED by client/edge. orderId={OrderId} userId={UserId} cfRay={CfRay} trace={TraceId} elapsedMs={Elapsed}",
+                    request?.OrderId, userId.Value, rayId ?? "<none>", traceId, sw.ElapsedMilliseconds);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Belt-and-braces: PaymentService.InitializeAsync already wraps
+                // everything in try/catch and returns Result.Failure. If we
+                // ever reach here it's a config-layer bug (e.g. options binding
+                // threw). Returning the structured envelope via MapFailure
+                // (HTTP 422) instead of rethrowing prevents the
+                // ExceptionHandlingMiddleware-generated HTTP 500 from being
+                // substituted by Cloudflare with its own 502 page, which is
+                // what was hiding the real reason for buyers + Postman testers.
+                _logger.LogError(ex,
+                    "[Payments][Initialize] UNHANDLED at controller. orderId={OrderId} userId={UserId} cfRay={CfRay} trace={TraceId} elapsedMs={Elapsed} exType={ExType}",
+                    request?.OrderId, userId.Value, rayId ?? "<none>", traceId, sw.ElapsedMilliseconds, ex.GetType().Name);
+                return ToActionResult(Result<InitializePaymentResponseDto>.Failure(
+                    ErrorCodes.PaymentProviderUnavailable,
+                    "Could not start payment right now. Please try again shortly."));
+            }
         }
 
         /// <summary>Returns a single payment owned by the caller.</summary>

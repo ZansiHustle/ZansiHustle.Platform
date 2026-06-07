@@ -792,8 +792,10 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     TotalSurplus = await q.SumAsync(s => (decimal?)s.SurplusAmount, ct) ?? 0m,
                     TotalDeficit = await q.SumAsync(s => (decimal?)s.DeficitAmount, ct) ?? 0m,
                     ShipmentsPendingDispatch = await q.CountAsync(s => s.Status == ZansiDispatchShipmentStatus.PendingDispatch, ct),
+                    ShipmentsBookedWithCourier = await q.CountAsync(s => s.Status == ZansiDispatchShipmentStatus.BookedWithCourier, ct),
                     ShipmentsInTransit = await q.CountAsync(s => s.Status == ZansiDispatchShipmentStatus.InTransit || s.Status == ZansiDispatchShipmentStatus.OutForDelivery, ct),
                     ShipmentsDelivered = await q.CountAsync(s => s.Status == ZansiDispatchShipmentStatus.Delivered, ct),
+                    ShipmentsExceptions = await q.CountAsync(s => s.Status == ZansiDispatchShipmentStatus.Failed || s.Status == ZansiDispatchShipmentStatus.Exception, ct),
                     ShipmentsPendingReconciliation = await q.CountAsync(s => s.ReconciliationStatus == ZansiDispatchReconciliationStatus.Pending, ct),
                     ShipmentsTotal = await q.CountAsync(ct),
                     ProviderFailureCount = await logs.CountAsync(l => !l.IsSuccess, ct),
@@ -819,7 +821,11 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 var q = _db.ZansiDispatchShipments.AsNoTracking().AsQueryable();
                 if (status.HasValue) q = q.Where(s => s.Status == status.Value);
                 var rows = await q.OrderByDescending(s => s.CreatedAt).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
-                return Result<List<ShipmentListItemDto>>.Success(rows.Select(MapShipmentListItem).ToList());
+
+                // Resolve buyer display names in one batched query (no per-row N+1).
+                var names = await ResolveCustomerNamesAsync(rows.Select(r => r.UserId), ct);
+                return Result<List<ShipmentListItemDto>>.Success(
+                    rows.Select(s => MapShipmentListItem(s, names.GetValueOrDefault(s.UserId))).ToList());
             }
             catch (Exception ex)
             {
@@ -834,7 +840,10 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             {
                 var s = await _db.ZansiDispatchShipments.AsNoTracking().FirstOrDefaultAsync(x => x.Id == shipmentId, ct);
                 if (s is null) return Result<ShipmentDto>.Failure(ErrorCodes.NotFound, "Shipment not found.");
-                return Result<ShipmentDto>.Success(MapShipment(s));
+                var dto = MapShipment(s);
+                var names = await ResolveCustomerNamesAsync(new[] { s.UserId }, ct);
+                dto.CustomerName = names.GetValueOrDefault(s.UserId);
+                return Result<ShipmentDto>.Success(dto);
             }
             catch (Exception ex)
             {
@@ -1197,20 +1206,49 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             UpdatedAt = s.UpdatedAt,
         };
 
-        private static ShipmentListItemDto MapShipmentListItem(ZansiDispatchShipment s) => new()
+        private static ShipmentListItemDto MapShipmentListItem(ZansiDispatchShipment s, string? customerName) => new()
         {
             Id = s.Id,
             OrderId = s.OrderId,
+            UserId = s.UserId,
+            CustomerName = customerName,
             ProviderType = s.ProviderType,
             ServiceLevel = s.ServiceLevel,
             Status = s.Status,
             ReconciliationStatus = s.ReconciliationStatus,
             QuotedDeliveryFee = s.QuotedDeliveryFee,
             ActualCourierCost = s.ActualCourierCost,
+            SurplusAmount = s.SurplusAmount,
+            DeficitAmount = s.DeficitAmount,
             NetAmount = s.NetAmount,
             TrackingNumber = s.TrackingNumber,
+            ShortTrackingReference = s.ShortTrackingReference,
             CreatedAt = s.CreatedAt,
         };
+
+        /// <summary>
+        /// Batch-resolve buyer display names for a set of user ids → { id : name }.
+        /// Full name (FirstName LastName), falling back to email. Unresolvable ids
+        /// are simply absent from the dictionary. One query, no N+1.
+        /// </summary>
+        private async Task<Dictionary<Guid, string>> ResolveCustomerNamesAsync(IEnumerable<Guid> userIds, CancellationToken ct)
+        {
+            var ids = userIds.Where(id => id != Guid.Empty).Distinct().ToList();
+            if (ids.Count == 0) return new Dictionary<Guid, string>();
+
+            var users = await _db.Users.AsNoTracking()
+                .Where(u => ids.Contains(u.Id))
+                .Select(u => new { u.Id, u.FirstName, u.LastName, u.Email })
+                .ToListAsync(ct);
+
+            return users.ToDictionary(
+                u => u.Id,
+                u =>
+                {
+                    var full = $"{u.FirstName} {u.LastName}".Trim();
+                    return string.IsNullOrWhiteSpace(full) ? (u.Email ?? "") : full;
+                });
+        }
 
         private static ShipmentEventDto MapEvent(ZansiDispatchShipmentEvent e) => new()
         {

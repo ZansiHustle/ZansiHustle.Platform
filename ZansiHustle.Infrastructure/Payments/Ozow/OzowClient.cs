@@ -46,6 +46,13 @@ namespace ZansiHustle.Infrastructure.Payments.Ozow
 
         public decimal UatTestAmount => _settings.UatTestAmount > 0m ? _settings.UatTestAmount : 10m;
 
+        public System.Collections.Generic.IReadOnlyList<string> GetMissingFieldEnvVars()
+        {
+            // Missing creds first, then the hash service which itself depends
+            // on PrivateKey (already covered in `_settings.GetMissingFieldEnvVars`).
+            return _settings.GetMissingFieldEnvVars();
+        }
+
         public async Task<Result<OzowTokenResponse>> GetTokenAsync(CancellationToken cancellationToken = default)
         {
             if (!_settings.HasCredentials())
@@ -134,15 +141,30 @@ namespace ZansiHustle.Infrastructure.Payments.Ozow
                     request.TransactionReference, request.Amount, request.CurrencyCode,
                     request.SiteCode, request.IsTest, request.BankReference);
 
+                // Stopwatch + log start/done. Pair with the matching
+                // PaymentService.InitializeOzowAsync trace so a 502 from
+                // Cloudflare always has an origin-side line you can grep for.
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                _logger.LogInformation(
+                    "[Ozow] PostPaymentRequest START ref={Ref} baseHost={Host} path={Path}",
+                    request.TransactionReference,
+                    _http.BaseAddress?.Host ?? "<unset>",
+                    "/PostPaymentRequest");
+
                 using var response = await _http.PostAsJsonAsync("/PostPaymentRequest", request, cancellationToken);
 
                 if (!response.IsSuccessStatusCode)
                 {
                     var text = await response.Content.ReadAsStringAsync(cancellationToken);
+                    // Truncate the provider body for the log — Ozow's error
+                    // page can be HTML and bloats logs without adding info.
+                    var safeBody = text.Length > 512 ? text[..512] + "…" : text;
                     _logger.LogError(
-                        "[Ozow] PostPaymentRequest FAILED status={StatusCode} ref={Ref} body={Body}",
-                        (int)response.StatusCode, request.TransactionReference, text);
-                    return Result<OzowPaymentRequestResult>.Failure(ErrorCodes.Exception, $"Ozow error ({(int)response.StatusCode}).");
+                        "[Ozow] PostPaymentRequest FAILED status={StatusCode} ref={Ref} elapsedMs={Elapsed} body={Body}",
+                        (int)response.StatusCode, request.TransactionReference, sw.ElapsedMilliseconds, safeBody);
+                    return Result<OzowPaymentRequestResult>.Failure(
+                        ErrorCodes.PaymentProviderUnavailable,
+                        $"Ozow returned HTTP {(int)response.StatusCode}.");
                 }
 
                 var data = await response.Content.ReadFromJsonAsync<OzowPaymentRequestResult>(cancellationToken: cancellationToken);
@@ -150,21 +172,46 @@ namespace ZansiHustle.Infrastructure.Payments.Ozow
                 if (data is null || string.IsNullOrWhiteSpace(data.Url) || string.IsNullOrWhiteSpace(data.PaymentRequestId))
                 {
                     _logger.LogWarning(
-                        "[Ozow] PostPaymentRequest returned non-actionable payload ref={Ref} error={Error}",
-                        request.TransactionReference, data?.ErrorMessage);
-                    return Result<OzowPaymentRequestResult>.Failure(ErrorCodes.Exception, data?.ErrorMessage ?? "Ozow returned an empty response.");
+                        "[Ozow] PostPaymentRequest returned non-actionable payload ref={Ref} elapsedMs={Elapsed} error={Error}",
+                        request.TransactionReference, sw.ElapsedMilliseconds, data?.ErrorMessage);
+                    return Result<OzowPaymentRequestResult>.Failure(
+                        ErrorCodes.PaymentInitFailed,
+                        data?.ErrorMessage ?? "Ozow returned an empty response.");
                 }
 
                 _logger.LogInformation(
-                    "[Ozow] PostPaymentRequest OK ref={Ref} paymentRequestId={Prid}",
-                    request.TransactionReference, data.PaymentRequestId);
+                    "[Ozow] PostPaymentRequest OK ref={Ref} paymentRequestId={Prid} elapsedMs={Elapsed}",
+                    request.TransactionReference, data.PaymentRequestId, sw.ElapsedMilliseconds);
 
                 return Result<OzowPaymentRequestResult>.Success(data, "Ozow PostPaymentRequest succeeded.");
             }
+            catch (TaskCanceledException tcex)
+            {
+                // HttpClient cancellation = network timeout (the 30s in
+                // ConfigureHttpClient) OR caller cancellation. Either way the
+                // provider was unreachable for this attempt, not declining us.
+                _logger.LogError(tcex,
+                    "[Ozow] PostPaymentRequest TIMEOUT ref={Ref}.",
+                    request.TransactionReference);
+                return Result<OzowPaymentRequestResult>.Failure(
+                    ErrorCodes.PaymentProviderUnavailable,
+                    "Ozow did not respond in time. Please try again.");
+            }
+            catch (HttpRequestException hrex)
+            {
+                _logger.LogError(hrex,
+                    "[Ozow] PostPaymentRequest NETWORK-FAILED ref={Ref}.",
+                    request.TransactionReference);
+                return Result<OzowPaymentRequestResult>.Failure(
+                    ErrorCodes.PaymentProviderUnavailable,
+                    "Couldn't reach Ozow. Please try again.");
+            }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ozow PostPaymentRequest threw for ref {Ref}.", request.TransactionReference);
-                return Result<OzowPaymentRequestResult>.Failure(ErrorCodes.Exception, $"Ozow PostPaymentRequest failed. {ex.Message}");
+                _logger.LogError(ex, "[Ozow] PostPaymentRequest THREW ref={Ref}.", request.TransactionReference);
+                return Result<OzowPaymentRequestResult>.Failure(
+                    ErrorCodes.PaymentProviderUnavailable,
+                    "Ozow request failed unexpectedly.");
             }
         }
 
