@@ -296,7 +296,8 @@ namespace ZansiHustle.Application.Payments
             var chargedAmount = uatTestMode
                 ? Math.Min(order.Total, _ozowClient.UatTestAmount)
                 : order.Total;
-            var paymentCode = uatTestMode ? "UAT-TEST-" + GenerateCode() : GenerateCode();
+            // UAT-TEST prefix uses underscores too (see GenerateCode rationale).
+            var paymentCode = uatTestMode ? "UAT_TEST_" + GenerateCode() : GenerateCode();
 
             // Save the local Payment row before calling Ozow so the webhook
             // has somewhere to land if Ozow's notify races our response.
@@ -328,6 +329,15 @@ namespace ZansiHustle.Application.Payments
             // Ozow's bankReference is shown to the buyer on their bank statement
             // and is hard-capped at 20 chars. Use a shortened code form.
             var bankReference = BuildOzowBankReference(payment.Code);
+
+            // Sanitized reference log. Confirms the values reaching Ozow
+            // match [A-Za-z0-9_] — useful when triaging "Failed to create
+            // transaction" reports against the dashboard reference-
+            // validation expression. No secrets here; reference strings
+            // are the same ones echoed back on the webhook.
+            _logger.LogInformation(
+                "[Ozow][Refs] paymentCode={Code} transactionRef={TxRef} bankRef={BankRef} length={Len}",
+                payment.Code, payment.Code, bankReference, bankReference.Length);
 
             // The transactionReference is what Ozow echoes back on the webhook;
             // we use our own Payment.Code so reconciliation is trivial.
@@ -379,14 +389,35 @@ namespace ZansiHustle.Application.Payments
 
         private static string BuildOzowBankReference(string paymentCode)
         {
-            // Strip the PAY- prefix and trim to 20 chars to satisfy Ozow's
-            // bankReference rule. This string ends up on the buyer's bank
-            // statement so it should be readable, not opaque.
+            // Strip the PAY_ / UAT_TEST_ prefix and trim to 20 chars to
+            // satisfy Ozow's bankReference rule. The output appears on the
+            // buyer's bank statement so we keep it readable, not opaque.
+            //
+            // Belt-and-braces sanitisation: strip any character outside
+            // [A-Za-z0-9_]. Even if a future caller passes a hyphenated
+            // legacy code into this helper, Ozow / Capitec / FNB will only
+            // see the underscore-and-alphanumeric form they accept.
             const int max = 20;
-            var stripped = paymentCode.StartsWith("PAY-", StringComparison.Ordinal)
-                ? paymentCode.Substring(4)
-                : paymentCode;
-            return stripped.Length > max ? stripped.Substring(0, max) : stripped;
+            var stripped = paymentCode;
+            if (stripped.StartsWith("PAY_", StringComparison.Ordinal)) stripped = stripped.Substring(4);
+            else if (stripped.StartsWith("PAY-", StringComparison.Ordinal)) stripped = stripped.Substring(4);
+            if (stripped.StartsWith("UAT_TEST_", StringComparison.Ordinal)) stripped = stripped.Substring("UAT_TEST_".Length);
+            else if (stripped.StartsWith("UAT-TEST-", StringComparison.Ordinal)) stripped = stripped.Substring("UAT-TEST-".Length);
+
+            var sb = new System.Text.StringBuilder(stripped.Length);
+            foreach (var ch in stripped)
+            {
+                if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')
+                    || (ch >= '0' && ch <= '9') || ch == '_')
+                {
+                    sb.Append(ch);
+                }
+                // Any other character is dropped silently (would be: hyphen,
+                // space, punctuation). Caller-side codes only ever contain
+                // safe chars now, so this is the legacy-safety guard.
+            }
+            var safe = sb.ToString();
+            return safe.Length > max ? safe.Substring(0, max) : safe;
         }
 
         // ─── Initialize: Yoco ────────────────────────────────────────────────
@@ -407,7 +438,8 @@ namespace ZansiHustle.Application.Payments
             var chargedAmount = uatTestMode
                 ? Math.Min(order.Total, _yocoClient.UatTestAmount)
                 : order.Total;
-            var paymentCode = uatTestMode ? "UAT-TEST-" + GenerateCode() : GenerateCode();
+            // UAT-TEST prefix uses underscores too (see GenerateCode rationale).
+            var paymentCode = uatTestMode ? "UAT_TEST_" + GenerateCode() : GenerateCode();
 
             var payment = new Payment
             {
@@ -513,6 +545,13 @@ namespace ZansiHustle.Application.Payments
         /// <inheritdoc />
         public async Task<Result<PaymentDto>> VerifyAsync(Guid userId, string reference, CancellationToken cancellationToken = default)
         {
+            // Stopwatch + structured log so we can correlate mobile's
+            // bounded poll cadence (1s, 2s, 3s, 5s, 5s, 8s) with the
+            // backend round-trips. Useful when a buyer reports "stuck
+            // on Checking" — search stdout for the payment reference and
+            // you get the local→provider status transitions per attempt.
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
             try
             {
                 if (string.IsNullOrWhiteSpace(reference))
@@ -526,6 +565,10 @@ namespace ZansiHustle.Application.Payments
 
                 if (payment.UserId != userId)
                     return Result<PaymentDto>.Failure(ErrorCodes.Forbidden, "You do not have permission to verify this payment.");
+
+                _logger.LogInformation(
+                    "[Payments][Verify] ref={Ref} provider={Provider} localStatus={LocalStatus} userId={UserId}",
+                    reference, payment.Provider, payment.Status, userId);
 
                 // Already terminal — nothing more to do.
                 if (payment.Status == PaymentTransactionStatus.Succeeded
@@ -573,7 +616,12 @@ namespace ZansiHustle.Application.Payments
                     var ozLookup = await _ozowClient.GetTransactionByReferenceAsync(payment.ProviderReference ?? payment.Code, cancellationToken);
 
                     if (!ozLookup.IsSuccess || ozLookup.Data is null)
+                    {
+                        _logger.LogWarning(
+                            "[Payments][Verify] Ozow lookup failed ref={Ref} reason={Reason} elapsedMs={Elapsed}",
+                            reference, ozLookup.Message ?? "<no message>", sw.ElapsedMilliseconds);
                         return Result<PaymentDto>.Failure(ErrorCodes.Exception, ozLookup.Message ?? "Ozow verify returned no data.");
+                    }
 
                     await ApplyOzowSignalAsync(
                         payment,
@@ -590,6 +638,9 @@ namespace ZansiHustle.Application.Payments
                         cancellationToken);
 
                     var refreshedOzow = await _paymentRepository.GetByIdAsync(payment.Id);
+                    _logger.LogInformation(
+                        "[Payments][Verify] ref={Ref} provider=Ozow providerStatus={ProviderStatus} mappedStatus={MappedStatus} elapsedMs={Elapsed}",
+                        reference, ozLookup.Data.Status ?? "<null>", refreshedOzow?.Status ?? payment.Status, sw.ElapsedMilliseconds);
                     return Result<PaymentDto>.Success(MapDto(refreshedOzow ?? payment), "Verification complete.");
                 }
 
@@ -1431,9 +1482,27 @@ namespace ZansiHustle.Application.Payments
                 : null;
         }
 
+        /// <summary>
+        /// Generates the local Payment.Code that doubles as the
+        /// TransactionReference we hand to Ozow.
+        ///
+        /// IMPORTANT: only characters in the <c>[A-Za-z0-9_]</c> set. Ozow's
+        /// dashboard reference-validation expression rejects hyphens at the
+        /// bank-handoff stage on some merchant configurations — the public
+        /// failure mode is the buyer-facing "Failed to create transaction.
+        /// Please retry to complete your payment." after the hosted page
+        /// loads. Underscores are safe everywhere and won't trip a Capitec /
+        /// FNB bank-reference rule.
+        ///
+        /// Tracked internally as the unique Payment.Code — the order/payment
+        /// chain doesn't care about the separator, only the uniqueness +
+        /// time-derived ordering for ops triage.
+        /// </summary>
         private static string GenerateCode()
         {
-            return $"PAY-{DateTime.UtcNow:yyyyMMddHHmmssfff}";
+            // PAY_yyyyMMddHHmmssfff  — 23 chars, fits within Ozow's
+            // BankReference 20-char cap once trimmed.
+            return $"PAY_{DateTime.UtcNow:yyyyMMddHHmmssfff}";
         }
 
         private static bool IsUniqueViolation(DbUpdateException ex)

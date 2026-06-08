@@ -661,7 +661,9 @@ public static class ServiceExtensions
                             "https://portal.zansihustle.com",
                             "https://www.zansihustle.com",
                             "https://www.zansihustle.co.za",
-                            "https://uat.portal.zansihustle.com"
+                            "https://uat.portal.zansihustle.com",
+                            "https://uat.pulse.zansihustle.com",
+                            "https://uat.dispatch.zansihustle.com"
                         )
                         .AllowAnyHeader()
                         .AllowAnyMethod()
