@@ -70,6 +70,14 @@ namespace ZansiHustle.Application.Listings.Dtos
         public List<string>? BookingMethods { get; set; }
 
         /// <summary>
+        /// Service fulfilment configuration (house call / provider location /
+        /// both + travel fee). Null for products and for services the seller
+        /// hasn't configured yet — the mobile buyer flow falls back safely and
+        /// flags it as unconfirmed. Read as <c>service.fulfilment</c> on mobile.
+        /// </summary>
+        public ServiceFulfilmentDto? Fulfilment { get; set; }
+
+        /// <summary>
         /// Variants for this listing. Empty when the seller hasn't
         /// added any — the listing is sold as a single SKU at
         /// <see cref="Price"/>. Ordered by <c>SortOrder</c>. Public

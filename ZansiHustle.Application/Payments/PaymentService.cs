@@ -10,11 +10,13 @@ using ZansiHustle.Application.Payments.Dtos;
 using ZansiHustle.Application.Payments.Providers;
 using ZansiHustle.Application.Persistence.Orders;
 using ZansiHustle.Application.Persistence.Payments;
+using ZansiHustle.Application.Persistence.ServiceBookings;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Domain.Orders;
 using ZansiHustle.Domain.Payments;
 using ZansiHustle.Shared.Enums.Orders;
 using ZansiHustle.Shared.Enums.Payments;
+using ZansiHustle.Shared.Enums.ServiceBookings;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
 
@@ -24,6 +26,7 @@ namespace ZansiHustle.Application.Payments
     {
         private readonly IPaymentRepository _paymentRepository;
         private readonly IOrderRepository _orderRepository;
+        private readonly IServiceBookingRepository _serviceBookingRepository;
         private readonly IPaystackClient _paystackClient;
         private readonly IOzowClient _ozowClient;
         private readonly IOzowHashService _ozowHashService;
@@ -35,6 +38,7 @@ namespace ZansiHustle.Application.Payments
         public PaymentService(
             IPaymentRepository paymentRepository,
             IOrderRepository orderRepository,
+            IServiceBookingRepository serviceBookingRepository,
             IPaystackClient paystackClient,
             IOzowClient ozowClient,
             IOzowHashService ozowHashService,
@@ -45,6 +49,7 @@ namespace ZansiHustle.Application.Payments
         {
             _paymentRepository = paymentRepository;
             _orderRepository = orderRepository;
+            _serviceBookingRepository = serviceBookingRepository;
             _paystackClient = paystackClient;
             _ozowClient = ozowClient;
             _ozowHashService = ozowHashService;
@@ -1409,6 +1414,27 @@ namespace ZansiHustle.Application.Payments
                 order.UpdatedAtUtc = DateTime.UtcNow;
                 _orderRepository.Update(order);
             }
+
+            // Confirm any service booking on this order — PendingPayment → Confirmed
+            // so the slot is now firmly held (no longer dependent on the hold window).
+            await SyncServiceBookingsOnPaidAsync(payment.OrderId);
+        }
+
+        /// <summary>
+        /// Payment succeeded → promote this order's PendingPayment bookings to
+        /// Confirmed. Shares the request DbContext, so the change is persisted by
+        /// the caller's SaveChanges. No-op for product orders (no bookings).
+        /// </summary>
+        private async Task SyncServiceBookingsOnPaidAsync(Guid orderId)
+        {
+            var bookings = await _serviceBookingRepository.GetByOrderAsync(orderId);
+            foreach (var booking in bookings)
+            {
+                if (booking.Status != ServiceBookingStatus.PendingPayment) continue;
+                booking.Status = ServiceBookingStatus.Confirmed;
+                booking.UpdatedAtUtc = DateTime.UtcNow;
+                _serviceBookingRepository.Update(booking);
+            }
         }
 
         private async Task MarkOrderPaymentFailedAsync(Payment payment)
@@ -1430,6 +1456,18 @@ namespace ZansiHustle.Application.Payments
                 order.PaymentStatus = PaymentStatus.Failed;
                 order.UpdatedAtUtc = DateTime.UtcNow;
                 _orderRepository.Update(order);
+            }
+
+            // Release any still-pending booking slot so the time becomes
+            // available again immediately (don't touch a Confirmed booking on a
+            // stray failed signal — see the Paid guard above).
+            var bookings = await _serviceBookingRepository.GetByOrderAsync(payment.OrderId);
+            foreach (var booking in bookings)
+            {
+                if (booking.Status != ServiceBookingStatus.PendingPayment) continue;
+                booking.Status = ServiceBookingStatus.Cancelled;
+                booking.UpdatedAtUtc = DateTime.UtcNow;
+                _serviceBookingRepository.Update(booking);
             }
         }
 

@@ -70,6 +70,30 @@ namespace ZansiHustle.Application.Listings.Dtos
         public List<string>? Availability { get; set; }
         public List<string>? BookingMethods { get; set; }
 
+        // ── Service fulfilment (optional; validated when Type == Service) ────
+        public ServiceFulfilmentMode? FulfilmentMode { get; set; }
+        public bool? AllowsHouseCall { get; set; }
+        public bool? AllowsProviderLocation { get; set; }
+        public string? ProviderLocationName { get; set; }
+        public string? ProviderAddressLine1 { get; set; }
+        public string? ProviderAddressLine2 { get; set; }
+        public string? ProviderCity { get; set; }
+        public string? ProviderProvince { get; set; }
+        public string? ProviderPostalCode { get; set; }
+        public decimal? ProviderLatitude { get; set; }
+        public decimal? ProviderLongitude { get; set; }
+        public ServiceTravelFeeType? TravelFeeType { get; set; }
+        public decimal? TravelFeePerKm { get; set; }
+        public decimal? TravelFeeFlatAmount { get; set; }
+        public decimal? FreeTravelRadiusKm { get; set; }
+        public decimal? MaxTravelDistanceKm { get; set; }
+        public decimal? TravelFeeMinimum { get; set; }
+        public decimal? TravelFeeMaximum { get; set; }
+        public int? LeadTimeHours { get; set; }
+        public int? BufferMinutes { get; set; }
+        /// <summary>Default booking duration (minutes). 15–720 when set; null → 60 fallback.</summary>
+        public int? EstimatedDurationMinutes { get; set; }
+
         /// <summary>
         /// Optional flat list of variants (colour / size / storage /
         /// package). Omit or send empty → "no variants", listing

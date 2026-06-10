@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using ZansiHustle.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using ZansiHustle.Infrastructure.Data;
 namespace ZansiHustle.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260610091331_AddServiceFulfilment")]
+    partial class AddServiceFulfilment
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1389,9 +1392,6 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.Property<string>("Description")
                         .HasMaxLength(5000)
                         .HasColumnType("nvarchar(max)");
-
-                    b.Property<int?>("EstimatedDurationMinutes")
-                        .HasColumnType("int");
 
                     b.Property<decimal?>("FreeTravelRadiusKm")
                         .HasPrecision(9, 2)
@@ -2898,94 +2898,6 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.HasIndex("VerificationStatus");
 
                     b.ToTable("SellerLeads", (string)null);
-                });
-
-            modelBuilder.Entity("ZansiHustle.Domain.ServiceBookings.ServiceBooking", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<int>("BufferMinutes")
-                        .HasColumnType("int");
-
-                    b.Property<string>("BuyerAddressLine1")
-                        .HasMaxLength(250)
-                        .HasColumnType("nvarchar(250)");
-
-                    b.Property<string>("BuyerFormattedAddress")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<decimal?>("BuyerLatitude")
-                        .HasPrecision(9, 6)
-                        .HasColumnType("decimal(9,6)");
-
-                    b.Property<decimal?>("BuyerLongitude")
-                        .HasPrecision(9, 6)
-                        .HasColumnType("decimal(9,6)");
-
-                    b.Property<string>("BuyerPlaceId")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid>("CustomerUserId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("EndAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("EstimatedDurationMinutes")
-                        .HasColumnType("int");
-
-                    b.Property<Guid>("ListingId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid>("MerchantId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<int>("Mode")
-                        .HasColumnType("int");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)");
-
-                    b.Property<Guid>("OrderId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid?>("OrderItemId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("ProviderLocationSnapshot")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<DateTime>("StartAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime?>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CustomerUserId");
-
-                    b.HasIndex("ListingId");
-
-                    b.HasIndex("OrderId");
-
-                    b.HasIndex("Status");
-
-                    b.HasIndex("MerchantId", "StartAtUtc");
-
-                    b.ToTable("ServiceBookings", (string)null);
                 });
 
             modelBuilder.Entity("ZansiHustle.Domain.Shops.ShopProfile", b =>
@@ -4777,33 +4689,6 @@ namespace ZansiHustle.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("AssignedUser");
-                });
-
-            modelBuilder.Entity("ZansiHustle.Domain.ServiceBookings.ServiceBooking", b =>
-                {
-                    b.HasOne("ZansiHustle.Domain.Listings.Listing", "Listing")
-                        .WithMany()
-                        .HasForeignKey("ListingId")
-                        .OnDelete(DeleteBehavior.NoAction)
-                        .IsRequired();
-
-                    b.HasOne("ZansiHustle.Domain.Merchants.Merchant", "Merchant")
-                        .WithMany()
-                        .HasForeignKey("MerchantId")
-                        .OnDelete(DeleteBehavior.NoAction)
-                        .IsRequired();
-
-                    b.HasOne("ZansiHustle.Domain.Orders.Order", "Order")
-                        .WithMany()
-                        .HasForeignKey("OrderId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Listing");
-
-                    b.Navigation("Merchant");
-
-                    b.Navigation("Order");
                 });
 
             modelBuilder.Entity("ZansiHustle.Domain.Shops.ShopProfile", b =>

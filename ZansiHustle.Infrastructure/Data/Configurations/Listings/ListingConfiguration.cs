@@ -137,6 +137,31 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Listings
             builder.Property(x => x.Turnaround)
                 .HasMaxLength(250);
 
+            // ── Service fulfilment (all nullable, additive) ──────────────────
+            builder.Property(x => x.FulfilmentMode)
+                .HasConversion<int?>();
+            builder.Property(x => x.TravelFeeType)
+                .HasConversion<int?>();
+
+            builder.Property(x => x.ProviderLocationName).HasMaxLength(150);
+            builder.Property(x => x.ProviderAddressLine1).HasMaxLength(250);
+            builder.Property(x => x.ProviderAddressLine2).HasMaxLength(250);
+            builder.Property(x => x.ProviderCity).HasMaxLength(150);
+            builder.Property(x => x.ProviderProvince).HasMaxLength(150);
+            builder.Property(x => x.ProviderPostalCode).HasMaxLength(20);
+
+            // Lat/lng — generous precision for geo coordinates.
+            builder.Property(x => x.ProviderLatitude).HasPrecision(9, 6);
+            builder.Property(x => x.ProviderLongitude).HasPrecision(9, 6);
+
+            // Money + distance amounts.
+            builder.Property(x => x.TravelFeePerKm).HasPrecision(18, 2);
+            builder.Property(x => x.TravelFeeFlatAmount).HasPrecision(18, 2);
+            builder.Property(x => x.TravelFeeMinimum).HasPrecision(18, 2);
+            builder.Property(x => x.TravelFeeMaximum).HasPrecision(18, 2);
+            builder.Property(x => x.FreeTravelRadiusKm).HasPrecision(9, 2);
+            builder.Property(x => x.MaxTravelDistanceKm).HasPrecision(9, 2);
+
             builder.Property(x => x.Rating)
                 .HasPrecision(5, 2);
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Identity;
@@ -7,11 +8,16 @@ using Microsoft.Extensions.Logging;
 using ZansiHustle.Application.Orders.Dtos;
 using ZansiHustle.Application.Persistence.Listings;
 using ZansiHustle.Application.Persistence.Orders;
+using ZansiHustle.Application.Persistence.ServiceBookings;
+using ZansiHustle.Application.ServiceBookings;
 using ZansiHustle.Application.ZansiDispatch;
 using ZansiHustle.Application.ZansiDispatch.Dtos;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Domain.Orders;
+using ZansiHustle.Domain.ServiceBookings;
+using ZansiHustle.Shared.Enums.Listings;
 using ZansiHustle.Shared.Enums.Orders;
+using ZansiHustle.Shared.Enums.ServiceBookings;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
 
@@ -21,14 +27,16 @@ namespace ZansiHustle.Application.Orders
     {
         private readonly IOrderRepository _orderRepository;
         private readonly IListingRepository _listingRepository;
+        private readonly IServiceBookingRepository _serviceBookingRepository;
         private readonly UserManager<User> _userManager;
         private readonly IZansiDispatchService _dispatch;
         private readonly ILogger<OrderService> _logger;
 
-        public OrderService(IOrderRepository orderRepository, IListingRepository listingRepository, UserManager<User> userManager, IZansiDispatchService dispatch, ILogger<OrderService> logger)
+        public OrderService(IOrderRepository orderRepository, IListingRepository listingRepository, IServiceBookingRepository serviceBookingRepository, UserManager<User> userManager, IZansiDispatchService dispatch, ILogger<OrderService> logger)
         {
             _orderRepository = orderRepository;
             _listingRepository = listingRepository;
+            _serviceBookingRepository = serviceBookingRepository;
             _userManager = userManager;
             _dispatch = dispatch;
             _logger = logger;
@@ -177,6 +185,24 @@ namespace ZansiHustle.Application.Orders
                 order.DeliveryQuoteOptionId = deliveryOption?.QuoteOptionId;
                 order.Total = subtotal + deliveryFee;
 
+                // ── Service booking (optional, additive) ─────────────────────
+                // When the buyer is booking a service slot, validate it is STILL
+                // available server-side (anti-double-book race guard) and build
+                // the ServiceBooking row. Added to the SAME DbContext as the
+                // order below so they commit atomically — a taken slot fails the
+                // whole create and no orphan order is left behind.
+                ServiceBooking? serviceBooking = null;
+                if (request.ServiceBooking is not null)
+                {
+                    var bookingResult = await BuildServiceBookingAsync(order, listings, buyerUserId, request.ServiceBooking);
+                    if (!bookingResult.IsSuccess)
+                        return Result<OrderDto>.Failure(bookingResult.Code, bookingResult.Message);
+                    serviceBooking = bookingResult.Data;
+                }
+
+                if (serviceBooking is not null)
+                    await _serviceBookingRepository.AddAsync(serviceBooking);
+
                 await _orderRepository.AddAsync(order);
                 var saved = await _orderRepository.SaveChangesAsync();
 
@@ -222,6 +248,110 @@ namespace ZansiHustle.Application.Orders
                 // Keep buyer-facing message generic; detail stays in the log.
                 return Result<OrderDto>.Failure(ErrorCodes.Exception, "Failed to place order.");
             }
+        }
+
+        /// <summary>
+        /// Validate a requested service slot server-side and build the booking
+        /// row. Returns a failure Result (no order is saved) when the date is out
+        /// of range, the provider isn't available that day, or the slot was taken
+        /// since the buyer last loaded availability (race guard).
+        /// </summary>
+        private async Task<Result<ServiceBooking>> BuildServiceBookingAsync(
+            Order order, List<Domain.Listings.Listing> listings, Guid buyerUserId, ServiceBookingDetailsDto details)
+        {
+            var services = listings.Where(l => l.Type == ListingType.Service).ToList();
+            if (services.Count != 1)
+                return Result<ServiceBooking>.Failure(ErrorCodes.BadRequest, "Booking details require a single service in the order.");
+
+            var listing = services[0];
+
+            if (!DateOnly.TryParseExact(details.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+                return Result<ServiceBooking>.Failure(ErrorCodes.BadRequest, "Invalid booking date.");
+            if (!TryParseTime(details.Time, out var time))
+                return Result<ServiceBooking>.Failure(ErrorCodes.BadRequest, "Invalid booking time.");
+
+            var nowUtc = DateTime.UtcNow;
+            var todayLocal = DateOnly.FromDateTime(nowUtc + BookingAvailabilityDefaults.SaUtcOffset);
+            var earliest = todayLocal.AddDays(1);
+            var latest = todayLocal.AddDays(BookingAvailabilityDefaults.LookaheadDays);
+            if (date < earliest || date > latest)
+                return Result<ServiceBooking>.Failure(
+                    ErrorCodes.BadRequest,
+                    $"Please choose a date within the next {BookingAvailabilityDefaults.LookaheadDays} days.");
+
+            var avail = ServiceAvailabilityCalculator.ParseAvailability(listing.Availability);
+            if (avail.IsConfigured && !ServiceAvailabilityCalculator.IsDayAvailable(date, avail))
+                return Result<ServiceBooking>.Failure(
+                    ErrorCodes.Conflict,
+                    "The provider isn't available on that day. Please choose another slot.");
+
+            // SERVER owns the duration — the listing's value (or 60 fallback),
+            // NEVER the client's. Otherwise a buyer could shrink durationMinutes
+            // to dodge calendar blocking. `details.DurationMinutes` is display-only.
+            var duration = ServiceAvailabilityCalculator.ResolveDuration(listing.EstimatedDurationMinutes);
+
+            // The requested start must be a real generated slot for this date +
+            // duration (enforces window-fit + day rules server-side).
+            var slots = ServiceAvailabilityCalculator.GenerateSlotsForDate(date, avail, duration);
+            if (!slots.Any(s => s.StartTime == time))
+                return Result<ServiceBooking>.Failure(
+                    ErrorCodes.Conflict,
+                    "That time isn't available for this service. Please choose another slot.");
+
+            var buffer = Math.Max(0, listing.BufferMinutes ?? 0);
+            var startUtc = ServiceAvailabilityCalculator.ToUtc(date, time);
+            var endUtc = startUtc.AddMinutes(duration);
+
+            // Server-side anti-double-book guard — the authoritative check.
+            var overlaps = await _serviceBookingRepository.HasActiveOverlapAsync(
+                order.MerchantId, startUtc, endUtc, nowUtc);
+            if (overlaps)
+                return Result<ServiceBooking>.Failure(
+                    ErrorCodes.Conflict,
+                    "This time is no longer available. Please choose another slot.");
+
+            var isHouseCall = (details.Mode ?? string.Empty).Contains("house", StringComparison.OrdinalIgnoreCase);
+            var mode = isHouseCall ? ServiceBookingMode.HouseCall : ServiceBookingMode.ProviderLocation;
+            var orderItem = order.Items.FirstOrDefault(i => i.ListingId == listing.Id);
+
+            var booking = new ServiceBooking
+            {
+                Id = Guid.NewGuid(),
+                OrderId = order.Id,
+                OrderItemId = orderItem?.Id,
+                ListingId = listing.Id,
+                MerchantId = order.MerchantId,
+                CustomerUserId = buyerUserId,
+                StartAtUtc = startUtc,
+                EndAtUtc = endUtc,
+                EstimatedDurationMinutes = duration,
+                BufferMinutes = buffer,
+                Mode = mode,
+                Status = ServiceBookingStatus.PendingPayment,
+                BuyerFormattedAddress = isHouseCall ? Trim(details.BuyerFormattedAddress) : null,
+                BuyerAddressLine1 = isHouseCall ? Trim(details.BuyerAddressLine1) : null,
+                BuyerLatitude = isHouseCall ? details.BuyerLatitude : null,
+                BuyerLongitude = isHouseCall ? details.BuyerLongitude : null,
+                BuyerPlaceId = isHouseCall ? Trim(details.BuyerPlaceId) : null,
+                ProviderLocationSnapshot = Trim(details.ProviderLocationSummary),
+                CreatedAtUtc = nowUtc
+            };
+
+            _logger.LogInformation(
+                "[ServiceBooking][Create] orderId={OrderId} listingId={ListingId} merchantId={MerchantId} startUtc={Start} endUtc={End} mode={Mode}",
+                order.Id, listing.Id, order.MerchantId, startUtc, endUtc, mode);
+
+            return Result<ServiceBooking>.Success(booking, "Booking validated.");
+        }
+
+        private static string? Trim(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+        private static bool TryParseTime(string? raw, out TimeOnly time)
+        {
+            time = default;
+            if (string.IsNullOrWhiteSpace(raw)) return false;
+            return TimeOnly.TryParseExact(
+                raw.Trim(), new[] { "HH:mm", "H:mm" }, CultureInfo.InvariantCulture, DateTimeStyles.None, out time);
         }
 
         /// <inheritdoc />

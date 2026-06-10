@@ -329,6 +329,37 @@ namespace ZansiHustle.Application.Listings
                     listing.Turnaround = request.Turnaround?.Trim();
                     listing.Availability = Clean(request.Availability);
                     listing.BookingMethods = Clean(request.BookingMethods);
+
+                    // Fulfilment (house call / provider location / both).
+                    listing.FulfilmentMode = request.FulfilmentMode;
+                    listing.AllowsHouseCall = request.AllowsHouseCall;
+                    listing.AllowsProviderLocation = request.AllowsProviderLocation;
+                    listing.ProviderLocationName = request.ProviderLocationName?.Trim();
+                    listing.ProviderAddressLine1 = request.ProviderAddressLine1?.Trim();
+                    listing.ProviderAddressLine2 = request.ProviderAddressLine2?.Trim();
+                    listing.ProviderCity = request.ProviderCity?.Trim();
+                    listing.ProviderProvince = request.ProviderProvince?.Trim();
+                    listing.ProviderPostalCode = request.ProviderPostalCode?.Trim();
+                    listing.ProviderLatitude = request.ProviderLatitude;
+                    listing.ProviderLongitude = request.ProviderLongitude;
+                    listing.TravelFeeType = request.TravelFeeType;
+                    listing.TravelFeePerKm = request.TravelFeePerKm;
+                    listing.TravelFeeFlatAmount = request.TravelFeeFlatAmount;
+                    listing.FreeTravelRadiusKm = request.FreeTravelRadiusKm;
+                    listing.MaxTravelDistanceKm = request.MaxTravelDistanceKm;
+                    listing.TravelFeeMinimum = request.TravelFeeMinimum;
+                    listing.TravelFeeMaximum = request.TravelFeeMaximum;
+                    listing.LeadTimeHours = request.LeadTimeHours;
+                    listing.BufferMinutes = request.BufferMinutes;
+                    listing.EstimatedDurationMinutes = request.EstimatedDurationMinutes;
+
+                    NormalizeFulfilment(listing);
+                    var fulfilCheck = ValidateServiceFulfilment(listing);
+                    if (!fulfilCheck.IsSuccess)
+                        return Result<ListingDto>.Failure(fulfilCheck.Code, fulfilCheck.Message);
+                    var durationCheck = ValidateServiceDuration(listing.EstimatedDurationMinutes);
+                    if (!durationCheck.IsSuccess)
+                        return Result<ListingDto>.Failure(durationCheck.Code, durationCheck.Message);
                 }
 
                 // Variants: optional on create. Validated here and
@@ -451,6 +482,40 @@ namespace ZansiHustle.Application.Listings
 
                     if (request.BookingMethods is not null)
                         listing.BookingMethods = Clean(request.BookingMethods);
+
+                    // Fulfilment merge — null fields leave existing values
+                    // unchanged (same pattern as ServiceArea/Turnaround above).
+                    listing.FulfilmentMode = request.FulfilmentMode ?? listing.FulfilmentMode;
+                    listing.AllowsHouseCall = request.AllowsHouseCall ?? listing.AllowsHouseCall;
+                    listing.AllowsProviderLocation = request.AllowsProviderLocation ?? listing.AllowsProviderLocation;
+                    listing.ProviderLocationName = request.ProviderLocationName?.Trim() ?? listing.ProviderLocationName;
+                    listing.ProviderAddressLine1 = request.ProviderAddressLine1?.Trim() ?? listing.ProviderAddressLine1;
+                    listing.ProviderAddressLine2 = request.ProviderAddressLine2?.Trim() ?? listing.ProviderAddressLine2;
+                    listing.ProviderCity = request.ProviderCity?.Trim() ?? listing.ProviderCity;
+                    listing.ProviderProvince = request.ProviderProvince?.Trim() ?? listing.ProviderProvince;
+                    listing.ProviderPostalCode = request.ProviderPostalCode?.Trim() ?? listing.ProviderPostalCode;
+                    listing.ProviderLatitude = request.ProviderLatitude ?? listing.ProviderLatitude;
+                    listing.ProviderLongitude = request.ProviderLongitude ?? listing.ProviderLongitude;
+                    listing.TravelFeeType = request.TravelFeeType ?? listing.TravelFeeType;
+                    listing.TravelFeePerKm = request.TravelFeePerKm ?? listing.TravelFeePerKm;
+                    listing.TravelFeeFlatAmount = request.TravelFeeFlatAmount ?? listing.TravelFeeFlatAmount;
+                    listing.FreeTravelRadiusKm = request.FreeTravelRadiusKm ?? listing.FreeTravelRadiusKm;
+                    listing.MaxTravelDistanceKm = request.MaxTravelDistanceKm ?? listing.MaxTravelDistanceKm;
+                    listing.TravelFeeMinimum = request.TravelFeeMinimum ?? listing.TravelFeeMinimum;
+                    listing.TravelFeeMaximum = request.TravelFeeMaximum ?? listing.TravelFeeMaximum;
+                    listing.LeadTimeHours = request.LeadTimeHours ?? listing.LeadTimeHours;
+                    listing.BufferMinutes = request.BufferMinutes ?? listing.BufferMinutes;
+                    listing.EstimatedDurationMinutes =
+                        request.EstimatedDurationMinutes ?? listing.EstimatedDurationMinutes;
+
+                    var durationCheck = ValidateServiceDuration(listing.EstimatedDurationMinutes);
+                    if (!durationCheck.IsSuccess)
+                        return Result<ListingDto>.Failure(durationCheck.Code, durationCheck.Message);
+
+                    NormalizeFulfilment(listing);
+                    var fulfilCheck = ValidateServiceFulfilment(listing);
+                    if (!fulfilCheck.IsSuccess)
+                        return Result<ListingDto>.Failure(fulfilCheck.Code, fulfilCheck.Message);
                 }
 
                 // Variants: null in the request → leave variants
@@ -643,6 +708,179 @@ namespace ZansiHustle.Application.Listings
                 return Result.Failure(ErrorCodes.BadRequest, "Stock cannot be negative.");
 
             return Result.Success();
+        }
+
+        // ── Service fulfilment ──────────────────────────────────────────────
+
+        /// <summary>
+        /// Fill in the Allows* flags + travel-fee type from the mode when the
+        /// seller left them implicit, so the stored entity (and the DTO) are
+        /// internally consistent regardless of which fields the client sent.
+        /// </summary>
+        private static void NormalizeFulfilment(Listing listing)
+        {
+            if (listing.Type != ListingType.Service || listing.FulfilmentMode is null)
+                return;
+
+            var mode = listing.FulfilmentMode.Value;
+            listing.AllowsHouseCall ??=
+                mode is ServiceFulfilmentMode.HouseCallOnly or ServiceFulfilmentMode.Both;
+            listing.AllowsProviderLocation ??=
+                mode is ServiceFulfilmentMode.ProviderLocationOnly or ServiceFulfilmentMode.Both;
+            listing.TravelFeeType ??= ServiceTravelFeeType.None;
+        }
+
+        /// <summary>
+        /// Validate a service listing's EFFECTIVE fulfilment state (after
+        /// normalisation). Migration-safe: when <c>FulfilmentMode</c> is null
+        /// (existing rows / not configured yet) this is a no-op — existing data
+        /// is never retro-blocked. New/updated configs must be coherent.
+        /// </summary>
+        /// <summary>
+        /// Service booking duration must be 15 minutes … 12 hours when supplied.
+        /// Null is allowed (legacy services fall back to 60 at booking time).
+        /// Applies to services only — products never set this.
+        /// </summary>
+        private static Result ValidateServiceDuration(int? minutes)
+        {
+            if (minutes is int m && (m < 15 || m > 720))
+                return Result.Failure(
+                    ErrorCodes.BadRequest,
+                    "Service duration must be between 15 minutes and 12 hours.");
+            return Result.Success();
+        }
+
+        private static Result ValidateServiceFulfilment(Listing l)
+        {
+            if (l.Type != ListingType.Service || l.FulfilmentMode is null)
+                return Result.Success();
+
+            var mode = l.FulfilmentMode.Value;
+            var house = l.AllowsHouseCall ?? false;
+            var provider = l.AllowsProviderLocation ?? false;
+
+            // Mode/flags consistency — block impossible configs.
+            switch (mode)
+            {
+                case ServiceFulfilmentMode.ProviderLocationOnly:
+                    if (!provider || house)
+                        return Result.Failure(ErrorCodes.BadRequest,
+                            "Provider-location-only services must enable provider location and disable house calls.");
+                    break;
+                case ServiceFulfilmentMode.HouseCallOnly:
+                    if (!house || provider)
+                        return Result.Failure(ErrorCodes.BadRequest,
+                            "House-call-only services must enable house calls and disable provider location.");
+                    break;
+                case ServiceFulfilmentMode.Both:
+                    if (!house || !provider)
+                        return Result.Failure(ErrorCodes.BadRequest,
+                            "Services offered as both must enable house calls and provider location.");
+                    break;
+                default:
+                    return Result.Failure(ErrorCodes.BadRequest, "Unknown service fulfilment mode.");
+            }
+
+            var hasProviderLocation =
+                !string.IsNullOrWhiteSpace(l.ProviderLocationName) ||
+                !string.IsNullOrWhiteSpace(l.ProviderAddressLine1) ||
+                !string.IsNullOrWhiteSpace(l.ProviderCity) ||
+                (l.ProviderLatitude.HasValue && l.ProviderLongitude.HasValue);
+
+            // Provider location required when buyers can visit.
+            if (provider && !hasProviderLocation)
+                return Result.Failure(ErrorCodes.BadRequest,
+                    "Provider location details are required when buyers can visit your location.");
+
+            if (house)
+            {
+                // A base location is needed so travel/distance can be computed.
+                if (!hasProviderLocation)
+                    return Result.Failure(ErrorCodes.BadRequest,
+                        "A provider base location is required for house-call services so travel can be calculated.");
+
+                var feeType = l.TravelFeeType ?? ServiceTravelFeeType.None;
+                if (feeType == ServiceTravelFeeType.PerKilometre &&
+                    !(l.TravelFeePerKm.HasValue && l.TravelFeePerKm.Value > 0))
+                {
+                    return Result.Failure(ErrorCodes.BadRequest,
+                        "A per-kilometre travel rate greater than zero is required for per-km travel fees.");
+                }
+                if (feeType == ServiceTravelFeeType.FlatFee &&
+                    (l.TravelFeeFlatAmount is null || l.TravelFeeFlatAmount < 0))
+                {
+                    return Result.Failure(ErrorCodes.BadRequest,
+                        "A flat travel fee of zero or more is required for flat travel fees.");
+                }
+                if (l.MaxTravelDistanceKm is <= 0)
+                    return Result.Failure(ErrorCodes.BadRequest,
+                        "Max travel distance must be greater than zero.");
+                if (l.FreeTravelRadiusKm is < 0)
+                    return Result.Failure(ErrorCodes.BadRequest,
+                        "Free travel radius cannot be negative.");
+            }
+
+            return Result.Success();
+        }
+
+        /// <summary>
+        /// Build the fulfilment DTO from a service listing. Null for products
+        /// and for services the seller hasn't configured (<c>FulfilmentMode</c>
+        /// null) — the mobile flow then uses its safe fallback.
+        /// </summary>
+        private static ServiceFulfilmentDto? BuildFulfilmentDto(Listing l)
+        {
+            if (l.Type != ListingType.Service || l.FulfilmentMode is null)
+                return null;
+
+            var mode = l.FulfilmentMode.Value;
+            var house = l.AllowsHouseCall ??
+                (mode is ServiceFulfilmentMode.HouseCallOnly or ServiceFulfilmentMode.Both);
+            var provider = l.AllowsProviderLocation ??
+                (mode is ServiceFulfilmentMode.ProviderLocationOnly or ServiceFulfilmentMode.Both);
+
+            var summary = string.Join(", ", new[]
+            {
+                l.ProviderLocationName,
+                l.ProviderAddressLine1,
+                l.ProviderCity,
+                l.ProviderProvince,
+            }.Where(s => !string.IsNullOrWhiteSpace(s)));
+
+            var hasAnyLocation =
+                !string.IsNullOrWhiteSpace(summary) ||
+                (l.ProviderLatitude.HasValue && l.ProviderLongitude.HasValue);
+
+            return new ServiceFulfilmentDto
+            {
+                Mode = mode,
+                AllowsHouseCall = house,
+                AllowsProviderLocation = provider,
+                ProviderLocation = hasAnyLocation
+                    ? new ServiceProviderLocationDto
+                    {
+                        Name = l.ProviderLocationName,
+                        Summary = string.IsNullOrWhiteSpace(summary) ? null : summary,
+                        AddressLine1 = l.ProviderAddressLine1,
+                        AddressLine2 = l.ProviderAddressLine2,
+                        City = l.ProviderCity,
+                        Province = l.ProviderProvince,
+                        PostalCode = l.ProviderPostalCode,
+                        Latitude = l.ProviderLatitude,
+                        Longitude = l.ProviderLongitude,
+                    }
+                    : null,
+                TravelFeeType = l.TravelFeeType ?? ServiceTravelFeeType.None,
+                TravelFeePerKm = l.TravelFeePerKm,
+                TravelFeeFlatAmount = l.TravelFeeFlatAmount,
+                FreeTravelRadiusKm = l.FreeTravelRadiusKm,
+                MaxTravelDistanceKm = l.MaxTravelDistanceKm,
+                TravelFeeMinimum = l.TravelFeeMinimum,
+                TravelFeeMaximum = l.TravelFeeMaximum,
+                LeadTimeHours = l.LeadTimeHours,
+                BufferMinutes = l.BufferMinutes,
+                EstimatedDurationMinutes = l.EstimatedDurationMinutes,
+            };
         }
 
         private async Task<string> GenerateUniqueSlugAsync(string title)
@@ -917,6 +1155,7 @@ namespace ZansiHustle.Application.Listings
                 Turnaround = listing.Turnaround,
                 Availability = listing.Availability,
                 BookingMethods = listing.BookingMethods,
+                Fulfilment = BuildFulfilmentDto(listing),
                 // Project variants in stable seller-defined order. The
                 // seller-side edit flow round-trips on this list, so we
                 // surface ALL variants (including inactive) — the buyer

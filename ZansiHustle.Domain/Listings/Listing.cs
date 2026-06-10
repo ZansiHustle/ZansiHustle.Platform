@@ -109,6 +109,48 @@ namespace ZansiHustle.Domain.Listings
         public List<string>? Availability { get; set; }
         public List<string>? BookingMethods { get; set; }
 
+        // ── Service fulfilment (house call / provider location / both) ──────
+        // All nullable + additive: existing service rows keep null until the
+        // seller configures fulfilment, and the buyer flow falls back safely.
+        // Product listings leave every field null. See ServiceFulfilmentMode /
+        // ServiceTravelFeeType.
+        public ServiceFulfilmentMode? FulfilmentMode { get; set; }
+        public bool? AllowsHouseCall { get; set; }
+        public bool? AllowsProviderLocation { get; set; }
+
+        // Provider's per-service location (NOT auto-copied from the merchant
+        // onboarding address — the seller confirms it per service).
+        public string? ProviderLocationName { get; set; }
+        public string? ProviderAddressLine1 { get; set; }
+        public string? ProviderAddressLine2 { get; set; }
+        public string? ProviderCity { get; set; }
+        public string? ProviderProvince { get; set; }
+        public string? ProviderPostalCode { get; set; }
+        public decimal? ProviderLatitude { get; set; }
+        public decimal? ProviderLongitude { get; set; }
+
+        // Travel-fee configuration (house call only).
+        public ServiceTravelFeeType? TravelFeeType { get; set; }
+        public decimal? TravelFeePerKm { get; set; }
+        public decimal? TravelFeeFlatAmount { get; set; }
+        public decimal? FreeTravelRadiusKm { get; set; }
+        public decimal? MaxTravelDistanceKm { get; set; }
+        public decimal? TravelFeeMinimum { get; set; }
+        public decimal? TravelFeeMaximum { get; set; }
+
+        // Scheduling hints (optional, reserved for availability work).
+        public int? LeadTimeHours { get; set; }
+        public int? BufferMinutes { get; set; }
+
+        /// <summary>
+        /// Seller-set default time a single booking of this service takes, in
+        /// minutes. Drives availability slot length + calendar blocking (a 3h
+        /// service booked at 14:00 blocks 14:00–17:00). Nullable: legacy services
+        /// fall back to a 60-minute default. Validated 15–720 when set (services
+        /// only).
+        /// </summary>
+        public int? EstimatedDurationMinutes { get; set; }
+
         /// <summary>
         /// Child variants (colour / size / storage / package options).
         /// Empty list = "no variants" — the listing is sold as a single

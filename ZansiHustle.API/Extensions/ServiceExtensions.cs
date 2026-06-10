@@ -471,6 +471,12 @@ public static class ServiceExtensions
             ZansiHustle.Application.Persistence.Shops.IShopProfileRepository,
             ZansiHustle.Infrastructure.Persistence.Shops.ShopProfileRepository>();
         services.AddScoped<IOrderRepository, OrderRepository>();
+        // Service bookings — scheduled-slot persistence + availability overlap
+        // queries. Used by OrderService (create-time slot guard), PaymentService
+        // (status sync) and ServiceBookingService (availability endpoint).
+        services.AddScoped<
+            ZansiHustle.Application.Persistence.ServiceBookings.IServiceBookingRepository,
+            ZansiHustle.Infrastructure.Persistence.ServiceBookings.ServiceBookingRepository>();
         services.AddScoped<IEventPlanRepository, EventPlanRepository>();
         services.AddScoped<IValuationRepository, ValuationRepository>();
         services.AddScoped<IStakeholderRepository, StakeholderRepository>();
@@ -515,6 +521,9 @@ public static class ServiceExtensions
         services.AddScoped<ISellerCategoryService, SellerCategoryService>();
         services.AddScoped<IAgentMappingService, AgentMappingService>();
         services.AddScoped<IListingService, ListingService>();
+        services.AddScoped<
+            ZansiHustle.Application.ServiceBookings.IServiceBookingService,
+            ZansiHustle.Application.ServiceBookings.ServiceBookingService>();
         services.AddScoped<
             ZansiHustle.Application.Reviews.IReviewService,
             ZansiHustle.Application.Reviews.ReviewService>();

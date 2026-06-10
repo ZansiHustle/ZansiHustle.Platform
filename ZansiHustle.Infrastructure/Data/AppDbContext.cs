@@ -23,6 +23,7 @@ using ZansiHustle.Domain.Podcasts;
 using ZansiHustle.Domain.Referrals;
 using ZansiHustle.Domain.Reviews;
 using ZansiHustle.Domain.SellerCategories;
+using ZansiHustle.Domain.ServiceBookings;
 using ZansiHustle.Domain.Shops;
 using ZansiHustle.Domain.SellerLeads;
 using ZansiHustle.Domain.ZansiPulse;
@@ -125,6 +126,12 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
 
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
+
+    // ── Service bookings (scheduled service slots tied to an Order) ────────
+    // Queryable source of truth for booking availability / double-book
+    // prevention. Config:
+    // ZansiHustle.Infrastructure.Persistence...ServiceBookingConfiguration.
+    public DbSet<ServiceBooking> ServiceBookings => Set<ServiceBooking>();
 
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<PaymentEvent> PaymentEvents => Set<PaymentEvent>();
