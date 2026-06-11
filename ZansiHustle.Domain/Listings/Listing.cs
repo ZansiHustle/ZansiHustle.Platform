@@ -138,6 +138,16 @@ namespace ZansiHustle.Domain.Listings
         public decimal? TravelFeeMinimum { get; set; }
         public decimal? TravelFeeMaximum { get; set; }
 
+        /// <summary>
+        /// Extra charged on top of <see cref="Price"/> when the buyer chooses a
+        /// HOUSE CALL (covers the provider's travel time/effort). Provider-location
+        /// bookings never pay it. Collected upfront by the platform together with
+        /// the service fee + travel fee; the provider is credited later from the
+        /// platform balance. Null/0 = no surcharge; when set it must be ≥ R20
+        /// (the product minimum). Independent of <see cref="TravelFeeType"/>.
+        /// </summary>
+        public decimal? HouseCallSurchargeAmount { get; set; }
+
         // Scheduling hints (optional, reserved for availability work).
         public int? LeadTimeHours { get; set; }
         public int? BufferMinutes { get; set; }

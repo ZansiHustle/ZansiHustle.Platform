@@ -71,10 +71,15 @@ namespace ZansiHustle.Application.ServiceBookings.Dtos
         /// <summary>Customer may rate (Completed + customer viewer).</summary>
         public bool CanRate { get; set; }
 
+        // Rejection (set when Status == Rejected).
+        public string? RejectionReasonCode { get; set; }
+        public string? RejectionReasonText { get; set; }
+
         // Timeline.
         public DateTime? AcceptedAtUtc { get; set; }
         public DateTime? InProgressAtUtc { get; set; }
         public DateTime? CompletedAtUtc { get; set; }
+        public DateTime? RejectedAtUtc { get; set; }
         public DateTime CreatedAtUtc { get; set; }
     }
 }

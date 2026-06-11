@@ -83,6 +83,19 @@ namespace ZansiHustle.API.Controllers
             return ToActionResult(await _serviceBookingService.AcceptAsync(userId.Value, id));
         }
 
+        /// <summary>Provider rejects a Requested/Accepted booking with a reason —
+        /// releases the slot and credits the customer's wallet.</summary>
+        [HttpPost("{id:guid}/reject")]
+        [ProducesResponseType(typeof(Result<ServiceBookingDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> Reject(Guid id, [FromBody] RejectBookingRequestDto request)
+        {
+            var userId = _currentUserService.UserId;
+            if (!userId.HasValue)
+                return ToActionResult(Result<ServiceBookingDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            return ToActionResult(await _serviceBookingService.RejectAsync(userId.Value, id, request ?? new RejectBookingRequestDto()));
+        }
+
         /// <summary>Either party marks the booking started (allowed on/after the
         /// scheduled day; flips to InProgress once both sides have marked).</summary>
         [HttpPost("{id:guid}/mark-in-progress")]

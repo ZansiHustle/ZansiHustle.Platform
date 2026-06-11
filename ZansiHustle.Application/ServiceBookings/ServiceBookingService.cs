@@ -10,10 +10,16 @@ using ZansiHustle.Application.Persistence.Listings;
 using ZansiHustle.Application.Persistence.ServiceBookings;
 using ZansiHustle.Application.Realtime;
 using ZansiHustle.Application.ServiceBookings.Dtos;
+using ZansiHustle.Application.Trust;
+using ZansiHustle.Application.Wallets;
 using ZansiHustle.Domain.ServiceBookings;
+using ZansiHustle.Domain.Wallets;
+using ZansiHustle.Shared.Enums.Wallets;
 using ZansiHustle.Shared.Enums.Listings;
 using ZansiHustle.Shared.Enums.Notifications;
+using ZansiHustle.Shared.Enums.Orders;
 using ZansiHustle.Shared.Enums.ServiceBookings;
+using ZansiHustle.Shared.Enums.Trust;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
 
@@ -32,6 +38,8 @@ namespace ZansiHustle.Application.ServiceBookings
         private readonly IServiceBookingRepository _serviceBookingRepository;
         private readonly INotificationService _notifications;
         private readonly IRealtimeNotifier _realtime;
+        private readonly IWalletService _wallet;
+        private readonly ITrustEventService _trust;
         private readonly ILogger<ServiceBookingService> _logger;
 
         public ServiceBookingService(
@@ -40,6 +48,8 @@ namespace ZansiHustle.Application.ServiceBookings
             IServiceBookingRepository serviceBookingRepository,
             INotificationService notifications,
             IRealtimeNotifier realtime,
+            IWalletService wallet,
+            ITrustEventService trust,
             ILogger<ServiceBookingService> logger)
         {
             _listingService = listingService;
@@ -47,6 +57,8 @@ namespace ZansiHustle.Application.ServiceBookings
             _serviceBookingRepository = serviceBookingRepository;
             _notifications = notifications;
             _realtime = realtime;
+            _wallet = wallet;
+            _trust = trust;
             _logger = logger;
         }
 
@@ -143,8 +155,78 @@ namespace ZansiHustle.Application.ServiceBookings
                 "Booking accepted",
                 $"Your booking for {serviceName} was accepted by the provider.");
             await BroadcastStatusAsync(booking);
+            await _trust.RecordAsync(userId, TrustActorRole.Seller,
+                TrustEventType.BookingAccepted, "ServiceBooking", booking.Id);
 
             return Result<ServiceBookingDto>.Success(BuildDto(booking, ViewerRole.Provider), "Booking accepted.");
+        }
+
+        /// <inheritdoc />
+        public async Task<Result<ServiceBookingDto>> RejectAsync(
+            Guid userId, Guid bookingId, RejectBookingRequestDto request)
+        {
+            var booking = await _serviceBookingRepository.GetByIdWithDetailsAsync(bookingId);
+            if (booking is null)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.NotFound, "Booking not found.");
+
+            if (!IsProvider(booking, userId))
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.Forbidden, "Only the provider can reject this booking.");
+
+            // Rejectable only before work starts: Requested/Accepted (legacy
+            // Confirmed too). NOT InProgress/Completed/Cancelled/Rejected.
+            if (booking.Status != ServiceBookingStatus.Requested
+                && booking.Status != ServiceBookingStatus.Accepted
+                && booking.Status != ServiceBookingStatus.Confirmed)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.Conflict, "This booking can no longer be rejected.");
+
+            var (reasonCode, reasonError) = NormaliseRejectionReason(request);
+            if (reasonError is not null)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.BadRequest, reasonError);
+
+            var nowUtc = DateTime.UtcNow;
+            booking.Status = ServiceBookingStatus.Rejected;
+            booking.RejectedAtUtc = nowUtc;
+            booking.RejectedByUserId = userId;
+            booking.RejectionReasonCode = reasonCode;
+            booking.RejectionReasonText = string.IsNullOrWhiteSpace(request.ReasonText) ? null : request.ReasonText.Trim();
+            booking.UpdatedAtUtc = nowUtc;
+            _serviceBookingRepository.Update(booking);
+            await _serviceBookingRepository.SaveChangesAsync();
+
+            // Credit the customer's wallet with the full paid amount (idempotent).
+            // Only when the order was actually paid — nothing to refund otherwise.
+            WalletTransaction? credit = null;
+            var refundable = ComputeRefundable(booking);
+            if (booking.Order?.PaymentStatus == PaymentStatus.Paid && refundable > 0m)
+            {
+                var currency = string.IsNullOrWhiteSpace(booking.Order?.Currency) ? "ZAR" : booking.Order!.Currency;
+                credit = await _wallet.CreditAsync(
+                    booking.CustomerUserId,
+                    WalletTransactionType.BookingRejectedCredit,
+                    refundable, currency,
+                    "ServiceBooking", booking.Id,
+                    "Refund for rejected booking");
+            }
+
+            var serviceName = booking.Listing?.Title ?? "your service";
+            await _notifications.NotifyBookingStatusChangedAsync(
+                booking, booking.CustomerUserId, NotificationType.BookingRejected,
+                "Booking rejected",
+                credit is not null
+                    ? "Your booking was rejected and your wallet has been credited."
+                    : $"Your booking for {serviceName} was rejected.");
+            await BroadcastStatusAsync(booking);
+
+            if (credit is not null)
+                await SafeWalletBalanceChangedAsync(booking.CustomerUserId, credit.BalanceAfter, credit.Currency);
+
+            // Trust signals (record-only; no penalties).
+            await _trust.RecordAsync(userId, TrustActorRole.Seller,
+                TrustEventType.BookingRejected, "ServiceBooking", booking.Id, new { reasonCode });
+            await _trust.RecordAsync(booking.CustomerUserId, TrustActorRole.Customer,
+                TrustEventType.BookingRejectedReceived, "ServiceBooking", booking.Id);
+
+            return Result<ServiceBookingDto>.Success(BuildDto(booking, ViewerRole.Provider), "Booking rejected.");
         }
 
         /// <inheritdoc />
@@ -229,6 +311,15 @@ namespace ZansiHustle.Application.ServiceBookings
             await NotifyOtherPartyCompleteAsync(booking, role.Value, bothMarked);
             await BroadcastStatusAsync(booking);
 
+            if (bothMarked)
+            {
+                if (booking.Merchant?.OwnerUserId is Guid sellerId && sellerId != Guid.Empty)
+                    await _trust.RecordAsync(sellerId, TrustActorRole.Seller,
+                        TrustEventType.BookingCompleted, "ServiceBooking", booking.Id);
+                await _trust.RecordAsync(booking.CustomerUserId, TrustActorRole.Customer,
+                    TrustEventType.CompletedBooking, "ServiceBooking", booking.Id);
+            }
+
             return Result<ServiceBookingDto>.Success(BuildDto(booking, role.Value),
                 bothMarked ? "Booking completed." : "Marked as complete. Waiting for the other party.");
         }
@@ -264,6 +355,57 @@ namespace ZansiHustle.Application.ServiceBookings
             s == ServiceBookingStatus.Confirmed
                 ? ServiceBookingStatus.Requested.ToString()
                 : s.ToString();
+
+        // Allowed rejection reason codes (mirror the mobile reason sheet).
+        private static readonly HashSet<string> RejectReasonCodes = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "NotAvailable", "LocationTooFar", "CannotProvideService",
+            "CustomerDetailsIncomplete", "Emergency", "Other"
+        };
+
+        /// <summary>Validate + canonicalise the rejection reason. Returns the
+        /// canonical code and an error message (null when valid).</summary>
+        private static (string code, string? error) NormaliseRejectionReason(RejectBookingRequestDto request)
+        {
+            var raw = request?.ReasonCode?.Trim();
+            if (string.IsNullOrWhiteSpace(raw))
+                return (string.Empty, "A rejection reason is required.");
+            if (!RejectReasonCodes.Contains(raw))
+                return (string.Empty, "Choose a valid rejection reason.");
+
+            // Canonical casing from the allowed set.
+            var code = RejectReasonCodes.First(c => string.Equals(c, raw, StringComparison.OrdinalIgnoreCase));
+
+            if (string.Equals(code, "Other", StringComparison.OrdinalIgnoreCase))
+            {
+                var text = request?.ReasonText?.Trim() ?? string.Empty;
+                if (text.Length < 10)
+                    return (code, "Please give a clear reason. Rejections are reviewed and may affect visibility.");
+            }
+            return (code, null);
+        }
+
+        /// <summary>Full paid amount to refund: the money snapshot
+        /// (base + surcharge + travel) captured at order time, falling back to
+        /// the order Total for legacy bookings created before the snapshot.</summary>
+        private static decimal ComputeRefundable(ServiceBooking b)
+        {
+            var snapshot = b.BaseServiceAmount + b.HouseCallSurcharge + b.TravelFee;
+            if (snapshot > 0m) return snapshot;
+            return b.Order?.Total ?? 0m;
+        }
+
+        private async Task SafeWalletBalanceChangedAsync(Guid userId, decimal availableBalance, string currency)
+        {
+            try
+            {
+                await _realtime.WalletBalanceChangedAsync(userId, new { availableBalance, currency });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[ServiceBooking] wallet-balance realtime push failed for {UserId}.", userId);
+            }
+        }
 
         private async Task BroadcastStatusAsync(ServiceBooking b)
         {
@@ -386,9 +528,12 @@ namespace ZansiHustle.Application.ServiceBookings
                 CanMarkInProgress = canMarkInProgress,
                 CanMarkComplete = canMarkComplete,
                 CanRate = canRate,
+                RejectionReasonCode = b.RejectionReasonCode,
+                RejectionReasonText = b.RejectionReasonText,
                 AcceptedAtUtc = b.ProviderAcceptedAtUtc,
                 InProgressAtUtc = b.InProgressAtUtc,
                 CompletedAtUtc = b.CompletedAtUtc,
+                RejectedAtUtc = b.RejectedAtUtc,
                 CreatedAtUtc = b.CreatedAtUtc
             };
         }
@@ -526,7 +671,7 @@ namespace ZansiHustle.Application.ServiceBookings
             // never expose WHY (that's the dev-only DebugMessage), just that the
             // provider confirms it. NEVER a fabricated fee.
             const string notReadyUserMessage =
-                "Travel fee will be confirmed by the provider. Only the service fee is charged online for now.";
+                "Travel fee will be confirmed before payment.";
 
             TravelQuoteResultDto NotReady(string reasonCode, string debugMessage, string? userMessage = null) => new()
             {

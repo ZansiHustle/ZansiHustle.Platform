@@ -201,7 +201,19 @@ namespace ZansiHustle.Application.Orders
                 }
 
                 if (serviceBooking is not null)
+                {
+                    // House-call money is collected UPFRONT by the platform: the
+                    // base service fee is already in `subtotal`; the surcharge +
+                    // travel fee (computed server-side in BuildServiceBookingAsync)
+                    // are added to the order Total here so Ozow charges the full
+                    // amount. The provider is credited later from the platform
+                    // balance. Buyers can NOT pay the provider off-platform.
+                    var houseCallExtras = serviceBooking.HouseCallSurcharge + serviceBooking.TravelFee;
+                    if (houseCallExtras > 0m)
+                        order.Total += houseCallExtras;
+
                     await _serviceBookingRepository.AddAsync(serviceBooking);
+                }
 
                 await _orderRepository.AddAsync(order);
                 var saved = await _orderRepository.SaveChangesAsync();
@@ -314,6 +326,13 @@ namespace ZansiHustle.Application.Orders
             var mode = isHouseCall ? ServiceBookingMode.HouseCall : ServiceBookingMode.ProviderLocation;
             var orderItem = order.Items.FirstOrDefault(i => i.ListingId == listing.Id);
 
+            // Money snapshot. SERVER computes the upfront extras (never the
+            // client): a house call adds the listing's house-call surcharge plus
+            // the FLAT travel fee (None/PerKm contribute 0 — PerKm isn't
+            // collectable until a route provider ships, so it's never charged).
+            var surcharge = isHouseCall ? Math.Max(0m, listing.HouseCallSurchargeAmount ?? 0m) : 0m;
+            var travelFee = isHouseCall ? ComputeFlatTravelFee(listing) : 0m;
+
             var booking = new ServiceBooking
             {
                 Id = Guid.NewGuid(),
@@ -328,6 +347,9 @@ namespace ZansiHustle.Application.Orders
                 BufferMinutes = buffer,
                 Mode = mode,
                 Status = ServiceBookingStatus.PendingPayment,
+                BaseServiceAmount = listing.Price,
+                HouseCallSurcharge = surcharge,
+                TravelFee = travelFee,
                 BuyerFormattedAddress = isHouseCall ? Trim(details.BuyerFormattedAddress) : null,
                 BuyerAddressLine1 = isHouseCall ? Trim(details.BuyerAddressLine1) : null,
                 BuyerLatitude = isHouseCall ? details.BuyerLatitude : null,
@@ -338,10 +360,27 @@ namespace ZansiHustle.Application.Orders
             };
 
             _logger.LogInformation(
-                "[ServiceBooking][Create] orderId={OrderId} listingId={ListingId} merchantId={MerchantId} startUtc={Start} endUtc={End} mode={Mode}",
-                order.Id, listing.Id, order.MerchantId, startUtc, endUtc, mode);
+                "[ServiceBooking][Create] orderId={OrderId} listingId={ListingId} merchantId={MerchantId} startUtc={Start} endUtc={End} mode={Mode} surcharge={Surcharge} travelFee={TravelFee}",
+                order.Id, listing.Id, order.MerchantId, startUtc, endUtc, mode, surcharge, travelFee);
 
             return Result<ServiceBooking>.Success(booking, "Booking validated.");
+        }
+
+        /// <summary>
+        /// Flat travel fee charged upfront for a house-call booking, from the
+        /// listing's server-side config. Only FlatFee contributes (clamped to its
+        /// min/max); None and PerKilometre return 0 (PerKm is gated until a
+        /// route-distance provider ships, so it's never fabricated or charged).
+        /// </summary>
+        private static decimal ComputeFlatTravelFee(Domain.Listings.Listing listing)
+        {
+            if (listing.TravelFeeType != ServiceTravelFeeType.FlatFee)
+                return 0m;
+
+            var fee = listing.TravelFeeFlatAmount ?? 0m;
+            if (listing.TravelFeeMinimum is { } min && fee < min) fee = min;
+            if (listing.TravelFeeMaximum is { } max && fee > max) fee = max;
+            return fee < 0m ? 0m : fee;
         }
 
         private static string? Trim(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();

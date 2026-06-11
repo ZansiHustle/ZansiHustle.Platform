@@ -65,6 +65,9 @@ namespace ZansiHustle.Application.Listings.Dtos
         public decimal? MaxTravelDistanceKm { get; set; }
         public decimal? TravelFeeMinimum { get; set; }
         public decimal? TravelFeeMaximum { get; set; }
+        /// <summary>House-call surcharge (extra for house calls). Null leaves
+        /// existing unchanged; when set must be ≥ R20 (or 0 for none).</summary>
+        public decimal? HouseCallSurchargeAmount { get; set; }
         public int? LeadTimeHours { get; set; }
         public int? BufferMinutes { get; set; }
         /// <summary>Default booking duration (minutes). 15–720 when set; null leaves existing unchanged.</summary>

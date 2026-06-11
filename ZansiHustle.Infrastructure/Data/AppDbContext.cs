@@ -25,6 +25,8 @@ using ZansiHustle.Domain.Referrals;
 using ZansiHustle.Domain.Reviews;
 using ZansiHustle.Domain.SellerCategories;
 using ZansiHustle.Domain.ServiceBookings;
+using ZansiHustle.Domain.Trust;
+using ZansiHustle.Domain.Wallets;
 using ZansiHustle.Domain.Shops;
 using ZansiHustle.Domain.SellerLeads;
 using ZansiHustle.Domain.ZansiPulse;
@@ -140,6 +142,14 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     // ZansiHustle.Infrastructure.Data.Configurations.Notifications.*.
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<NotificationDevice> NotificationDevices => Set<NotificationDevice>();
+
+    // ── Wallet ledger (customer refunds/credits) + trust signals ───────────
+    // Wallet.AvailableBalance is kept in lockstep with the WalletTransactions
+    // ledger (source of truth). TrustEvents are append-only behaviour history
+    // for a future scoring layer. Configs auto-applied below.
+    public DbSet<Wallet> Wallets => Set<Wallet>();
+    public DbSet<WalletTransaction> WalletTransactions => Set<WalletTransaction>();
+    public DbSet<TrustEvent> TrustEvents => Set<TrustEvent>();
 
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<PaymentEvent> PaymentEvents => Set<PaymentEvent>();

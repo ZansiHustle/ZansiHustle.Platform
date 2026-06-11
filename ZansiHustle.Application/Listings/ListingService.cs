@@ -349,6 +349,7 @@ namespace ZansiHustle.Application.Listings
                     listing.MaxTravelDistanceKm = request.MaxTravelDistanceKm;
                     listing.TravelFeeMinimum = request.TravelFeeMinimum;
                     listing.TravelFeeMaximum = request.TravelFeeMaximum;
+                    listing.HouseCallSurchargeAmount = request.HouseCallSurchargeAmount;
                     listing.LeadTimeHours = request.LeadTimeHours;
                     listing.BufferMinutes = request.BufferMinutes;
                     listing.EstimatedDurationMinutes = request.EstimatedDurationMinutes;
@@ -503,6 +504,8 @@ namespace ZansiHustle.Application.Listings
                     listing.MaxTravelDistanceKm = request.MaxTravelDistanceKm ?? listing.MaxTravelDistanceKm;
                     listing.TravelFeeMinimum = request.TravelFeeMinimum ?? listing.TravelFeeMinimum;
                     listing.TravelFeeMaximum = request.TravelFeeMaximum ?? listing.TravelFeeMaximum;
+                    listing.HouseCallSurchargeAmount =
+                        request.HouseCallSurchargeAmount ?? listing.HouseCallSurchargeAmount;
                     listing.LeadTimeHours = request.LeadTimeHours ?? listing.LeadTimeHours;
                     listing.BufferMinutes = request.BufferMinutes ?? listing.BufferMinutes;
                     listing.EstimatedDurationMinutes =
@@ -818,6 +821,21 @@ namespace ZansiHustle.Application.Listings
                 if (l.FreeTravelRadiusKm is < 0)
                     return Result.Failure(ErrorCodes.BadRequest,
                         "Free travel radius cannot be negative.");
+
+                // House-call surcharge: optional, but when set it must be 0 (no
+                // extra) or at least the R20 product minimum — no token amounts.
+                if (l.HouseCallSurchargeAmount is < 0)
+                    return Result.Failure(ErrorCodes.BadRequest,
+                        "House-call extra cannot be negative.");
+                if (l.HouseCallSurchargeAmount is > 0 and < MinHouseCallSurcharge)
+                    return Result.Failure(ErrorCodes.BadRequest,
+                        $"House-call extra must be at least R{MinHouseCallSurcharge:0} (or 0 for no extra).");
+            }
+            else
+            {
+                // Surcharge only applies to house-call services — clear any stray
+                // value on a provider-location-only listing so it can't be charged.
+                l.HouseCallSurchargeAmount = null;
             }
 
             return Result.Success();
@@ -877,6 +895,7 @@ namespace ZansiHustle.Application.Listings
                 MaxTravelDistanceKm = l.MaxTravelDistanceKm,
                 TravelFeeMinimum = l.TravelFeeMinimum,
                 TravelFeeMaximum = l.TravelFeeMaximum,
+                HouseCallSurchargeAmount = l.HouseCallSurchargeAmount,
                 LeadTimeHours = l.LeadTimeHours,
                 BufferMinutes = l.BufferMinutes,
                 EstimatedDurationMinutes = l.EstimatedDurationMinutes,
@@ -960,6 +979,11 @@ namespace ZansiHustle.Application.Listings
         /// listing every permutation.
         /// </summary>
         private const int MaxVariantsPerListing = 20;
+
+        /// <summary>Product minimum for a house-call surcharge when the seller
+        /// sets one (ZAR). 0 (no extra) is also allowed; anything in between is
+        /// rejected so sellers can't add a token amount.</summary>
+        private const decimal MinHouseCallSurcharge = 20m;
 
         /// <summary>
         /// Shape-only validation for a variant request set. Null input

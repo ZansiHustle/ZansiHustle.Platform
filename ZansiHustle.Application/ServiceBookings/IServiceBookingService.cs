@@ -25,6 +25,11 @@ namespace ZansiHustle.Application.ServiceBookings
         /// <summary>Provider accepts a requested booking (Requested → Accepted).</summary>
         Task<Result<ServiceBookingDto>> AcceptAsync(Guid userId, Guid bookingId);
 
+        /// <summary>Provider rejects a Requested/Accepted booking with a reason.
+        /// Releases the slot, credits the customer's wallet (full paid amount,
+        /// idempotent), notifies the customer and records a trust event.</summary>
+        Task<Result<ServiceBookingDto>> RejectAsync(Guid userId, Guid bookingId, RejectBookingRequestDto request);
+
         /// <summary>Either party marks the booking started. Allowed only on/after
         /// the scheduled day; flips to InProgress once BOTH sides have marked.</summary>
         Task<Result<ServiceBookingDto>> MarkInProgressAsync(Guid userId, Guid bookingId);

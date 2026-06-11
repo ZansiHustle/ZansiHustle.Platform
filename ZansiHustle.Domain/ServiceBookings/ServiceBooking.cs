@@ -56,6 +56,17 @@ namespace ZansiHustle.Domain.ServiceBookings
         public ServiceBookingMode Mode { get; set; }
         public ServiceBookingStatus Status { get; set; } = ServiceBookingStatus.PendingPayment;
 
+        // ── Money snapshot (collected upfront by the platform) ───────────────
+        // Captured at order time so the seller payout can later be computed as
+        // (BaseServiceAmount + HouseCallSurcharge + TravelFee − commission) even
+        // if the listing's prices change afterwards. All in the order currency.
+        /// <summary>Base service price snapshot (listing price at booking time).</summary>
+        public decimal BaseServiceAmount { get; set; }
+        /// <summary>House-call surcharge charged (0 for provider-location bookings).</summary>
+        public decimal HouseCallSurcharge { get; set; }
+        /// <summary>Travel fee charged upfront (flat fee; 0 when none/not collectable).</summary>
+        public decimal TravelFee { get; set; }
+
         // Buyer-supplied location (house calls). Nullable for provider-location.
         public string? BuyerFormattedAddress { get; set; }
         public string? BuyerAddressLine1 { get; set; }
@@ -97,6 +108,12 @@ namespace ZansiHustle.Domain.ServiceBookings
 
         /// <summary>When the provider rejected the booking (→ Rejected).</summary>
         public DateTime? RejectedAtUtc { get; set; }
+        /// <summary>Which provider-side user rejected.</summary>
+        public Guid? RejectedByUserId { get; set; }
+        /// <summary>Stable rejection reason code (NotAvailable/LocationTooFar/…).</summary>
+        public string? RejectionReasonCode { get; set; }
+        /// <summary>Free-text rejection reason (required when code = Other).</summary>
+        public string? RejectionReasonText { get; set; }
         /// <summary>When the booking was cancelled (→ Cancelled).</summary>
         public DateTime? CancelledAtUtc { get; set; }
 

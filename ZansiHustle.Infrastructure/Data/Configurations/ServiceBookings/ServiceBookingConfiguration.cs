@@ -38,6 +38,9 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.ServiceBookings
             builder.Property(x => x.EndAtUtc).IsRequired();
             builder.Property(x => x.CreatedAtUtc).IsRequired();
 
+            builder.Property(x => x.RejectionReasonCode).HasMaxLength(50);
+            builder.Property(x => x.RejectionReasonText).HasMaxLength(500);
+
             builder.Property(x => x.BuyerFormattedAddress).HasMaxLength(500);
             builder.Property(x => x.BuyerAddressLine1).HasMaxLength(250);
             builder.Property(x => x.BuyerPlaceId).HasMaxLength(200);
@@ -46,6 +49,10 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.ServiceBookings
 
             builder.Property(x => x.BuyerLatitude).HasPrecision(9, 6);
             builder.Property(x => x.BuyerLongitude).HasPrecision(9, 6);
+
+            builder.Property(x => x.BaseServiceAmount).HasPrecision(18, 2);
+            builder.Property(x => x.HouseCallSurcharge).HasPrecision(18, 2);
+            builder.Property(x => x.TravelFee).HasPrecision(18, 2);
 
             // Booking dies with its order (cascade). Listing/Merchant use
             // NoAction to avoid multiple-cascade-paths on SQL Server and to

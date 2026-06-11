@@ -36,6 +36,9 @@ namespace ZansiHustle.API.Realtime
         public Task BookingStatusChangedAsync(Guid userId, object payload) =>
             SendAsync(userId, "BookingStatusChanged", payload);
 
+        public Task WalletBalanceChangedAsync(Guid userId, object payload) =>
+            SendAsync(userId, "WalletBalanceChanged", payload);
+
         private async Task SendAsync(Guid userId, string method, object payload)
         {
             if (userId == Guid.Empty) return;

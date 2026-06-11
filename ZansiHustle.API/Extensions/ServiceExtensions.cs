@@ -519,6 +519,20 @@ public static class ServiceExtensions
             ZansiHustle.Application.Realtime.IRealtimeNotifier,
             ZansiHustle.API.Realtime.SignalRRealtimeNotifier>();
 
+        // Wallet ledger (customer refund credits) + trust-signal history.
+        services.AddScoped<
+            ZansiHustle.Application.Persistence.Wallets.IWalletRepository,
+            ZansiHustle.Infrastructure.Persistence.Wallets.WalletRepository>();
+        services.AddScoped<
+            ZansiHustle.Application.Wallets.IWalletService,
+            ZansiHustle.Application.Wallets.WalletService>();
+        services.AddScoped<
+            ZansiHustle.Application.Persistence.Trust.ITrustEventRepository,
+            ZansiHustle.Infrastructure.Persistence.Trust.TrustEventRepository>();
+        services.AddScoped<
+            ZansiHustle.Application.Trust.ITrustEventService,
+            ZansiHustle.Application.Trust.TrustEventService>();
+
         // OneSignal push — enabled by config. When OneSignal:Enabled is false or
         // the keys are blank we register the safe Null transport, so missing keys
         // can NEVER break booking/payment/notification flows (push is just skipped).

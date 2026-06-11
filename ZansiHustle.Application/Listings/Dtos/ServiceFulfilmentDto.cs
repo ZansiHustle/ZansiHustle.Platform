@@ -41,6 +41,10 @@ namespace ZansiHustle.Application.Listings.Dtos
         public decimal? TravelFeeMinimum { get; set; }
         public decimal? TravelFeeMaximum { get; set; }
 
+        /// <summary>Extra charged when the buyer picks a house call (on top of
+        /// the service price). Null/0 = none. Collected upfront by the platform.</summary>
+        public decimal? HouseCallSurchargeAmount { get; set; }
+
         public int? LeadTimeHours { get; set; }
         public int? BufferMinutes { get; set; }
 

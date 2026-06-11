@@ -20,5 +20,8 @@ namespace ZansiHustle.Application.Realtime
 
         /// <summary>A booking the user is party to changed status.</summary>
         Task BookingStatusChangedAsync(Guid userId, object payload);
+
+        /// <summary>The user's wallet balance changed (e.g. a refund credit).</summary>
+        Task WalletBalanceChangedAsync(Guid userId, object payload);
     }
 }

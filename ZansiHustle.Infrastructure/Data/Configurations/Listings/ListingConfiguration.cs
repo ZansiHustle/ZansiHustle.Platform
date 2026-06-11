@@ -159,6 +159,7 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Listings
             builder.Property(x => x.TravelFeeFlatAmount).HasPrecision(18, 2);
             builder.Property(x => x.TravelFeeMinimum).HasPrecision(18, 2);
             builder.Property(x => x.TravelFeeMaximum).HasPrecision(18, 2);
+            builder.Property(x => x.HouseCallSurchargeAmount).HasPrecision(18, 2);
             builder.Property(x => x.FreeTravelRadiusKm).HasPrecision(9, 2);
             builder.Property(x => x.MaxTravelDistanceKm).HasPrecision(9, 2);
 
