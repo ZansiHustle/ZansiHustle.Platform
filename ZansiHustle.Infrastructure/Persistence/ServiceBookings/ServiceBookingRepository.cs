@@ -73,6 +73,27 @@ namespace ZansiHustle.Infrastructure.Persistence.ServiceBookings
         }
 
         /// <inheritdoc />
+        public async Task<Dictionary<Guid, ServiceBookingStatus>> GetStatusesByOrderIdsAsync(
+            IReadOnlyCollection<Guid> orderIds)
+        {
+            if (orderIds is null || orderIds.Count == 0)
+                return new Dictionary<Guid, ServiceBookingStatus>();
+
+            // One query; oldest-first so the newest booking per order wins the
+            // dictionary slot (orders are 1:1 with a booking in practice).
+            var rows = await _context.Set<ServiceBooking>()
+                .AsNoTracking()
+                .Where(b => orderIds.Contains(b.OrderId))
+                .OrderBy(b => b.CreatedAtUtc)
+                .Select(b => new { b.OrderId, b.Status })
+                .ToListAsync();
+
+            var map = new Dictionary<Guid, ServiceBookingStatus>();
+            foreach (var r in rows) map[r.OrderId] = r.Status;
+            return map;
+        }
+
+        /// <inheritdoc />
         public async Task<List<ServiceBooking>> GetByOrderWithDetailsAsync(Guid orderId)
         {
             return await _context.Set<ServiceBooking>()

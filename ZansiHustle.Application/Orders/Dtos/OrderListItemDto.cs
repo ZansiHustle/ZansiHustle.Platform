@@ -29,6 +29,15 @@ namespace ZansiHustle.Application.Orders.Dtos
         /// <summary>Type of the first item; mobile uses this to split products vs services in list UIs.</summary>
         public ListingType? FirstItemListingType { get; set; }
 
+        /// <summary>
+        /// For a SERVICE order: the booking lifecycle status name
+        /// (Requested/Accepted/InProgress/Completed/Rejected/Cancelled), with
+        /// legacy Confirmed normalised to "Requested". Null for product orders
+        /// (and service orders without a booking row). Lets the list show the
+        /// true booking status instead of the misleading order-level "Confirmed".
+        /// </summary>
+        public string? ServiceBookingStatus { get; set; }
+
         public DateTime CreatedAtUtc { get; set; }
     }
 }

@@ -388,7 +388,8 @@ namespace ZansiHustle.Application.Orders
             try
             {
                 var orders = await _orderRepository.GetByBuyerAsync(buyerUserId);
-                var data = orders.Select(MapToListItem).ToList();
+                var bookingStatuses = await LoadServiceBookingStatusesAsync(orders);
+                var data = orders.Select(o => MapToListItem(o, bookingStatuses)).ToList();
 
                 return Result<List<OrderListItemDto>>.Success(data, "Your orders retrieved successfully.");
             }
@@ -405,7 +406,8 @@ namespace ZansiHustle.Application.Orders
             try
             {
                 var orders = await _orderRepository.GetBySellerUserAsync(sellerUserId);
-                var data = orders.Select(MapToListItem).ToList();
+                var bookingStatuses = await LoadServiceBookingStatusesAsync(orders);
+                var data = orders.Select(o => MapToListItem(o, bookingStatuses)).ToList();
 
                 return Result<List<OrderListItemDto>>.Success(data, "Seller orders retrieved successfully.");
             }
@@ -600,9 +602,37 @@ namespace ZansiHustle.Application.Orders
             };
         }
 
-        private static OrderListItemDto MapToListItem(Order order)
+        /// <summary>
+        /// Batch-load the booking status for the SERVICE orders in the set — one
+        /// query, no N+1. Empty when there are no service orders.
+        /// </summary>
+        private async Task<IReadOnlyDictionary<Guid, ServiceBookingStatus>>
+            LoadServiceBookingStatusesAsync(IReadOnlyCollection<Order> orders)
+        {
+            var serviceOrderIds = orders
+                .Where(o => o.Items.Any(i => i.ListingType == ListingType.Service))
+                .Select(o => o.Id)
+                .Distinct()
+                .ToList();
+            if (serviceOrderIds.Count == 0)
+                return new Dictionary<Guid, ServiceBookingStatus>();
+            return await _serviceBookingRepository.GetStatusesByOrderIdsAsync(serviceOrderIds);
+        }
+
+        private static OrderListItemDto MapToListItem(
+            Order order, IReadOnlyDictionary<Guid, ServiceBookingStatus>? bookingStatuses = null)
         {
             var first = order.Items.FirstOrDefault();
+
+            // Service booking status (legacy Confirmed → Requested for display).
+            string? serviceBookingStatus = null;
+            if (bookingStatuses is not null && bookingStatuses.TryGetValue(order.Id, out var bs))
+            {
+                serviceBookingStatus = (bs == ServiceBookingStatus.Confirmed
+                    ? ServiceBookingStatus.Requested
+                    : bs).ToString();
+            }
+
             return new OrderListItemDto
             {
                 Id = order.Id,
@@ -619,6 +649,7 @@ namespace ZansiHustle.Application.Orders
                 FirstItemTitle = first?.TitleSnapshot,
                 FirstItemImageUrl = first?.ImageSnapshot,
                 FirstItemListingType = first?.ListingType,
+                ServiceBookingStatus = serviceBookingStatus,
                 CreatedAtUtc = order.CreatedAtUtc
             };
         }
