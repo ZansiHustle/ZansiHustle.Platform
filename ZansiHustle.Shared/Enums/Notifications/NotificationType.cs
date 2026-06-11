@@ -1,0 +1,40 @@
+namespace ZansiHustle.Shared.Enums.Notifications;
+
+/// <summary>
+/// Kind of in-app notification. Drives the icon/copy on the client and, for
+/// actionable types, the deep-link target encoded in the notification's
+/// <c>DataJson</c> payload (targetType + ids). Integer-backed so adding a new
+/// type never reshuffles existing rows.
+/// </summary>
+public enum NotificationType
+{
+    /// <summary>A buyer paid for a service booking — sent to the seller.</summary>
+    SellerBookingRequested = 1,
+
+    /// <summary>Seller accepted the booking — sent to the buyer.</summary>
+    BookingAccepted = 2,
+
+    /// <summary>Booking moved to in-progress — sent to the other party.</summary>
+    BookingInProgress = 3,
+
+    /// <summary>Booking completed — sent to the other party.</summary>
+    BookingCompleted = 4,
+
+    /// <summary>Booking rejected by the provider — sent to the buyer.</summary>
+    BookingRejected = 5,
+
+    /// <summary>A payment succeeded — sent to the buyer.</summary>
+    PaymentSucceeded = 6,
+
+    /// <summary>A payment failed — sent to the buyer.</summary>
+    PaymentFailed = 7,
+
+    /// <summary>Seller application/status changed — sent to the applicant.</summary>
+    SellerStatusChanged = 8,
+
+    /// <summary>New chat message — sent to the recipient (future).</summary>
+    NewChatMessage = 9,
+
+    /// <summary>Anything without a specific actionable target.</summary>
+    Generic = 100
+}

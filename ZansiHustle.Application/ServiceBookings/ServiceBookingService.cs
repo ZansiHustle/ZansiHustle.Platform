@@ -5,10 +5,15 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using ZansiHustle.Application.Listings;
+using ZansiHustle.Application.Notifications;
 using ZansiHustle.Application.Persistence.Listings;
 using ZansiHustle.Application.Persistence.ServiceBookings;
+using ZansiHustle.Application.Realtime;
 using ZansiHustle.Application.ServiceBookings.Dtos;
+using ZansiHustle.Domain.ServiceBookings;
 using ZansiHustle.Shared.Enums.Listings;
+using ZansiHustle.Shared.Enums.Notifications;
+using ZansiHustle.Shared.Enums.ServiceBookings;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
 
@@ -25,18 +30,367 @@ namespace ZansiHustle.Application.ServiceBookings
         private readonly IListingService _listingService;
         private readonly IListingRepository _listingRepository;
         private readonly IServiceBookingRepository _serviceBookingRepository;
+        private readonly INotificationService _notifications;
+        private readonly IRealtimeNotifier _realtime;
         private readonly ILogger<ServiceBookingService> _logger;
 
         public ServiceBookingService(
             IListingService listingService,
             IListingRepository listingRepository,
             IServiceBookingRepository serviceBookingRepository,
+            INotificationService notifications,
+            IRealtimeNotifier realtime,
             ILogger<ServiceBookingService> logger)
         {
             _listingService = listingService;
             _listingRepository = listingRepository;
             _serviceBookingRepository = serviceBookingRepository;
+            _notifications = notifications;
+            _realtime = realtime;
             _logger = logger;
+        }
+
+        // ─── Booking workflow ──────────────────────────────────────────────────
+
+        /// <inheritdoc />
+        public async Task<Result<ServiceBookingDto>> GetByIdForUserAsync(Guid userId, Guid bookingId)
+        {
+            var booking = await _serviceBookingRepository.GetByIdWithDetailsAsync(bookingId);
+            if (booking is null)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.NotFound, "Booking not found.");
+
+            var role = ResolveRole(booking, userId);
+            if (role is null)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.Forbidden, "You can't view this booking.");
+
+            return Result<ServiceBookingDto>.Success(BuildDto(booking, role.Value), "Booking loaded.");
+        }
+
+        /// <inheritdoc />
+        public async Task<Result<ServiceBookingDto>> GetByOrderForUserAsync(Guid userId, Guid orderId)
+        {
+            var bookings = await _serviceBookingRepository.GetByOrderWithDetailsAsync(orderId);
+            if (bookings.Count == 0)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.NotFound, "No booking for this order.");
+
+            // v1: one service booking per order.
+            var booking = bookings[0];
+            var role = ResolveRole(booking, userId);
+            if (role is null)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.Forbidden, "You can't view this booking.");
+
+            return Result<ServiceBookingDto>.Success(BuildDto(booking, role.Value), "Booking loaded.");
+        }
+
+        /// <inheritdoc />
+        public async Task<Result<List<SellerBookingListItemDto>>> GetForSellerAsync(Guid sellerUserId)
+        {
+            if (sellerUserId == Guid.Empty)
+                return Result<List<SellerBookingListItemDto>>.Failure(ErrorCodes.Unauthorized, "User identifier not found.");
+
+            var bookings = await _serviceBookingRepository.GetForSellerAsync(sellerUserId);
+            var items = bookings.Select(b =>
+            {
+                var localStart = b.StartAtUtc + BookingAvailabilityDefaults.SaUtcOffset;
+                return new SellerBookingListItemDto
+                {
+                    Id = b.Id,
+                    OrderId = b.OrderId,
+                    ListingId = b.ListingId,
+                    ServiceName = b.Listing?.Title ?? "Service",
+                    Status = NormaliseStatus(b.Status),
+                    PaymentStatus = b.Order?.PaymentStatus.ToString() ?? string.Empty,
+                    Mode = b.Mode.ToString(),
+                    Date = localStart.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    StartTime = localStart.ToString("HH:mm", CultureInfo.InvariantCulture),
+                    StartAtUtc = b.StartAtUtc,
+                    CustomerName = b.Order?.BuyerName,
+                    Amount = b.Order?.Total ?? 0m,
+                    Currency = string.IsNullOrWhiteSpace(b.Order?.Currency) ? "ZAR" : b.Order!.Currency,
+                    NeedsAction = IsAwaitingSeller(b.Status),
+                    CreatedAtUtc = b.CreatedAtUtc
+                };
+            }).ToList();
+
+            return Result<List<SellerBookingListItemDto>>.Success(items, "Bookings loaded.");
+        }
+
+        /// <inheritdoc />
+        public async Task<Result<ServiceBookingDto>> AcceptAsync(Guid userId, Guid bookingId)
+        {
+            var booking = await _serviceBookingRepository.GetByIdWithDetailsAsync(bookingId);
+            if (booking is null)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.NotFound, "Booking not found.");
+
+            if (!IsProvider(booking, userId))
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.Forbidden, "Only the provider can accept this booking.");
+
+            // Requested (paid, awaiting acceptance) — legacy Confirmed treated the same.
+            if (booking.Status != ServiceBookingStatus.Requested && booking.Status != ServiceBookingStatus.Confirmed)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.Conflict, "This booking can no longer be accepted.");
+
+            var nowUtc = DateTime.UtcNow;
+            booking.Status = ServiceBookingStatus.Accepted;
+            booking.ProviderAcceptedAtUtc = nowUtc;
+            booking.ProviderAcceptedByUserId = userId;
+            booking.UpdatedAtUtc = nowUtc;
+            _serviceBookingRepository.Update(booking);
+            await _serviceBookingRepository.SaveChangesAsync();
+
+            var serviceName = booking.Listing?.Title ?? "your service";
+            await _notifications.NotifyBookingStatusChangedAsync(
+                booking, booking.CustomerUserId, NotificationType.BookingAccepted,
+                "Booking accepted",
+                $"Your booking for {serviceName} was accepted by the provider.");
+            await BroadcastStatusAsync(booking);
+
+            return Result<ServiceBookingDto>.Success(BuildDto(booking, ViewerRole.Provider), "Booking accepted.");
+        }
+
+        /// <inheritdoc />
+        public async Task<Result<ServiceBookingDto>> MarkInProgressAsync(Guid userId, Guid bookingId)
+        {
+            var booking = await _serviceBookingRepository.GetByIdWithDetailsAsync(bookingId);
+            if (booking is null)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.NotFound, "Booking not found.");
+
+            var role = ResolveRole(booking, userId);
+            if (role is null)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.Forbidden, "You can't update this booking.");
+
+            if (booking.Status != ServiceBookingStatus.Accepted)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.Conflict,
+                    booking.Status == ServiceBookingStatus.InProgress
+                        ? "This booking is already in progress."
+                        : "This booking isn't ready to start yet.");
+
+            if (!IsScheduledDay(booking))
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.Conflict,
+                    "You can start this booking on the scheduled day.");
+
+            var nowUtc = DateTime.UtcNow;
+            if (role == ViewerRole.Provider)
+                booking.ProviderInProgressMarkedAtUtc ??= nowUtc;
+            else
+                booking.CustomerInProgressMarkedAtUtc ??= nowUtc;
+
+            var bothMarked = booking.ProviderInProgressMarkedAtUtc is not null
+                             && booking.CustomerInProgressMarkedAtUtc is not null;
+            if (bothMarked)
+            {
+                booking.Status = ServiceBookingStatus.InProgress;
+                booking.InProgressAtUtc = nowUtc;
+            }
+            booking.UpdatedAtUtc = nowUtc;
+            _serviceBookingRepository.Update(booking);
+            await _serviceBookingRepository.SaveChangesAsync();
+
+            await NotifyOtherPartyInProgressAsync(booking, role.Value, bothMarked);
+            await BroadcastStatusAsync(booking);
+
+            return Result<ServiceBookingDto>.Success(BuildDto(booking, role.Value),
+                bothMarked ? "Booking is now in progress." : "Marked as started. Waiting for the other party.");
+        }
+
+        /// <inheritdoc />
+        public async Task<Result<ServiceBookingDto>> MarkCompleteAsync(Guid userId, Guid bookingId)
+        {
+            var booking = await _serviceBookingRepository.GetByIdWithDetailsAsync(bookingId);
+            if (booking is null)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.NotFound, "Booking not found.");
+
+            var role = ResolveRole(booking, userId);
+            if (role is null)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.Forbidden, "You can't update this booking.");
+
+            if (booking.Status != ServiceBookingStatus.InProgress)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.Conflict,
+                    booking.Status == ServiceBookingStatus.Completed
+                        ? "This booking is already completed."
+                        : "This booking isn't in progress yet.");
+
+            var nowUtc = DateTime.UtcNow;
+            if (role == ViewerRole.Provider)
+                booking.ProviderCompletedAtUtc ??= nowUtc;
+            else
+                booking.CustomerCompletedAtUtc ??= nowUtc;
+
+            var bothMarked = booking.ProviderCompletedAtUtc is not null
+                             && booking.CustomerCompletedAtUtc is not null;
+            if (bothMarked)
+            {
+                booking.Status = ServiceBookingStatus.Completed;
+                booking.CompletedAtUtc = nowUtc;
+            }
+            booking.UpdatedAtUtc = nowUtc;
+            _serviceBookingRepository.Update(booking);
+            await _serviceBookingRepository.SaveChangesAsync();
+
+            await NotifyOtherPartyCompleteAsync(booking, role.Value, bothMarked);
+            await BroadcastStatusAsync(booking);
+
+            return Result<ServiceBookingDto>.Success(BuildDto(booking, role.Value),
+                bothMarked ? "Booking completed." : "Marked as complete. Waiting for the other party.");
+        }
+
+        // ─── Workflow helpers ────────────────────────────────────────────────────
+
+        private enum ViewerRole { Provider, Customer }
+
+        private static bool IsProvider(ServiceBooking b, Guid userId) =>
+            b.Merchant?.OwnerUserId is Guid owner && owner == userId;
+
+        private static bool IsCustomer(ServiceBooking b, Guid userId) =>
+            b.CustomerUserId == userId;
+
+        private static ViewerRole? ResolveRole(ServiceBooking b, Guid userId)
+        {
+            if (IsProvider(b, userId)) return ViewerRole.Provider;
+            if (IsCustomer(b, userId)) return ViewerRole.Customer;
+            return null;
+        }
+
+        private static bool IsScheduledDay(ServiceBooking b)
+        {
+            var todayLocal = DateOnly.FromDateTime(DateTime.UtcNow + BookingAvailabilityDefaults.SaUtcOffset);
+            var bookingLocal = DateOnly.FromDateTime(b.StartAtUtc + BookingAvailabilityDefaults.SaUtcOffset);
+            return todayLocal >= bookingLocal;
+        }
+
+        private static bool IsAwaitingSeller(ServiceBookingStatus s) =>
+            s == ServiceBookingStatus.Requested || s == ServiceBookingStatus.Confirmed;
+
+        private static string NormaliseStatus(ServiceBookingStatus s) =>
+            s == ServiceBookingStatus.Confirmed
+                ? ServiceBookingStatus.Requested.ToString()
+                : s.ToString();
+
+        private async Task BroadcastStatusAsync(ServiceBooking b)
+        {
+            try
+            {
+                var payload = new
+                {
+                    bookingId = b.Id.ToString(),
+                    status = NormaliseStatus(b.Status),
+                    orderId = b.OrderId.ToString(),
+                    listingId = b.ListingId.ToString(),
+                    changedAtUtc = b.UpdatedAtUtc ?? DateTime.UtcNow
+                };
+                if (b.Merchant?.OwnerUserId is Guid owner && owner != Guid.Empty)
+                    await _realtime.BookingStatusChangedAsync(owner, payload);
+                await _realtime.BookingStatusChangedAsync(b.CustomerUserId, payload);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[ServiceBooking] realtime status broadcast failed for {BookingId}.", b.Id);
+            }
+        }
+
+        private async Task NotifyOtherPartyInProgressAsync(ServiceBooking b, ViewerRole actor, bool bothMarked)
+        {
+            var serviceName = b.Listing?.Title ?? "your service";
+            if (actor == ViewerRole.Provider)
+            {
+                await _notifications.NotifyBookingStatusChangedAsync(
+                    b, b.CustomerUserId, NotificationType.BookingInProgress,
+                    bothMarked ? "Booking in progress" : "Provider is ready to start",
+                    bothMarked
+                        ? $"Your booking for {serviceName} is now in progress."
+                        : $"The provider marked your {serviceName} booking as started. Open it to start too.");
+            }
+            else if (b.Merchant?.OwnerUserId is Guid owner && owner != Guid.Empty)
+            {
+                await _notifications.NotifyBookingStatusChangedAsync(
+                    b, owner, NotificationType.BookingInProgress,
+                    bothMarked ? "Booking in progress" : "Customer is ready to start",
+                    bothMarked
+                        ? $"The booking for {serviceName} is now in progress."
+                        : $"The customer marked the {serviceName} booking as started. Open it to start too.");
+            }
+        }
+
+        private async Task NotifyOtherPartyCompleteAsync(ServiceBooking b, ViewerRole actor, bool bothMarked)
+        {
+            var serviceName = b.Listing?.Title ?? "your service";
+            if (actor == ViewerRole.Provider)
+            {
+                await _notifications.NotifyBookingStatusChangedAsync(
+                    b, b.CustomerUserId, NotificationType.BookingCompleted,
+                    bothMarked ? "Booking completed" : "Provider marked it complete",
+                    bothMarked
+                        ? $"Your booking for {serviceName} is complete. Tap to rate your experience."
+                        : $"The provider marked your {serviceName} booking complete. Confirm to finish.");
+            }
+            else if (b.Merchant?.OwnerUserId is Guid owner && owner != Guid.Empty)
+            {
+                await _notifications.NotifyBookingStatusChangedAsync(
+                    b, owner, NotificationType.BookingCompleted,
+                    bothMarked ? "Booking completed" : "Customer marked it complete",
+                    bothMarked
+                        ? $"The booking for {serviceName} is complete."
+                        : $"The customer marked the {serviceName} booking complete. Confirm to finish.");
+            }
+        }
+
+        private static ServiceBookingDto BuildDto(ServiceBooking b, ViewerRole role)
+        {
+            var localStart = b.StartAtUtc + BookingAvailabilityDefaults.SaUtcOffset;
+            var localEnd = b.EndAtUtc + BookingAvailabilityDefaults.SaUtcOffset;
+            var isProvider = role == ViewerRole.Provider;
+            var scheduledDay = IsScheduledDay(b);
+
+            var providerInProgress = b.ProviderInProgressMarkedAtUtc is not null;
+            var customerInProgress = b.CustomerInProgressMarkedAtUtc is not null;
+            var providerComplete = b.ProviderCompletedAtUtc is not null;
+            var customerComplete = b.CustomerCompletedAtUtc is not null;
+
+            var canAccept = isProvider && IsAwaitingSeller(b.Status);
+            var canMarkInProgress = b.Status == ServiceBookingStatus.Accepted
+                                    && scheduledDay
+                                    && (isProvider ? !providerInProgress : !customerInProgress);
+            var canMarkComplete = b.Status == ServiceBookingStatus.InProgress
+                                  && (isProvider ? !providerComplete : !customerComplete);
+            var canRate = !isProvider && b.Status == ServiceBookingStatus.Completed;
+
+            return new ServiceBookingDto
+            {
+                Id = b.Id,
+                OrderId = b.OrderId,
+                ListingId = b.ListingId,
+                MerchantId = b.MerchantId,
+                ServiceName = b.Listing?.Title ?? "Service",
+                Status = NormaliseStatus(b.Status),
+                PaymentStatus = b.Order?.PaymentStatus.ToString() ?? string.Empty,
+                Mode = b.Mode.ToString(),
+                Date = localStart.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                StartTime = localStart.ToString("HH:mm", CultureInfo.InvariantCulture),
+                EndTime = localEnd.ToString("HH:mm", CultureInfo.InvariantCulture),
+                StartAtUtc = b.StartAtUtc,
+                EndAtUtc = b.EndAtUtc,
+                DurationMinutes = b.EstimatedDurationMinutes,
+                Amount = b.Order?.Total ?? 0m,
+                Currency = string.IsNullOrWhiteSpace(b.Order?.Currency) ? "ZAR" : b.Order!.Currency,
+                CustomerName = b.Order?.BuyerName,
+                CustomerPhone = b.Order?.BuyerPhone,
+                Address = b.BuyerFormattedAddress ?? b.BuyerAddressLine1,
+                ProviderLocationSummary = b.ProviderLocationSnapshot,
+                Notes = b.Notes,
+                ViewerRole = isProvider ? "provider" : "customer",
+                IsScheduledDay = scheduledDay,
+                ProviderMarkedInProgress = providerInProgress,
+                CustomerMarkedInProgress = customerInProgress,
+                ProviderMarkedComplete = providerComplete,
+                CustomerMarkedComplete = customerComplete,
+                CanAccept = canAccept,
+                CanMarkInProgress = canMarkInProgress,
+                CanMarkComplete = canMarkComplete,
+                CanRate = canRate,
+                AcceptedAtUtc = b.ProviderAcceptedAtUtc,
+                InProgressAtUtc = b.InProgressAtUtc,
+                CompletedAtUtc = b.CompletedAtUtc,
+                CreatedAtUtc = b.CreatedAtUtc
+            };
         }
 
         // ─── Availability ────────────────────────────────────────────────────
@@ -168,7 +522,13 @@ namespace ZansiHustle.Application.ServiceBookings
             var currency = string.IsNullOrWhiteSpace(listing.Currency) ? "ZAR" : listing.Currency;
             var fulfilment = listing.Fulfilment;
 
-            TravelQuoteResultDto NotReady(string message) => new()
+            // Safe customer-facing copy shared by every not-ready reason — we
+            // never expose WHY (that's the dev-only DebugMessage), just that the
+            // provider confirms it. NEVER a fabricated fee.
+            const string notReadyUserMessage =
+                "Travel fee will be confirmed by the provider. Only the service fee is charged online for now.";
+
+            TravelQuoteResultDto NotReady(string reasonCode, string debugMessage, string? userMessage = null) => new()
             {
                 Status = "not_ready",
                 DistanceKm = null,
@@ -177,7 +537,10 @@ namespace ZansiHustle.Application.ServiceBookings
                 ServiceFee = serviceFee,
                 Total = serviceFee,
                 Currency = currency,
-                Message = message,
+                Message = userMessage ?? notReadyUserMessage,
+                UserMessage = userMessage ?? notReadyUserMessage,
+                ReasonCode = reasonCode,
+                DebugMessage = debugMessage,
             };
 
             TravelQuoteResultDto Ok(decimal travelFee, decimal? distanceKm, string? message = null) => new()
@@ -190,12 +553,14 @@ namespace ZansiHustle.Application.ServiceBookings
                 Total = serviceFee + travelFee,
                 Currency = currency,
                 Message = message,
+                UserMessage = message,
             };
 
             // Provider hasn't configured fulfilment → honest not-ready.
             if (fulfilment is null)
                 return Result<TravelQuoteResultDto>.Success(
-                    NotReady("This provider hasn't set up travel pricing yet — arrange any travel cost directly with them."),
+                    NotReady("FULFILMENT_NOT_CONFIGURED",
+                        "Listing has no fulfilment configured (FulfilmentMode null)."),
                     "Travel quote computed.");
 
             // Not a house-call service → no travel fee.
@@ -223,18 +588,41 @@ namespace ZansiHustle.Application.ServiceBookings
                 }
 
                 case ServiceTravelFeeType.PerKilometre:
-                    // No road-distance provider (Google Routes) wired yet. We do
-                    // NOT straight-line estimate and present it as a road fee.
+                {
+                    // Distance-based pricing needs: provider geo, buyer geo, AND a
+                    // road-distance provider. Report the FIRST missing piece via a
+                    // stable reason code — never straight-line-estimate a road fee.
+                    var providerGeoMissing =
+                        fulfilment.ProviderLocation?.Latitude is null ||
+                        fulfilment.ProviderLocation?.Longitude is null;
+                    if (providerGeoMissing)
+                        return Result<TravelQuoteResultDto>.Success(
+                            NotReady("PROVIDER_GEO_MISSING",
+                                "PerKilometre requires provider lat/lng, but the listing has none."),
+                            "Travel quote computed.");
+
+                    var destinationGeoMissing =
+                        request.BuyerLatitude is null || request.BuyerLongitude is null;
+                    if (destinationGeoMissing)
+                        return Result<TravelQuoteResultDto>.Success(
+                            NotReady("DESTINATION_GEO_MISSING",
+                                "PerKilometre requires buyer lat/lng, but the request didn't include it."),
+                            "Travel quote computed.");
+
+                    // Geo present on both ends, but no road-distance provider wired.
                     _logger.LogInformation(
-                        "[travel-quote] per-km not_ready listing={ListingId} (no road-distance provider)",
+                        "[travel-quote] per-km not_ready listing={ListingId} reason=ROUTE_PROVIDER_NOT_CONFIGURED",
                         request.ListingId);
                     return Result<TravelQuoteResultDto>.Success(
-                        NotReady("We can't calculate distance-based travel fees online yet. Arrange the travel cost with the provider — only the service fee is charged online for now."),
+                        NotReady("ROUTE_PROVIDER_NOT_CONFIGURED",
+                            "PerKilometre travel fee needs a route-distance provider (e.g. Google Routes) which isn't configured."),
                         "Travel quote computed.");
+                }
 
                 default:
                     return Result<TravelQuoteResultDto>.Success(
-                        NotReady("Travel pricing isn't available for this service yet."),
+                        NotReady("TRAVEL_FEE_NOT_CONFIGURED",
+                            $"Unconfigured/unknown travel fee type ({fulfilment.TravelFeeType})."),
                         "Travel quote computed.");
             }
         }

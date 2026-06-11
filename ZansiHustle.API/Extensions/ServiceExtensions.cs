@@ -256,6 +256,24 @@ public static class ServiceExtensions
                     ValidateLifetime = true,
                     ClockSkew = TimeSpan.Zero
                 };
+
+                // SignalR (WebSockets) can't send an Authorization header, so the
+                // client passes the JWT as the `access_token` query-string on the
+                // hub connection. Lift it into the auth pipeline ONLY for hub paths.
+                options.Events = new JwtBearerEvents
+                {
+                    OnMessageReceived = context =>
+                    {
+                        var accessToken = context.Request.Query["access_token"];
+                        var path = context.HttpContext.Request.Path;
+                        if (!string.IsNullOrEmpty(accessToken) &&
+                            path.StartsWithSegments("/hubs"))
+                        {
+                            context.Token = accessToken;
+                        }
+                        return Task.CompletedTask;
+                    }
+                };
             });
 
         services.AddAuthorization();
@@ -300,6 +318,12 @@ public static class ServiceExtensions
         services.AddScoped<ICurrentUserService, CurrentUserService>();
         services.AddScoped<IUserLookupService, UserLookupService>();
         services.AddScoped<IUatSeederService, UatSeederService>();
+
+        // Realtime in-app events (notifications + booking status). The hub is
+        // authenticated; tokens arrive on the WebSocket via the access_token
+        // query-string (wired in AddIdentityServices' JwtBearer events).
+        services.AddSignalR();
+
         return services;
     }
 
@@ -477,6 +501,43 @@ public static class ServiceExtensions
         services.AddScoped<
             ZansiHustle.Application.Persistence.ServiceBookings.IServiceBookingRepository,
             ZansiHustle.Infrastructure.Persistence.ServiceBookings.ServiceBookingRepository>();
+
+        // ── Notifications + realtime + push (booking workflow, bell, page) ──
+        // Notification is the source of truth (REST); SignalR (in-app) + OneSignal
+        // (device push) are best-effort delivery layers on top. The realtime
+        // notifier implementation lives in the API layer (it needs IHubContext).
+        services.AddScoped<
+            ZansiHustle.Application.Persistence.Notifications.INotificationRepository,
+            ZansiHustle.Infrastructure.Persistence.Notifications.NotificationRepository>();
+        services.AddScoped<
+            ZansiHustle.Application.Persistence.Notifications.INotificationDeviceRepository,
+            ZansiHustle.Infrastructure.Persistence.Notifications.NotificationDeviceRepository>();
+        services.AddScoped<
+            ZansiHustle.Application.Notifications.INotificationService,
+            ZansiHustle.Application.Notifications.NotificationService>();
+        services.AddScoped<
+            ZansiHustle.Application.Realtime.IRealtimeNotifier,
+            ZansiHustle.API.Realtime.SignalRRealtimeNotifier>();
+
+        // OneSignal push — enabled by config. When OneSignal:Enabled is false or
+        // the keys are blank we register the safe Null transport, so missing keys
+        // can NEVER break booking/payment/notification flows (push is just skipped).
+        services.Configure<ZansiHustle.Infrastructure.Notifications.Push.OneSignalOptions>(
+            configuration.GetSection(
+                ZansiHustle.Infrastructure.Notifications.Push.OneSignalOptions.SectionName));
+        if (configuration.GetValue<bool>("OneSignal:Enabled"))
+        {
+            services.AddHttpClient<
+                ZansiHustle.Application.Notifications.IPushNotificationService,
+                ZansiHustle.Infrastructure.Notifications.Push.OneSignalPushNotificationService>();
+        }
+        else
+        {
+            services.AddScoped<
+                ZansiHustle.Application.Notifications.IPushNotificationService,
+                ZansiHustle.Infrastructure.Notifications.Push.NullPushNotificationService>();
+        }
+
         services.AddScoped<IEventPlanRepository, EventPlanRepository>();
         services.AddScoped<IValuationRepository, ValuationRepository>();
         services.AddScoped<IStakeholderRepository, StakeholderRepository>();
@@ -704,6 +765,10 @@ public static class ServiceExtensions
         app.UseAuthentication();
         app.UseAuthorization();
         app.MapControllers();
+
+        // Authenticated realtime hub for user-targeted in-app events
+        // (NotificationCreated / NotificationUnreadCountChanged / BookingStatusChanged).
+        app.MapHub<ZansiHustle.API.Realtime.RealtimeHub>("/hubs/realtime");
 
         return app;
     }

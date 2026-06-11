@@ -31,8 +31,10 @@ namespace ZansiHustle.Infrastructure.Persistence.ServiceBookings
         {
             var staleBefore = nowUtc.AddMinutes(-BookingAvailabilityDefaults.PendingPaymentHoldMinutes);
             return q.Where(b =>
-                b.Status == ServiceBookingStatus.Confirmed
+                b.Status == ServiceBookingStatus.Requested      // paid, awaiting acceptance
+                || b.Status == ServiceBookingStatus.Confirmed   // legacy paid state
                 || b.Status == ServiceBookingStatus.Accepted
+                || b.Status == ServiceBookingStatus.InProgress
                 || b.Status == ServiceBookingStatus.Completed
                 || (b.Status == ServiceBookingStatus.PendingPayment && b.CreatedAtUtc >= staleBefore));
         }
@@ -67,6 +69,50 @@ namespace ZansiHustle.Infrastructure.Persistence.ServiceBookings
         {
             return await _context.Set<ServiceBooking>()
                 .Where(b => b.OrderId == orderId)
+                .ToListAsync();
+        }
+
+        /// <inheritdoc />
+        public async Task<List<ServiceBooking>> GetByOrderWithDetailsAsync(Guid orderId)
+        {
+            return await _context.Set<ServiceBooking>()
+                .Include(b => b.Order)
+                .Include(b => b.Merchant)
+                .Include(b => b.Listing)
+                .Where(b => b.OrderId == orderId)
+                .ToListAsync();
+        }
+
+        /// <inheritdoc />
+        public async Task<ServiceBooking?> GetByIdWithDetailsAsync(Guid id)
+        {
+            return await _context.Set<ServiceBooking>()
+                .Include(b => b.Order)
+                .Include(b => b.Merchant)
+                .Include(b => b.Listing)
+                .FirstOrDefaultAsync(b => b.Id == id);
+        }
+
+        /// <inheritdoc />
+        public async Task<List<ServiceBooking>> GetForSellerAsync(Guid sellerUserId)
+        {
+            var visible = new[]
+            {
+                ServiceBookingStatus.Requested,
+                ServiceBookingStatus.Confirmed,
+                ServiceBookingStatus.Accepted,
+                ServiceBookingStatus.InProgress,
+                ServiceBookingStatus.Completed
+            };
+
+            return await _context.Set<ServiceBooking>()
+                .AsNoTracking()
+                .Include(b => b.Order)
+                .Include(b => b.Listing)
+                .Where(b => b.Merchant != null
+                            && b.Merchant.OwnerUserId == sellerUserId
+                            && visible.Contains(b.Status))
+                .OrderByDescending(b => b.CreatedAtUtc)
                 .ToListAsync();
         }
 

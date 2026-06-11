@@ -22,5 +22,19 @@ namespace ZansiHustle.Application.ServiceBookings.Dtos
         public decimal Total { get; set; }
         public string Currency { get; set; } = "ZAR";
         public string? Message { get; set; }
+
+        /// <summary>
+        /// Stable machine-readable reason for a non-ok status. One of:
+        /// FULFILMENT_NOT_CONFIGURED, PROVIDER_LOCATION_MISSING, PROVIDER_GEO_MISSING,
+        /// TRAVEL_FEE_NOT_CONFIGURED, ROUTE_PROVIDER_NOT_CONFIGURED, DESTINATION_GEO_MISSING.
+        /// Null when Status == "ok".
+        /// </summary>
+        public string? ReasonCode { get; set; }
+
+        /// <summary>Safe customer-facing message (mirrors <see cref="Message"/>).</summary>
+        public string? UserMessage { get; set; }
+
+        /// <summary>Internal diagnostic — shown ONLY in dev logs, never to the buyer.</summary>
+        public string? DebugMessage { get; set; }
     }
 }

@@ -17,6 +17,7 @@ using ZansiHustle.Domain.Listings;
 using ZansiHustle.Domain.Marketplace;
 using ZansiHustle.Domain.Media;
 using ZansiHustle.Domain.Merchants;
+using ZansiHustle.Domain.Notifications;
 using ZansiHustle.Domain.Orders;
 using ZansiHustle.Domain.Payments;
 using ZansiHustle.Domain.Podcasts;
@@ -132,6 +133,13 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     // prevention. Config:
     // ZansiHustle.Infrastructure.Persistence...ServiceBookingConfiguration.
     public DbSet<ServiceBooking> ServiceBookings => Set<ServiceBooking>();
+
+    // ── Notifications (in-app bell + page) and push device registry ────────
+    // Notification is the source of truth behind the bell/page; SignalR +
+    // OneSignal are best-effort delivery layers on top. Configs:
+    // ZansiHustle.Infrastructure.Data.Configurations.Notifications.*.
+    public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<NotificationDevice> NotificationDevices => Set<NotificationDevice>();
 
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<PaymentEvent> PaymentEvents => Set<PaymentEvent>();

@@ -68,6 +68,38 @@ namespace ZansiHustle.Domain.ServiceBookings
 
         public string? Notes { get; set; }
 
+        // ── Lifecycle audit + dual-confirm flags ─────────────────────────────
+        // The booking workflow after payment:
+        //   PendingPayment → Requested (paid) → Accepted (provider accepts)
+        //   → InProgress (BOTH sides mark in-progress on/after the scheduled
+        //   day) → Completed (BOTH sides mark complete). Rejected/Cancelled are
+        //   terminal. Each side's intent is captured independently so the
+        //   service layer can flip the shared status only once both agree.
+
+        /// <summary>When the provider accepted (Requested → Accepted).</summary>
+        public DateTime? ProviderAcceptedAtUtc { get; set; }
+        /// <summary>Which provider-side user accepted (owner/staff).</summary>
+        public Guid? ProviderAcceptedByUserId { get; set; }
+
+        /// <summary>Provider marked the booking in-progress (intent flag).</summary>
+        public DateTime? ProviderInProgressMarkedAtUtc { get; set; }
+        /// <summary>Customer marked the booking in-progress (intent flag).</summary>
+        public DateTime? CustomerInProgressMarkedAtUtc { get; set; }
+        /// <summary>When BOTH sides had marked in-progress (→ InProgress).</summary>
+        public DateTime? InProgressAtUtc { get; set; }
+
+        /// <summary>Provider marked the booking complete (intent flag).</summary>
+        public DateTime? ProviderCompletedAtUtc { get; set; }
+        /// <summary>Customer marked the booking complete (intent flag).</summary>
+        public DateTime? CustomerCompletedAtUtc { get; set; }
+        /// <summary>When BOTH sides had marked complete (→ Completed).</summary>
+        public DateTime? CompletedAtUtc { get; set; }
+
+        /// <summary>When the provider rejected the booking (→ Rejected).</summary>
+        public DateTime? RejectedAtUtc { get; set; }
+        /// <summary>When the booking was cancelled (→ Cancelled).</summary>
+        public DateTime? CancelledAtUtc { get; set; }
+
         public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
         public DateTime? UpdatedAtUtc { get; set; }
     }

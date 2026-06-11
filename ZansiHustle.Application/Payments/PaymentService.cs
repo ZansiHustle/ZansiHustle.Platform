@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using ZansiHustle.Application.Notifications;
 using ZansiHustle.Application.Payments.Dtos;
 using ZansiHustle.Application.Payments.Providers;
 using ZansiHustle.Application.Persistence.Orders;
@@ -27,6 +28,7 @@ namespace ZansiHustle.Application.Payments
         private readonly IPaymentRepository _paymentRepository;
         private readonly IOrderRepository _orderRepository;
         private readonly IServiceBookingRepository _serviceBookingRepository;
+        private readonly INotificationService _notificationService;
         private readonly IPaystackClient _paystackClient;
         private readonly IOzowClient _ozowClient;
         private readonly IOzowHashService _ozowHashService;
@@ -39,6 +41,7 @@ namespace ZansiHustle.Application.Payments
             IPaymentRepository paymentRepository,
             IOrderRepository orderRepository,
             IServiceBookingRepository serviceBookingRepository,
+            INotificationService notificationService,
             IPaystackClient paystackClient,
             IOzowClient ozowClient,
             IOzowHashService ozowHashService,
@@ -50,6 +53,7 @@ namespace ZansiHustle.Application.Payments
             _paymentRepository = paymentRepository;
             _orderRepository = orderRepository;
             _serviceBookingRepository = serviceBookingRepository;
+            _notificationService = notificationService;
             _paystackClient = paystackClient;
             _ozowClient = ozowClient;
             _ozowHashService = ozowHashService;
@@ -1422,18 +1426,28 @@ namespace ZansiHustle.Application.Payments
 
         /// <summary>
         /// Payment succeeded → promote this order's PendingPayment bookings to
-        /// Confirmed. Shares the request DbContext, so the change is persisted by
-        /// the caller's SaveChanges. No-op for product orders (no bookings).
+        /// <see cref="ServiceBookingStatus.Requested"/> (paid, awaiting provider
+        /// acceptance — NOT Confirmed, which wrongly implied the seller had
+        /// accepted) and raise a "New booking request" notification to the seller.
+        /// Loads Merchant + Listing so the notification can resolve the owner +
+        /// service name. Notification delivery is best-effort and never throws.
+        /// No-op for product orders (no bookings).
         /// </summary>
         private async Task SyncServiceBookingsOnPaidAsync(Guid orderId)
         {
-            var bookings = await _serviceBookingRepository.GetByOrderAsync(orderId);
+            var bookings = await _serviceBookingRepository.GetByOrderWithDetailsAsync(orderId);
             foreach (var booking in bookings)
             {
                 if (booking.Status != ServiceBookingStatus.PendingPayment) continue;
-                booking.Status = ServiceBookingStatus.Confirmed;
+                booking.Status = ServiceBookingStatus.Requested;
                 booking.UpdatedAtUtc = DateTime.UtcNow;
                 _serviceBookingRepository.Update(booking);
+
+                // Persist the status flip + create/deliver the seller notification.
+                // CreateAndDispatchAsync saves on the shared DbContext, so the
+                // Requested transition is committed here. Best-effort: a delivery
+                // failure is swallowed inside the notification service.
+                await _notificationService.NotifySellerBookingRequestedAsync(booking);
             }
         }
 

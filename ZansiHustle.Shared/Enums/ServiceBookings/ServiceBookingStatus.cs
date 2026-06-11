@@ -28,7 +28,12 @@ public enum ServiceBookingStatus
     /// <summary>Seller rejected the booking. Does NOT block — slot is released.</summary>
     Rejected = 6,
 
-    /// <summary>Buyer requested but no payment yet (reserved for a future
-    /// request-first workflow). Not used by the current pay-first flow.</summary>
-    Requested = 7
+    /// <summary>Payment succeeded and the booking is now awaiting provider
+    /// acceptance. This is the post-payment state in the pay-first flow
+    /// (PendingPayment → Requested on paid). Firmly blocks the slot.</summary>
+    Requested = 7,
+
+    /// <summary>Both parties (provider AND customer) have marked the booking as
+    /// started on/after the scheduled day. Blocks the slot.</summary>
+    InProgress = 8
 }
