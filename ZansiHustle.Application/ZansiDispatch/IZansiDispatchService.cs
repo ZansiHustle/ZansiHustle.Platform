@@ -30,6 +30,20 @@ namespace ZansiHustle.Application.ZansiDispatch
         /// <summary>Creates the shipment + QuoteCharged ledger entry for a freshly-created order. Best-effort: idempotent, never throws.</summary>
         Task CreateShipmentForOrderAsync(CreateShipmentForOrderInput input, CancellationToken ct = default);
 
+        /// <summary>
+        /// Creates the PendingDispatch shipment + QuoteCharged ledger entry for an
+        /// order that has just been PAID, resolving the provider/service/addresses
+        /// from the order's stored delivery quote option. Idempotent (no-op if a
+        /// shipment already exists for the order) and best-effort (never throws).
+        /// Does NOT re-check quote expiry — payment can land after the quote's
+        /// short TTL; the fee was already locked onto the order at creation.
+        /// Called from the payment-success path, not order creation, so unpaid
+        /// orders never create shipment/ledger rows.
+        /// </summary>
+        Task CreateShipmentForPaidOrderAsync(
+            Guid orderId, Guid userId, Guid? merchantId, Guid quoteOptionId,
+            decimal quotedDeliveryFee, string? dropoffAddressSummary, CancellationToken ct = default);
+
         // ── Shipment lifecycle (provider-backed) ────────────────────────────
         /// <summary>Books a real shipment for an order from its selected quote option (CourierGuy when applicable).</summary>
         Task<Result<ShipmentDto>> CreateShipmentFromQuoteAsync(Guid adminUserId, CreateShipmentFromQuoteRequestDto request, CancellationToken ct = default);

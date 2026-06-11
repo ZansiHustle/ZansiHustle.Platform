@@ -12,6 +12,7 @@ using ZansiHustle.Application.Payments.Providers;
 using ZansiHustle.Application.Persistence.Orders;
 using ZansiHustle.Application.Persistence.Payments;
 using ZansiHustle.Application.Persistence.ServiceBookings;
+using ZansiHustle.Application.ZansiDispatch;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Domain.Orders;
 using ZansiHustle.Domain.Payments;
@@ -29,6 +30,7 @@ namespace ZansiHustle.Application.Payments
         private readonly IOrderRepository _orderRepository;
         private readonly IServiceBookingRepository _serviceBookingRepository;
         private readonly INotificationService _notificationService;
+        private readonly IZansiDispatchService _dispatch;
         private readonly IPaystackClient _paystackClient;
         private readonly IOzowClient _ozowClient;
         private readonly IOzowHashService _ozowHashService;
@@ -42,6 +44,7 @@ namespace ZansiHustle.Application.Payments
             IOrderRepository orderRepository,
             IServiceBookingRepository serviceBookingRepository,
             INotificationService notificationService,
+            IZansiDispatchService dispatch,
             IPaystackClient paystackClient,
             IOzowClient ozowClient,
             IOzowHashService ozowHashService,
@@ -54,6 +57,7 @@ namespace ZansiHustle.Application.Payments
             _orderRepository = orderRepository;
             _serviceBookingRepository = serviceBookingRepository;
             _notificationService = notificationService;
+            _dispatch = dispatch;
             _paystackClient = paystackClient;
             _ozowClient = ozowClient;
             _ozowHashService = ozowHashService;
@@ -1422,6 +1426,20 @@ namespace ZansiHustle.Application.Payments
             // Confirm any service booking on this order — PendingPayment → Confirmed
             // so the slot is now firmly held (no longer dependent on the hold window).
             await SyncServiceBookingsOnPaidAsync(payment.OrderId);
+
+            // Create the ZansiDispatch shipment + QuoteCharged ledger NOW (on
+            // payment success), not at order creation — so unpaid/failed orders
+            // never produce PendingDispatch shipments or "charged" ledger noise.
+            // Idempotent: a no-op if a shipment already exists, so repeated
+            // provider signals / webhook retries can't duplicate. Best-effort:
+            // never throws into the payment flow. Only product orders with a
+            // selected delivery option create a shipment.
+            if (order.DeliveryQuoteOptionId is Guid deliveryOptionId)
+            {
+                await _dispatch.CreateShipmentForPaidOrderAsync(
+                    order.Id, order.BuyerUserId, order.MerchantId, deliveryOptionId,
+                    order.DeliveryFee ?? 0m, order.DeliveryAddress);
+            }
         }
 
         /// <summary>

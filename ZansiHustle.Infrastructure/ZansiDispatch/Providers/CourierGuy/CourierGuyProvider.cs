@@ -78,6 +78,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch.Providers.CourierGuy
             };
 
             var (status, respBody, transportError) = await SendAsync(HttpMethod.Post, "/rates", body, ct);
+            LogResponseShape("rates", status, respBody);
             var result = new ProviderQuoteResult
             {
                 RawRequestJson = Serialize(body),
@@ -201,6 +202,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch.Providers.CourierGuy
             };
 
             var (status, respBody, transportError) = await SendAsync(HttpMethod.Post, "/shipments", body, ct);
+            LogResponseShape("shipments", status, respBody);
             var result = new ProviderShipmentResult
             {
                 RawRequestJson = Serialize(body),
@@ -254,6 +256,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch.Providers.CourierGuy
 
             var path = $"/tracking/shipments?tracking_reference={Uri.EscapeDataString(trackingReference)}";
             var (status, respBody, transportError) = await SendAsync(HttpMethod.Get, path, null, ct);
+            LogResponseShape("tracking", status, respBody);
             var result = new ProviderTrackingResult
             {
                 RawResponseJson = Truncate(respBody),
@@ -428,6 +431,64 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch.Providers.CourierGuy
                 return (null, null, "Could not reach the courier service. Please try again.");
             }
         }
+
+        // ── Response-SHAPE logging (sandbox only; for confirming the real
+        //    Shiplogic shapes before tightening the TODO mappings) ───────────
+        //
+        // Logs ONLY the JSON structure — property names + value KINDS, never any
+        // values — so it can never leak an API key, a customer address, a name,
+        // or a phone number. Gated on SandboxMode so it never runs against the
+        // live/production courier account. Capture these lines from a sandbox
+        // call, confirm the field names, then finalise MapRates / shipment /
+        // tracking mappings and remove the TODO markers.
+        private void LogResponseShape(string operation, int? status, string? body)
+        {
+            if (!Cg.SandboxMode || string.IsNullOrWhiteSpace(body)) return;
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                _logger.LogInformation(
+                    "[CourierGuy][shape] op={Op} status={Status} shape={Shape}",
+                    operation, status, DescribeShape(doc.RootElement, 0));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogInformation(
+                    "[CourierGuy][shape] op={Op} status={Status} unparseable: {Err}",
+                    operation, status, ex.Message);
+            }
+        }
+
+        /// <summary>Structure-only description: keys + value KINDS, never values.
+        /// Bounded depth so a deep payload can't blow up the log line.</summary>
+        private static string DescribeShape(JsonElement el, int depth)
+        {
+            if (depth > 2) return "…";
+            switch (el.ValueKind)
+            {
+                case JsonValueKind.Object:
+                    var props = el.EnumerateObject().Take(40)
+                        .Select(p => $"{p.Name}:{KindOf(p.Value, depth)}");
+                    return "{ " + string.Join(", ", props) + " }";
+                case JsonValueKind.Array:
+                    var len = el.GetArrayLength();
+                    if (len == 0) return "[empty]";
+                    return $"[{len} × {KindOf(el.EnumerateArray().First(), depth)}]";
+                default:
+                    return el.ValueKind.ToString().ToLowerInvariant();
+            }
+        }
+
+        private static string KindOf(JsonElement el, int depth) => el.ValueKind switch
+        {
+            JsonValueKind.Object => DescribeShape(el, depth + 1),
+            JsonValueKind.Array => DescribeShape(el, depth + 1),
+            JsonValueKind.String => "string",
+            JsonValueKind.Number => "number",
+            JsonValueKind.True or JsonValueKind.False => "bool",
+            JsonValueKind.Null => "null",
+            _ => "?",
+        };
 
         // ── Mapping helpers ─────────────────────────────────────────────────
 

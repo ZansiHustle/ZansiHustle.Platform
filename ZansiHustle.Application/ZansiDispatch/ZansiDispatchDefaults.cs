@@ -39,7 +39,11 @@ namespace ZansiHustle.Application.ZansiDispatch
         public static IReadOnlyList<(string Key, string Value, string Description)> Seed { get; } =
             new List<(string, string, string)>
             {
-                (DefaultProviderKey, "CourierGuy", "Provider used to quote delivery (CourierGuy / InternalEstimate / Shiplogic). Falls back to InternalEstimate when the courier can't quote."),
+                // LAUNCH-SAFE DEFAULT: InternalEstimate ("ZansiHustle Dispatch")
+                // until the Courier Guy response-shape mappings are validated
+                // against a real sandbox response. Flip to CourierGuy explicitly
+                // (env ZansiDispatch__DefaultProvider=CourierGuy) only after that.
+                (DefaultProviderKey, "InternalEstimate", "Provider used to quote delivery (CourierGuy / InternalEstimate / Shiplogic). Launch default is InternalEstimate until Courier Guy mappings are sandbox-validated. Falls back to InternalEstimate when the chosen provider can't quote."),
                 (FallbackToInternalEstimateKey, "true", "Fall back to the deterministic InternalEstimate when the default provider can't quote."),
                 (AllowManualFallbackKey, "true", "Legacy alias of FallbackToInternalEstimate."),
                 (BaseFeeKey, "80", "Standard delivery base fee (ZAR)."),
@@ -68,7 +72,8 @@ namespace ZansiHustle.Application.ZansiDispatch
             var legacyFallback = GetBool(settings, AllowManualFallbackKey, true);
             var s = new ZansiDispatchSettings
             {
-                DefaultProvider = ParseProvider(Get(settings, DefaultProviderKey), ZansiDispatchProviderType.CourierGuy),
+                // Code-level fallback is InternalEstimate (launch-safe) — see Seed.
+                DefaultProvider = ParseProvider(Get(settings, DefaultProviderKey), ZansiDispatchProviderType.InternalEstimate),
                 FallbackToInternalEstimate = GetBool(settings, FallbackToInternalEstimateKey, legacyFallback),
                 AllowManualFallback = legacyFallback,
                 BaseFee = GetDecimal(settings, BaseFeeKey, 80m),

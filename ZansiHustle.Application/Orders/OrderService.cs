@@ -221,25 +221,14 @@ namespace ZansiHustle.Application.Orders
                 if (!saved)
                     return Result<OrderDto>.Failure(ErrorCodes.Exception, "Failed to create order.");
 
-                // Spin up the shipment from the selected option (post-save,
-                // best-effort — never fails the order if logistics hiccups).
-                if (deliveryOption is not null)
-                {
-                    await _dispatch.CreateShipmentForOrderAsync(new CreateShipmentForOrderInput
-                    {
-                        OrderId = order.Id,
-                        UserId = buyerUserId,
-                        MerchantId = merchantId,
-                        ShopId = deliveryOption.ShopId,
-                        QuoteId = deliveryOption.QuoteId,
-                        QuoteOptionId = deliveryOption.QuoteOptionId,
-                        ProviderType = deliveryOption.ProviderType,
-                        ServiceLevel = deliveryOption.ServiceLevel,
-                        QuotedDeliveryFee = deliveryFee,
-                        PickupAddressSummary = deliveryOption.PickupAddressSummary,
-                        DropoffAddressSummary = deliveryOption.DropoffAddressSummary ?? order.DeliveryAddress,
-                    });
-                }
+                // NOTE: the ZansiDispatch shipment + QuoteCharged ledger entry are
+                // NO LONGER created here. Creating them at order time produced
+                // PendingDispatch shipments + "charged" ledger rows for orders that
+                // were never paid (abandoned/failed Ozow). The shipment is now
+                // created on PAYMENT SUCCESS (PaymentService.AdvanceOrderOnPaidAsync
+                // → IZansiDispatchService.CreateShipmentForPaidOrderAsync), which is
+                // idempotent. The selected delivery option's fee is still validated
+                // + applied to Order.Total above, so the buyer pays the right amount.
 
                 var reloaded = await _orderRepository.GetByIdAsync(order.Id);
 

@@ -93,6 +93,13 @@ namespace ZansiHustle.Application.ZansiDispatch.Dtos
         public ZansiDispatchProviderType ProviderUsed { get; set; }
         /// <summary>True when the default provider couldn't quote and InternalEstimate was used.</summary>
         public bool FallbackUsed { get; set; }
+        /// <summary>
+        /// Admin/dev-facing pricing source label (e.g. "CourierGuy",
+        /// "InternalEstimate", "InternalEstimate (fallback)"). For ops dashboards
+        /// + manual-quote diagnostics — NOT shown to buyers (the mobile checkout
+        /// renders only the option label/description).
+        /// </summary>
+        public string PricingSource { get; set; } = string.Empty;
         public List<QuoteOptionDto> Options { get; set; } = new();
     }
 }

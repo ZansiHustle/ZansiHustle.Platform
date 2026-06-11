@@ -71,6 +71,22 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 var (sellerProvince, sellerCity, sellerAddress, sellerStreet, sellerLocal, sellerPostal, sellerCountry, sellerLat, sellerLng) =
                     await ResolveSellerAddressAsync(request, merchantId, ct);
 
+                // Seller-origin guard. A courier/internal quote needs a pickup
+                // origin. When the seller address wasn't supplied AND can't be
+                // resolved from the merchant (no province/city), DON'T fabricate a
+                // quote — return a friendly "unavailable" so the buyer can't be
+                // pushed into an unfulfillable order. Manual quotes (Portal /
+                // standalone) supply the origin, so they're unaffected.
+                // Dev reasonCode: SELLER_ORIGIN_MISSING.
+                if (string.IsNullOrWhiteSpace(sellerProvince) && string.IsNullOrWhiteSpace(sellerCity))
+                {
+                    _logger.LogWarning(
+                        "ZansiDispatch quote unavailable reason=SELLER_ORIGIN_MISSING merchantId={MerchantId} listingId={ListingId} userId={UserId}",
+                        merchantId, request.ListingId, userId);
+                    return Result<QuoteDto>.Failure(
+                        ErrorCodes.BadRequest, "Delivery is not available for this item yet.");
+                }
+
                 var context = new ZansiDispatchQuoteContext
                 {
                     ListingId = request.ListingId,
@@ -182,6 +198,9 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 var dto = MapQuote(quote);
                 dto.ProviderUsed = providerUsed;
                 dto.FallbackUsed = fallbackUsed;
+                dto.PricingSource = fallbackUsed
+                    ? $"{providerUsed} (fallback)"
+                    : providerUsed.ToString();
                 return Result<QuoteDto>.Success(dto, "Delivery options ready.");
             }
             catch (Exception ex)
@@ -417,6 +436,55 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             catch (Exception ex)
             {
                 _logger.LogError(ex, "ZansiDispatch CreateShipmentForOrder failed. OrderId={OrderId}", input.OrderId);
+            }
+        }
+
+        /// <inheritdoc />
+        public async Task CreateShipmentForPaidOrderAsync(
+            Guid orderId, Guid userId, Guid? merchantId, Guid quoteOptionId,
+            decimal quotedDeliveryFee, string? dropoffAddressSummary, CancellationToken ct = default)
+        {
+            try
+            {
+                if (orderId == Guid.Empty || quoteOptionId == Guid.Empty) return;
+
+                // Idempotency #1: a shipment already exists for this order → no-op.
+                // (CreateShipmentForOrderAsync re-checks this too, so repeated
+                // payment signals / webhook retries can never duplicate.)
+                if (await _db.ZansiDispatchShipments.AnyAsync(s => s.OrderId == orderId, ct)) return;
+
+                // Resolve provider/service/addresses from the stored option WITHOUT
+                // an expiry re-check — payment can settle after the quote's short
+                // TTL, and the fee was already locked onto the order at creation.
+                var option = await _db.ZansiDispatchQuoteOptions.AsNoTracking()
+                    .Include(o => o.Quote)
+                    .FirstOrDefaultAsync(o => o.Id == quoteOptionId, ct);
+                if (option is null)
+                {
+                    _logger.LogWarning(
+                        "ZansiDispatch CreateShipmentForPaidOrder: quote option {OptionId} not found for order {OrderId} — shipment not created.",
+                        quoteOptionId, orderId);
+                    return;
+                }
+
+                await CreateShipmentForOrderAsync(new CreateShipmentForOrderInput
+                {
+                    OrderId = orderId,
+                    UserId = userId,
+                    MerchantId = merchantId,
+                    ShopId = option.Quote?.ShopId,
+                    QuoteId = option.QuoteId,
+                    QuoteOptionId = option.Id,
+                    ProviderType = option.ProviderType,
+                    ServiceLevel = option.ServiceLevel,
+                    QuotedDeliveryFee = quotedDeliveryFee,
+                    PickupAddressSummary = option.Quote?.SellerAddressSummary,
+                    DropoffAddressSummary = dropoffAddressSummary ?? option.Quote?.BuyerAddressSummary,
+                }, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ZansiDispatch CreateShipmentForPaidOrder failed. OrderId={OrderId}", orderId);
             }
         }
 

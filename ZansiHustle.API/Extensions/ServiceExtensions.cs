@@ -853,6 +853,42 @@ public static class ServiceExtensions
         // transient failure here cannot affect quoting correctness.
         await SafeSeedAsync(logger, "ZansiDispatchSettings",
             () => ZansiDispatchSettingsSeeder.SeedAsync(dbContextForSeed));
+
+        // ── ZansiDispatch provider-mode startup banner / launch-safety guard ──
+        // Make the active delivery-pricing mode visible at boot, and SHOUT if a
+        // deployment has configured Courier Guy as the default before its
+        // response-shape mappings are validated against a real sandbox response.
+        try
+        {
+            var dispatchOpts = services
+                .GetRequiredService<Microsoft.Extensions.Options.IOptions<
+                    ZansiHustle.Infrastructure.Configuration.ZansiDispatchOptions>>().Value;
+            var configuredDefault = dispatchOpts.DefaultProvider;
+            var cg = dispatchOpts.CourierGuy;
+            var courierGuyIsDefault =
+                string.Equals(configuredDefault, "CourierGuy", StringComparison.OrdinalIgnoreCase);
+
+            if (courierGuyIsDefault && cg.Enabled)
+            {
+                logger.LogWarning(
+                    "[ZansiDispatch] DefaultProvider=CourierGuy is ACTIVE (CourierGuy.Enabled=true, Configured={Configured}, SandboxMode={Sandbox}). " +
+                    "Courier Guy response-shape mappings are NOT yet validated against a real sandbox response — buyers could be charged a courier-quoted price built from an unconfirmed mapping. " +
+                    "VERIFY the /rates mapping (SandboxMode shape logs) before using this in any environment that charges real money, or set ZansiDispatch__DefaultProvider=InternalEstimate.",
+                    cg.IsConfigured, cg.SandboxMode);
+            }
+            else
+            {
+                logger.LogInformation(
+                    "[ZansiDispatch] Delivery pricing mode: default={Default} courierGuyEnabled={CgEnabled} courierGuyConfigured={CgConfigured} fallbackToInternalEstimate={Fallback}. " +
+                    "Buyers see managed 'ZansiHustle Dispatch' pricing unless a real Courier Guy quote is returned.",
+                    string.IsNullOrWhiteSpace(configuredDefault) ? "InternalEstimate (default)" : configuredDefault,
+                    cg.Enabled, cg.IsConfigured, dispatchOpts.FallbackToInternalEstimate);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "[ZansiDispatch] Could not log delivery provider-mode banner at startup.");
+        }
     }
 
     /// <summary>
