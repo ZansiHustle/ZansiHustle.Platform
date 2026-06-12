@@ -96,6 +96,20 @@ namespace ZansiHustle.API.Controllers
             return ToActionResult(await _serviceBookingService.RejectAsync(userId.Value, id, request ?? new RejectBookingRequestDto()));
         }
 
+        /// <summary>Customer cancels their own booking BEFORE the provider accepts
+        /// (Requested/legacy Confirmed only) — releases the slot and credits the
+        /// customer's wallet with the full paid amount. Blocked once accepted.</summary>
+        [HttpPost("{id:guid}/customer-cancel")]
+        [ProducesResponseType(typeof(Result<ServiceBookingDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> CustomerCancel(Guid id, [FromBody] CancelBookingRequestDto request)
+        {
+            var userId = _currentUserService.UserId;
+            if (!userId.HasValue)
+                return ToActionResult(Result<ServiceBookingDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            return ToActionResult(await _serviceBookingService.CustomerCancelAsync(userId.Value, id, request ?? new CancelBookingRequestDto()));
+        }
+
         /// <summary>Either party marks the booking started (allowed on/after the
         /// scheduled day; flips to InProgress once both sides have marked).</summary>
         [HttpPost("{id:guid}/mark-in-progress")]

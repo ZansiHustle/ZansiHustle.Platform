@@ -59,5 +59,14 @@ namespace ZansiHustle.Application.Chat
 
         Task<Result<MarkReadResultDto>> MarkReadAsync(
             Guid callerUserId, Guid conversationId, CancellationToken ct = default);
+
+        /// <summary>
+        /// The caller's chat-unread summary for the bottom-tab badge:
+        /// number of conversations that have at least one unread message,
+        /// plus the total unread message count (both capped). Cheap — a
+        /// single grouped query. Independent of the bell/notification system.
+        /// </summary>
+        Task<Result<ChatUnreadSummaryDto>> GetUnreadSummaryAsync(
+            Guid callerUserId, CancellationToken ct = default);
     }
 }

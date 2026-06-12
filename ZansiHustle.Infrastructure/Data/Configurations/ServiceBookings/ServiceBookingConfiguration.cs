@@ -41,6 +41,9 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.ServiceBookings
             builder.Property(x => x.RejectionReasonCode).HasMaxLength(50);
             builder.Property(x => x.RejectionReasonText).HasMaxLength(500);
 
+            builder.Property(x => x.CancellationReasonCode).HasMaxLength(50);
+            builder.Property(x => x.CancellationReasonText).HasMaxLength(500);
+
             builder.Property(x => x.BuyerFormattedAddress).HasMaxLength(500);
             builder.Property(x => x.BuyerAddressLine1).HasMaxLength(250);
             builder.Property(x => x.BuyerPlaceId).HasMaxLength(200);

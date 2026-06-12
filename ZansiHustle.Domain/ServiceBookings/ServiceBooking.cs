@@ -116,6 +116,12 @@ namespace ZansiHustle.Domain.ServiceBookings
         public string? RejectionReasonText { get; set; }
         /// <summary>When the booking was cancelled (→ Cancelled).</summary>
         public DateTime? CancelledAtUtc { get; set; }
+        /// <summary>Which user cancelled (the customer in the V1 self-cancel flow).</summary>
+        public Guid? CancelledByUserId { get; set; }
+        /// <summary>Stable cancellation reason code (BookedByMistake/NoLongerNeeded/…).</summary>
+        public string? CancellationReasonCode { get; set; }
+        /// <summary>Free-text cancellation reason (required when code = Other).</summary>
+        public string? CancellationReasonText { get; set; }
 
         public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
         public DateTime? UpdatedAtUtc { get; set; }

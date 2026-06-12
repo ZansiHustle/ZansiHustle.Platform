@@ -70,10 +70,19 @@ namespace ZansiHustle.Application.ServiceBookings.Dtos
         public bool CanMarkComplete { get; set; }
         /// <summary>Customer may rate (Completed + customer viewer).</summary>
         public bool CanRate { get; set; }
+        /// <summary>Customer may cancel NOW (customer viewer + still Requested/legacy
+        /// Confirmed — i.e. the provider hasn't accepted yet). Instant + full credit
+        /// in V1. Never true once Accepted/InProgress/Completed.</summary>
+        public bool CanCustomerCancel { get; set; }
 
         // Rejection (set when Status == Rejected).
         public string? RejectionReasonCode { get; set; }
         public string? RejectionReasonText { get; set; }
+
+        // Cancellation (set when Status == Cancelled).
+        public string? CancellationReasonCode { get; set; }
+        public string? CancellationReasonText { get; set; }
+        public DateTime? CancelledAtUtc { get; set; }
 
         // Timeline.
         public DateTime? AcceptedAtUtc { get; set; }

@@ -23,5 +23,15 @@ namespace ZansiHustle.Application.Realtime
 
         /// <summary>The user's wallet balance changed (e.g. a refund credit).</summary>
         Task WalletBalanceChangedAsync(Guid userId, object payload);
+
+        /// <summary>A new chat message arrived in a conversation the user is in
+        /// (pushed to the RECIPIENT only — never the sender). The payload carries
+        /// the conversationId + the message so the client can append it to an open
+        /// thread without a refetch.</summary>
+        Task ConversationMessageReceivedAsync(Guid userId, object payload);
+
+        /// <summary>The user's chat unread total changed (number of conversations
+        /// with unread messages). Lets the chat tab badge update without polling.</summary>
+        Task ConversationUnreadCountChangedAsync(Guid userId, int unreadConversations);
     }
 }

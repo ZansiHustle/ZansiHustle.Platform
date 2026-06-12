@@ -39,6 +39,12 @@ namespace ZansiHustle.API.Realtime
         public Task WalletBalanceChangedAsync(Guid userId, object payload) =>
             SendAsync(userId, "WalletBalanceChanged", payload);
 
+        public Task ConversationMessageReceivedAsync(Guid userId, object payload) =>
+            SendAsync(userId, "ConversationMessageReceived", payload);
+
+        public Task ConversationUnreadCountChangedAsync(Guid userId, int unreadConversations) =>
+            SendAsync(userId, "ConversationUnreadCountChanged", new { unreadConversations });
+
         private async Task SendAsync(Guid userId, string method, object payload)
         {
             if (userId == Guid.Empty) return;

@@ -38,6 +38,14 @@ namespace ZansiHustle.Application.ServiceBookings
         /// once BOTH sides have marked.</summary>
         Task<Result<ServiceBookingDto>> MarkCompleteAsync(Guid userId, Guid bookingId);
 
+        /// <summary>Customer cancels their own booking BEFORE the provider accepts
+        /// (V1: Requested / legacy Confirmed only). Releases the slot, credits the
+        /// customer's wallet with the full paid amount (idempotent), notifies the
+        /// provider and records a trust event. NOT allowed once Accepted/InProgress/
+        /// Completed — those require support (no instant-refund loophole).</summary>
+        Task<Result<ServiceBookingDto>> CustomerCancelAsync(
+            Guid userId, Guid bookingId, CancelBookingRequestDto request);
+
         // ── Quoting + availability ──────────────────────────────────────────────
 
         /// <summary>

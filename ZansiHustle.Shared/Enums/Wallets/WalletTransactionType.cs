@@ -25,6 +25,10 @@ public enum WalletTransactionType
     /// <summary>A withdrawal was paid out.</summary>
     WithdrawalPaid = 6,
 
+    /// <summary>Customer credited because they cancelled a paid booking
+    /// (V1: only allowed while still Requested / awaiting provider).</summary>
+    BookingCancelledCredit = 7,
+
     /// <summary>Wallet used to pay for an order/booking. RESERVED — not used yet.</summary>
     WalletPaymentDebit = 100
 }

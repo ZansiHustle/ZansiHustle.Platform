@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using ZansiHustle.Application.Chat;
 using ZansiHustle.Application.Chat.Dtos;
+using ZansiHustle.Application.Realtime;
 using ZansiHustle.Domain.Chat;
 using ZansiHustle.Infrastructure.Data;
 using ZansiHustle.Shared.Enums.Chat;
@@ -36,12 +38,17 @@ namespace ZansiHustle.Infrastructure.Chat
         private const int MessagesMaxTake = 100;
         private const int UnreadCap = 99;
 
+        /// <summary>SAST is UTC+2, no DST — fixed offset for friendly local times.</summary>
+        private static readonly TimeSpan SaUtcOffset = TimeSpan.FromHours(2);
+
         private readonly AppDbContext _db;
+        private readonly IRealtimeNotifier _realtime;
         private readonly ILogger<ChatService> _logger;
 
-        public ChatService(AppDbContext db, ILogger<ChatService> logger)
+        public ChatService(AppDbContext db, IRealtimeNotifier realtime, ILogger<ChatService> logger)
         {
             _db = db;
+            _realtime = realtime;
             _logger = logger;
         }
 
@@ -387,6 +394,29 @@ namespace ZansiHustle.Infrastructure.Chat
                     .ToListAsync(ct);
                 var orderById = orders.ToDictionary(x => x.Id, x => x.Code);
 
+                // Service-booking context for order-typed conversations (T5): so the
+                // inbox can show "Haircut booking · 12 Jun, 10:00" instead of a raw
+                // order code. One query; oldest-first → newest booking per order
+                // wins the slot (orders are 1:1 with a booking in practice).
+                var bookingByOrder = new Dictionary<Guid, ServiceBookingContext>();
+                if (orderIds.Count > 0)
+                {
+                    var bookingRows = await _db.ServiceBookings
+                        .AsNoTracking()
+                        .Where(b => orderIds.Contains(b.OrderId))
+                        .OrderBy(b => b.CreatedAtUtc)
+                        .Select(b => new ServiceBookingContext
+                        {
+                            OrderId = b.OrderId,
+                            BookingId = b.Id,
+                            StartAtUtc = b.StartAtUtc,
+                            ServiceName = b.Listing != null ? b.Listing.Title : null,
+                            ImageUrl = b.Listing != null ? b.Listing.Images.FirstOrDefault() : null,
+                        })
+                        .ToListAsync(ct);
+                    foreach (var b in bookingRows) bookingByOrder[b.OrderId] = b;
+                }
+
                 // Unread counts — one query, grouped. Filter to messages
                 // not sent by the caller and (a) the conversation has
                 // no last-read yet OR (b) the message is newer than the
@@ -435,6 +465,13 @@ namespace ZansiHustle.Infrastructure.Chat
                         if (c.OrderId.HasValue && orderById.TryGetValue(c.OrderId.Value, out var oc))
                             orderCode = oc;
 
+                        // Friendly display context (T5) — never lead with a raw code.
+                        var (contextType, contextTitle, contextSubtitle, contextImage,
+                             serviceBookingId, bookingStartAtUtc) =
+                            ResolveContext(c.Type, listingTitle, listingImage,
+                                c.OrderId.HasValue && bookingByOrder.TryGetValue(c.OrderId.Value, out var bc) ? bc : null,
+                                orderCode);
+
                         return new ConversationListItemDto
                         {
                             Id = c.Id,
@@ -447,6 +484,12 @@ namespace ZansiHustle.Infrastructure.Chat
                             MarketplaceListingPrice = listingPrice,
                             OrderId = c.OrderId,
                             OrderCode = orderCode,
+                            ContextType = contextType,
+                            ContextTitle = contextTitle,
+                            ContextSubtitle = contextSubtitle,
+                            ContextImageUrl = contextImage,
+                            ServiceBookingId = serviceBookingId,
+                            BookingStartAtUtc = bookingStartAtUtc,
                             CreatedAtUtc = c.CreatedAtUtc,
                             LastMessageAtUtc = c.LastMessageAtUtc,
                             LastMessagePreview = c.LastMessagePreview,
@@ -589,7 +632,7 @@ namespace ZansiHustle.Infrastructure.Chat
                     .Select(u => ((u.FirstName ?? string.Empty) + " " + (u.LastName ?? string.Empty)).Trim())
                     .FirstOrDefaultAsync(ct);
 
-                return Result<MessageDto>.Success(new MessageDto
+                var dto = new MessageDto
                 {
                     Id = message.Id,
                     ConversationId = message.ConversationId,
@@ -598,7 +641,15 @@ namespace ZansiHustle.Infrastructure.Chat
                     Body = message.Body,
                     Type = message.Type,
                     CreatedAtUtc = message.CreatedAtUtc,
-                }, "Message sent.");
+                };
+
+                // Best-effort live delivery to the OTHER participant(s) — never the
+                // sender. Drives the recipient's open thread (append) + chat-tab
+                // badge without polling. A push failure never breaks the send.
+                await PushMessageToRecipientsAsync(
+                    conversationId, callerUserId, conversation, dto, ct);
+
+                return Result<MessageDto>.Success(dto, "Message sent.");
             }
             catch (Exception ex)
             {
@@ -656,6 +707,156 @@ namespace ZansiHustle.Infrastructure.Chat
                 return Result<MarkReadResultDto>.Failure(
                     ErrorCodes.Exception, "An error occurred while marking the conversation read.");
             }
+        }
+
+        // ── Unread summary (chat-tab badge) ────────────────────────
+
+        public async Task<Result<ChatUnreadSummaryDto>> GetUnreadSummaryAsync(
+            Guid callerUserId, CancellationToken ct = default)
+        {
+            try
+            {
+                var (conversations, messages) = await ComputeUnreadSummaryAsync(callerUserId, ct);
+                return Result<ChatUnreadSummaryDto>.Success(new ChatUnreadSummaryDto
+                {
+                    UnreadConversations = conversations,
+                    UnreadMessages = messages,
+                }, "Unread summary.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to load chat unread summary for {UserId}", callerUserId);
+                return Result<ChatUnreadSummaryDto>.Failure(
+                    ErrorCodes.Exception, "An error occurred while loading your unread count.");
+            }
+        }
+
+        /// <summary>
+        /// (conversationsWithUnread, totalUnreadMessages) for a user, both capped.
+        /// Same definition as the inbox per-row unread: messages newer than the
+        /// caller's LastReadAtUtc that the caller did not send.
+        /// </summary>
+        private async Task<(int conversations, int messages)> ComputeUnreadSummaryAsync(
+            Guid userId, CancellationToken ct)
+        {
+            var myParts = await _db.ConversationParticipants
+                .AsNoTracking()
+                .Where(p => p.UserId == userId && !p.IsArchived)
+                .Select(p => new { p.ConversationId, p.LastReadAtUtc })
+                .ToListAsync(ct);
+            if (myParts.Count == 0) return (0, 0);
+
+            var convIds = myParts.Select(p => p.ConversationId).ToList();
+            var lastReadByConv = myParts.ToDictionary(p => p.ConversationId, p => p.LastReadAtUtc);
+
+            var groups = await _db.ChatMessages
+                .AsNoTracking()
+                .Where(m => convIds.Contains(m.ConversationId) && m.SenderUserId != userId)
+                .GroupBy(m => m.ConversationId)
+                .Select(g => new { ConversationId = g.Key, Items = g.Select(m => m.CreatedAtUtc).ToList() })
+                .ToListAsync(ct);
+
+            int unreadConvs = 0, unreadMsgs = 0;
+            foreach (var g in groups)
+            {
+                DateTime? lr = lastReadByConv.TryGetValue(g.ConversationId, out var v) ? v : null;
+                var cnt = lr.HasValue ? g.Items.Count(t => t > lr.Value) : g.Items.Count;
+                if (cnt > 0)
+                {
+                    unreadConvs++;
+                    unreadMsgs += cnt;
+                }
+            }
+            if (unreadConvs > UnreadCap) unreadConvs = UnreadCap;
+            if (unreadMsgs > UnreadCap) unreadMsgs = UnreadCap;
+            return (unreadConvs, unreadMsgs);
+        }
+
+        /// <summary>
+        /// Best-effort live message delivery to every participant except the
+        /// sender. Pushes the message (for an open thread to append) + the
+        /// recipient's fresh unread-conversation count (for the chat-tab badge).
+        /// Never throws — REST is the source of truth.
+        /// </summary>
+        private async Task PushMessageToRecipientsAsync(
+            Guid conversationId, Guid senderUserId, Conversation conversation,
+            MessageDto dto, CancellationToken ct)
+        {
+            try
+            {
+                var recipients = await _db.ConversationParticipants
+                    .AsNoTracking()
+                    .Where(p => p.ConversationId == conversationId && p.UserId != senderUserId)
+                    .Select(p => p.UserId)
+                    .ToListAsync(ct);
+                if (recipients.Count == 0) return;
+
+                var payload = new
+                {
+                    conversationId = conversationId.ToString(),
+                    message = new
+                    {
+                        id = dto.Id.ToString(),
+                        conversationId = dto.ConversationId.ToString(),
+                        senderUserId = dto.SenderUserId?.ToString(),
+                        senderName = dto.SenderName,
+                        body = dto.Body,
+                        type = (int)dto.Type,
+                        createdAtUtc = dto.CreatedAtUtc,
+                    },
+                    preview = conversation.LastMessagePreview,
+                    lastMessageAtUtc = conversation.LastMessageAtUtc,
+                };
+
+                foreach (var recipient in recipients)
+                {
+                    await _realtime.ConversationMessageReceivedAsync(recipient, payload);
+                    var (convs, _) = await ComputeUnreadSummaryAsync(recipient, ct);
+                    await _realtime.ConversationUnreadCountChangedAsync(recipient, convs);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "[Chat] realtime message push failed for conversation {ConversationId}.", conversationId);
+            }
+        }
+
+        /// <summary>Friendly inbox context per conversation — never leads with a
+        /// raw order code. Service bookings show the service name + date/time.</summary>
+        private static (string contextType, string? title, string? subtitle, string? image,
+            Guid? bookingId, DateTime? bookingStart) ResolveContext(
+            ConversationType type, string? listingTitle, string? listingImage,
+            ServiceBookingContext? booking, string? orderCode)
+        {
+            if (booking is not null)
+            {
+                var name = string.IsNullOrWhiteSpace(booking.ServiceName)
+                    ? "Service booking" : booking.ServiceName!;
+                var local = booking.StartAtUtc + SaUtcOffset;
+                var when = local.ToString("d MMM, HH:mm", CultureInfo.InvariantCulture);
+                return ("ServiceBooking", name, $"Service booking · {when}",
+                    booking.ImageUrl, booking.BookingId, booking.StartAtUtc);
+            }
+            if (type == ConversationType.MarketplaceListing)
+                return ("MarketplaceListing",
+                    string.IsNullOrWhiteSpace(listingTitle) ? "Marketplace listing" : listingTitle,
+                    "Marketplace listing", listingImage, null, null);
+            if (type == ConversationType.Order)
+                // Product order — friendly lead; order code only as secondary metadata.
+                return ("Order", "Order",
+                    string.IsNullOrWhiteSpace(orderCode) ? null : $"Order {orderCode}", null, null, null);
+            return ("Direct", null, null, null, null, null);
+        }
+
+        /// <summary>Lightweight projection of a service booking for inbox context.</summary>
+        private sealed class ServiceBookingContext
+        {
+            public Guid OrderId { get; set; }
+            public Guid BookingId { get; set; }
+            public DateTime StartAtUtc { get; set; }
+            public string? ServiceName { get; set; }
+            public string? ImageUrl { get; set; }
         }
 
         // ── Helpers ────────────────────────────────────────────────

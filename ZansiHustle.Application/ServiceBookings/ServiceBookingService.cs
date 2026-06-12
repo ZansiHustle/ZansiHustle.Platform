@@ -324,6 +324,75 @@ namespace ZansiHustle.Application.ServiceBookings
                 bothMarked ? "Booking completed." : "Marked as complete. Waiting for the other party.");
         }
 
+        /// <inheritdoc />
+        public async Task<Result<ServiceBookingDto>> CustomerCancelAsync(
+            Guid userId, Guid bookingId, CancelBookingRequestDto request)
+        {
+            var booking = await _serviceBookingRepository.GetByIdWithDetailsAsync(bookingId);
+            if (booking is null)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.NotFound, "Booking not found.");
+
+            if (!IsCustomer(booking, userId))
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.Forbidden, "Only the customer can cancel this booking.");
+
+            // V1 policy: instant self-cancel ONLY before the provider accepts —
+            // Requested / legacy Confirmed. Once Accepted/InProgress/Completed the
+            // customer must go through support (no instant-refund loophole).
+            if (booking.Status != ServiceBookingStatus.Requested
+                && booking.Status != ServiceBookingStatus.Confirmed)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.Conflict,
+                    "This booking can no longer be cancelled. Please message the provider or contact support.");
+
+            var (reasonCode, reasonError) = NormaliseCancellationReason(request);
+            if (reasonError is not null)
+                return Result<ServiceBookingDto>.Failure(ErrorCodes.BadRequest, reasonError);
+
+            var nowUtc = DateTime.UtcNow;
+            booking.Status = ServiceBookingStatus.Cancelled;
+            booking.CancelledAtUtc = nowUtc;
+            booking.CancelledByUserId = userId;
+            booking.CancellationReasonCode = reasonCode;
+            booking.CancellationReasonText = string.IsNullOrWhiteSpace(request.ReasonText) ? null : request.ReasonText.Trim();
+            booking.UpdatedAtUtc = nowUtc;
+            _serviceBookingRepository.Update(booking);
+            await _serviceBookingRepository.SaveChangesAsync();
+
+            // Credit the customer's wallet with the full paid amount (idempotent).
+            // Only when the order was actually paid — nothing to refund otherwise.
+            WalletTransaction? credit = null;
+            var refundable = ComputeRefundable(booking);
+            if (booking.Order?.PaymentStatus == PaymentStatus.Paid && refundable > 0m)
+            {
+                var currency = string.IsNullOrWhiteSpace(booking.Order?.Currency) ? "ZAR" : booking.Order!.Currency;
+                credit = await _wallet.CreditAsync(
+                    booking.CustomerUserId,
+                    WalletTransactionType.BookingCancelledCredit,
+                    refundable, currency,
+                    "ServiceBooking", booking.Id,
+                    "Refund for cancelled booking");
+            }
+
+            // Notify the provider (seller side) that the customer cancelled.
+            var serviceName = booking.Listing?.Title ?? "your service";
+            if (booking.Merchant?.OwnerUserId is Guid ownerId && ownerId != Guid.Empty)
+            {
+                await _notifications.NotifyBookingStatusChangedAsync(
+                    booking, ownerId, NotificationType.BookingCancelledByCustomer,
+                    "Booking cancelled",
+                    $"The customer cancelled their booking for {serviceName}.");
+            }
+            await BroadcastStatusAsync(booking);
+
+            if (credit is not null)
+                await SafeWalletBalanceChangedAsync(booking.CustomerUserId, credit.BalanceAfter, credit.Currency);
+
+            // Trust signals (record-only; no penalties).
+            await _trust.RecordAsync(userId, TrustActorRole.Customer,
+                TrustEventType.BookingCancelled, "ServiceBooking", booking.Id, new { reasonCode });
+
+            return Result<ServiceBookingDto>.Success(BuildDto(booking, ViewerRole.Customer), "Booking cancelled.");
+        }
+
         // ─── Workflow helpers ────────────────────────────────────────────────────
 
         private enum ViewerRole { Provider, Customer }
@@ -381,6 +450,34 @@ namespace ZansiHustle.Application.ServiceBookings
                 var text = request?.ReasonText?.Trim() ?? string.Empty;
                 if (text.Length < 10)
                     return (code, "Please give a clear reason. Rejections are reviewed and may affect visibility.");
+            }
+            return (code, null);
+        }
+
+        // Allowed customer cancellation reason codes (mirror the mobile sheet).
+        private static readonly HashSet<string> CancelReasonCodes = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "BookedByMistake", "WrongDateTime", "NoLongerNeeded",
+            "FoundAnotherProvider", "ProviderTakingTooLong", "Other"
+        };
+
+        /// <summary>Validate + canonicalise the cancellation reason. Returns the
+        /// canonical code and an error message (null when valid).</summary>
+        private static (string code, string? error) NormaliseCancellationReason(CancelBookingRequestDto request)
+        {
+            var raw = request?.ReasonCode?.Trim();
+            if (string.IsNullOrWhiteSpace(raw))
+                return (string.Empty, "A cancellation reason is required.");
+            if (!CancelReasonCodes.Contains(raw))
+                return (string.Empty, "Choose a valid cancellation reason.");
+
+            var code = CancelReasonCodes.First(c => string.Equals(c, raw, StringComparison.OrdinalIgnoreCase));
+
+            if (string.Equals(code, "Other", StringComparison.OrdinalIgnoreCase))
+            {
+                var text = request?.ReasonText?.Trim() ?? string.Empty;
+                if (text.Length < 10)
+                    return (code, "Please give a clear reason (at least 10 characters).");
             }
             return (code, null);
         }
@@ -494,6 +591,11 @@ namespace ZansiHustle.Application.ServiceBookings
             var canMarkComplete = b.Status == ServiceBookingStatus.InProgress
                                   && (isProvider ? !providerComplete : !customerComplete);
             var canRate = !isProvider && b.Status == ServiceBookingStatus.Completed;
+            // Customer may self-cancel only before acceptance (Requested/legacy
+            // Confirmed). Mirrors the server-side guard in CustomerCancelAsync.
+            var canCustomerCancel = !isProvider
+                && (b.Status == ServiceBookingStatus.Requested
+                    || b.Status == ServiceBookingStatus.Confirmed);
 
             return new ServiceBookingDto
             {
@@ -528,8 +630,12 @@ namespace ZansiHustle.Application.ServiceBookings
                 CanMarkInProgress = canMarkInProgress,
                 CanMarkComplete = canMarkComplete,
                 CanRate = canRate,
+                CanCustomerCancel = canCustomerCancel,
                 RejectionReasonCode = b.RejectionReasonCode,
                 RejectionReasonText = b.RejectionReasonText,
+                CancellationReasonCode = b.CancellationReasonCode,
+                CancellationReasonText = b.CancellationReasonText,
+                CancelledAtUtc = b.CancelledAtUtc,
                 AcceptedAtUtc = b.ProviderAcceptedAtUtc,
                 InProgressAtUtc = b.InProgressAtUtc,
                 CompletedAtUtc = b.CompletedAtUtc,

@@ -119,6 +119,23 @@ namespace ZansiHustle.API.Controllers
                 await _chat.SendMessageAsync(userId.Value, conversationId, request.Body, ct));
         }
 
+        /// <summary>
+        /// The caller's chat-unread summary for the bottom-tab badge
+        /// (conversations with unread + total unread messages). Independent
+        /// of the bell/notification system.
+        /// </summary>
+        [HttpGet("unread-count")]
+        [ProducesResponseType(typeof(Result<ChatUnreadSummaryDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetUnreadCount(CancellationToken ct)
+        {
+            var userId = ResolveCurrentUserId();
+            if (userId is null)
+                return ToActionResult(Result<ChatUnreadSummaryDto>.Failure(
+                    ErrorCodes.Unauthorized, "Sign in first."));
+
+            return ToActionResult(await _chat.GetUnreadSummaryAsync(userId.Value, ct));
+        }
+
         /// <summary>Mark the conversation as read for the caller.</summary>
         [HttpPost("{conversationId:guid}/read")]
         [ProducesResponseType(typeof(Result<MarkReadResultDto>), StatusCodes.Status200OK)]

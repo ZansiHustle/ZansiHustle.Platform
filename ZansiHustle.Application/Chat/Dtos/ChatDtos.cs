@@ -37,6 +37,26 @@ namespace ZansiHustle.Application.Chat.Dtos
         public Guid? OrderId { get; set; }
         public string? OrderCode { get; set; }
 
+        // ── Friendly display context (T5) ───────────────────────────
+        // The inbox should NEVER lead with a raw "ORD-2026…" code. The
+        // server resolves a human title + subtitle per conversation so the
+        // client renders "Haircut booking" / "Service booking · 12 Jun,
+        // 10:00" instead. For a service order this is the service name +
+        // booking date; for a product order, a friendly summary; for a
+        // marketplace listing, the listing title.
+        /// <summary>"ServiceBooking" | "Order" | "MarketplaceListing" | "Direct".</summary>
+        public string ContextType { get; set; } = "Direct";
+        /// <summary>Primary friendly subtitle (service/listing/order name) — never a raw code.</summary>
+        public string? ContextTitle { get; set; }
+        /// <summary>Secondary line, e.g. "Service booking · 12 Jun, 10:00".</summary>
+        public string? ContextSubtitle { get; set; }
+        /// <summary>Thumbnail for the row / chat context card (service or listing image).</summary>
+        public string? ContextImageUrl { get; set; }
+        /// <summary>Set when this conversation is anchored to a service booking.</summary>
+        public Guid? ServiceBookingId { get; set; }
+        /// <summary>Booking start (UTC) when this is a service-booking conversation.</summary>
+        public DateTime? BookingStartAtUtc { get; set; }
+
         public DateTime CreatedAtUtc { get; set; }
         public DateTime? LastMessageAtUtc { get; set; }
         public string? LastMessagePreview { get; set; }
@@ -48,6 +68,19 @@ namespace ZansiHustle.Application.Chat.Dtos
         /// caller authored the latest message of.
         /// </summary>
         public int UnreadCount { get; set; }
+    }
+
+    /// <summary>
+    /// The caller's chat-unread summary for the bottom-tab badge. Counts
+    /// are capped server-side so the badge never has to render a silly
+    /// number. Independent of the notification/bell system.
+    /// </summary>
+    public class ChatUnreadSummaryDto
+    {
+        /// <summary>Conversations with ≥1 unread message (capped at 99).</summary>
+        public int UnreadConversations { get; set; }
+        /// <summary>Total unread messages across all conversations (capped at 99).</summary>
+        public int UnreadMessages { get; set; }
     }
 
     /// <summary>

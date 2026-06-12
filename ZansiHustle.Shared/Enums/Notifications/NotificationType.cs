@@ -35,6 +35,9 @@ public enum NotificationType
     /// <summary>New chat message — sent to the recipient (future).</summary>
     NewChatMessage = 9,
 
+    /// <summary>Customer cancelled a booking before acceptance — sent to the provider.</summary>
+    BookingCancelledByCustomer = 10,
+
     /// <summary>Anything without a specific actionable target.</summary>
     Generic = 100
 }
