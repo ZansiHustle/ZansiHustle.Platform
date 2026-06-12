@@ -19,7 +19,7 @@ namespace ZansiHustle.Infrastructure.Migrations
                 table: "WalletTransactions",
                 columns: new[] { "Type", "ReferenceType", "ReferenceId" },
                 unique: true,
-                filter: "[ReferenceId] IS NOT NULL AND [Type] NOT IN (100, 101)");
+                filter: "[ReferenceId] IS NOT NULL AND [Type] <> 100 AND [Type] <> 101");
         }
 
         /// <inheritdoc />
