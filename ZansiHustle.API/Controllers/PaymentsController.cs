@@ -159,6 +159,25 @@ namespace ZansiHustle.API.Controllers
         }
 
         /// <summary>
+        /// Buyer-initiated cancel of a pending payment (e.g. they backed out of the
+        /// gateway). Reverses any wallet hold so split-payment funds are restored.
+        /// Idempotent; a no-op on an already-settled payment.
+        /// </summary>
+        [HttpPost("cancel/{reference}")]
+        [Authorize]
+        [ProducesResponseType(typeof(Result<PaymentDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> Cancel(string reference, CancellationToken cancellationToken)
+        {
+            var userId = _currentUserService.UserId;
+
+            if (!userId.HasValue)
+                return ToActionResult(Result<PaymentDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            var result = await _paymentService.CancelAsync(userId.Value, reference, cancellationToken);
+            return ToActionResult(result);
+        }
+
+        /// <summary>
         /// Paystack webhook endpoint. Publicly reachable but signature-verified
         /// and idempotent — always returns 200 so Paystack stops retrying.
         /// </summary>

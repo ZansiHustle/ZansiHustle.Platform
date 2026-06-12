@@ -29,6 +29,10 @@ public enum WalletTransactionType
     /// (V1: only allowed while still Requested / awaiting provider).</summary>
     BookingCancelledCredit = 7,
 
-    /// <summary>Wallet used to pay for an order/booking. RESERVED — not used yet.</summary>
-    WalletPaymentDebit = 100
+    /// <summary>Wallet balance applied toward an order/booking at checkout (debit).</summary>
+    WalletPaymentDebit = 100,
+
+    /// <summary>Wallet payment reversed (credit) when the external payment for a
+    /// split/partial order failed or was cancelled — restores the held balance.</summary>
+    WalletPaymentReversal = 101
 }

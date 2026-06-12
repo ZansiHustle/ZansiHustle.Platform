@@ -13,6 +13,7 @@ using ZansiHustle.Application.Realtime;
 using ZansiHustle.Domain.Chat;
 using ZansiHustle.Infrastructure.Data;
 using ZansiHustle.Shared.Enums.Chat;
+using ZansiHustle.Shared.Enums.ServiceBookings;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
 
@@ -325,6 +326,7 @@ namespace ZansiHustle.Infrastructure.Chat
                         c.Type,
                         c.MarketplaceListingId,
                         c.OrderId,
+                        c.IsClosed,
                         c.CreatedAtUtc,
                         c.LastMessageAtUtc,
                         c.LastMessagePreview,
@@ -410,6 +412,7 @@ namespace ZansiHustle.Infrastructure.Chat
                             OrderId = b.OrderId,
                             BookingId = b.Id,
                             StartAtUtc = b.StartAtUtc,
+                            Status = b.Status,
                             ServiceName = b.Listing != null ? b.Listing.Title : null,
                             ImageUrl = b.Listing != null ? b.Listing.Images.FirstOrDefault() : null,
                         })
@@ -466,11 +469,16 @@ namespace ZansiHustle.Infrastructure.Chat
                             orderCode = oc;
 
                         // Friendly display context (T5) — never lead with a raw code.
+                        var booking = c.OrderId.HasValue && bookingByOrder.TryGetValue(c.OrderId.Value, out var bc)
+                            ? bc : null;
                         var (contextType, contextTitle, contextSubtitle, contextImage,
                              serviceBookingId, bookingStartAtUtc) =
-                            ResolveContext(c.Type, listingTitle, listingImage,
-                                c.OrderId.HasValue && bookingByOrder.TryGetValue(c.OrderId.Value, out var bc) ? bc : null,
-                                orderCode);
+                            ResolveContext(c.Type, listingTitle, listingImage, booking, orderCode);
+
+                        // Lifecycle (T4): service-booking status + closed flag.
+                        string? bookingStatus = booking is not null ? NormaliseBookingStatus(booking.Status) : null;
+                        bool isClosed = c.IsClosed
+                            || (booking is not null && IsTerminalBooking(booking.Status));
 
                         return new ConversationListItemDto
                         {
@@ -490,6 +498,8 @@ namespace ZansiHustle.Infrastructure.Chat
                             ContextImageUrl = contextImage,
                             ServiceBookingId = serviceBookingId,
                             BookingStartAtUtc = bookingStartAtUtc,
+                            ServiceBookingStatus = bookingStatus,
+                            IsClosed = isClosed,
                             CreatedAtUtc = c.CreatedAtUtc,
                             LastMessageAtUtc = c.LastMessageAtUtc,
                             LastMessagePreview = c.LastMessagePreview,
@@ -552,10 +562,31 @@ namespace ZansiHustle.Infrastructure.Chat
                 var hasMore = rows.Count > take;
                 if (hasMore) rows.RemoveAt(rows.Count - 1);
 
+                // Closed / read-only state (T5) so the thread can lock its composer.
+                var conv = await _db.Conversations
+                    .AsNoTracking()
+                    .Where(c => c.Id == conversationId)
+                    .Select(c => new { c.Type, c.OrderId, c.IsClosed })
+                    .FirstOrDefaultAsync(ct);
+
+                bool isClosed = conv?.IsClosed ?? false;
+                string? closedReason = (conv?.IsClosed ?? false) ? "Closed" : null;
+                if (conv is not null && conv.Type == ConversationType.Order && conv.OrderId.HasValue)
+                {
+                    var bookingStatus = await GetServiceBookingStatusForOrderAsync(conv.OrderId.Value, ct);
+                    if (bookingStatus.HasValue && IsTerminalBooking(bookingStatus.Value))
+                    {
+                        isClosed = true;
+                        closedReason = bookingStatus.Value.ToString(); // Completed / Cancelled / Rejected
+                    }
+                }
+
                 return Result<MessagesPageDto>.Success(new MessagesPageDto
                 {
                     Messages = rows,
                     HasMore = hasMore,
+                    IsClosed = isClosed,
+                    ClosedReason = closedReason,
                 }, "Messages retrieved.");
             }
             catch (Exception ex)
@@ -595,6 +626,18 @@ namespace ZansiHustle.Infrastructure.Chat
 
                 if (conversation.IsClosed)
                     return Result<MessageDto>.Failure(ErrorCodes.Forbidden, "This conversation is closed.");
+
+                // T5/T6 — block sends on a service-booking chat once the booking is
+                // terminal (Completed/Cancelled/Rejected). Keeps the parties from
+                // arranging cash-in-person after the platform booking has closed.
+                // Product orders (no booking) and marketplace chats are unaffected.
+                if (conversation.Type == ConversationType.Order && conversation.OrderId.HasValue)
+                {
+                    var bookingStatus = await GetServiceBookingStatusForOrderAsync(conversation.OrderId.Value, ct);
+                    if (bookingStatus.HasValue && IsTerminalBooking(bookingStatus.Value))
+                        return Result<MessageDto>.Failure(
+                            ErrorCodes.Conflict, "This chat is closed because the booking is no longer active.");
+                }
 
                 var now = DateTime.UtcNow;
                 var message = new Message
@@ -855,8 +898,37 @@ namespace ZansiHustle.Infrastructure.Chat
             public Guid OrderId { get; set; }
             public Guid BookingId { get; set; }
             public DateTime StartAtUtc { get; set; }
+            public ServiceBookingStatus Status { get; set; }
             public string? ServiceName { get; set; }
             public string? ImageUrl { get; set; }
+        }
+
+        /// <summary>Terminal booking states close the linked conversation (T5).</summary>
+        private static bool IsTerminalBooking(ServiceBookingStatus s) =>
+            s == ServiceBookingStatus.Completed
+            || s == ServiceBookingStatus.Cancelled
+            || s == ServiceBookingStatus.Rejected;
+
+        /// <summary>Legacy Confirmed → "Requested" for display; otherwise the enum name.</summary>
+        private static string NormaliseBookingStatus(ServiceBookingStatus s) =>
+            s == ServiceBookingStatus.Confirmed
+                ? ServiceBookingStatus.Requested.ToString()
+                : s.ToString();
+
+        /// <summary>Latest service-booking status for an order (null if the order
+        /// has no booking — i.e. a product order). Used by the send guard + the
+        /// messages closed-state.</summary>
+        private async Task<ServiceBookingStatus?> GetServiceBookingStatusForOrderAsync(
+            Guid orderId, CancellationToken ct)
+        {
+            var rows = await _db.ServiceBookings
+                .AsNoTracking()
+                .Where(b => b.OrderId == orderId)
+                .OrderByDescending(b => b.CreatedAtUtc)
+                .Select(b => b.Status)
+                .Take(1)
+                .ToListAsync(ct);
+            return rows.Count > 0 ? rows[0] : (ServiceBookingStatus?)null;
         }
 
         // ── Helpers ────────────────────────────────────────────────

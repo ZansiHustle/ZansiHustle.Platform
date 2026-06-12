@@ -30,6 +30,14 @@ namespace ZansiHustle.Application.Payments
         Task<Result<PaymentDto>> VerifyAsync(Guid userId, string reference, CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Buyer-initiated cancel of a non-terminal payment (e.g. they backed out of
+        /// the gateway browser). Marks the payment Cancelled and runs the failure
+        /// path — which REVERSES any wallet hold so split-payment funds are restored.
+        /// Idempotent + a no-op on an already-settled (Succeeded) payment.
+        /// </summary>
+        Task<Result<PaymentDto>> CancelAsync(Guid userId, string reference, CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Processes a Paystack webhook payload. Always completes (even on signature
         /// mismatch) by persisting an audit row; actionable events are applied only
         /// if signature + dedup key + state guards all pass.

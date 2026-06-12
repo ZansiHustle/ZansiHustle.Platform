@@ -36,5 +36,39 @@ namespace ZansiHustle.Application.Wallets
             string referenceType,
             Guid referenceId,
             string description);
+
+        /// <summary>
+        /// Create a manual withdrawal request (V1). Validates the amount against
+        /// the available balance, HOLDS the amount (a WithdrawalRequested debit
+        /// reduces AvailableBalance so it can't be withdrawn twice), stores only
+        /// the last 4 account digits, and guards against rapid duplicate taps.
+        /// Returns the masked request. No automated payout.
+        /// </summary>
+        Task<Result<WithdrawalRequestDto>> RequestWithdrawalAsync(Guid userId, CreateWithdrawalRequestDto request);
+
+        /// <summary>The user's withdrawal requests, newest first (account masked).</summary>
+        Task<Result<System.Collections.Generic.List<WithdrawalRequestDto>>> GetWithdrawalsAsync(Guid userId, int take = 50);
+
+        /// <summary>
+        /// Apply wallet balance toward an order at payment time (server-authoritative).
+        /// Computes appliedWalletAmount = min(requested, availableBalance, orderTotal),
+        /// HOLDS it via an idempotent WalletPaymentDebit (ref Order:orderId) and
+        /// returns the applied amount + the remaining external amount due. Idempotent
+        /// per order — a repeated call reuses the existing (net) debit and NEVER
+        /// debits twice. Returns (0, orderTotal) when wallet isn't used / nothing
+        /// applies. Never spends more than the available balance or the order total,
+        /// and never uses pending-withdrawal money (that already left AvailableBalance).
+        /// </summary>
+        Task<(decimal appliedWalletAmount, decimal externalAmountDue)> ApplyToOrderAsync(
+            Guid userId, Guid orderId, decimal orderTotal, string currency,
+            bool useWallet, decimal? requestedAmount);
+
+        /// <summary>
+        /// Reverse a wallet payment hold for an order (credit WalletPaymentReversal,
+        /// restoring AvailableBalance) when the external payment failed/cancelled.
+        /// Idempotent — a second call is a no-op. Returns the reversed amount (0 when
+        /// there was nothing to reverse).
+        /// </summary>
+        Task<decimal> ReverseOrderPaymentDebitAsync(Guid userId, Guid orderId);
     }
 }

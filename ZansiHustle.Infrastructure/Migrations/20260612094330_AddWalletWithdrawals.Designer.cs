@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using ZansiHustle.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using ZansiHustle.Infrastructure.Data;
 namespace ZansiHustle.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260612094330_AddWalletWithdrawals")]
+    partial class AddWalletWithdrawals
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2210,10 +2213,6 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.Property<Guid?>("DeliveryQuoteOptionId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<decimal?>("ExternalAmountDue")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
                     b.Property<Guid>("MerchantId")
                         .HasColumnType("uniqueidentifier");
 
@@ -2237,10 +2236,6 @@ namespace ZansiHustle.Infrastructure.Migrations
 
                     b.Property<DateTime?>("UpdatedAtUtc")
                         .HasColumnType("datetime2");
-
-                    b.Property<decimal>("WalletAmountApplied")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
 
                     b.HasKey("Id");
 
@@ -3416,7 +3411,7 @@ namespace ZansiHustle.Infrastructure.Migrations
 
                     b.HasIndex("Type", "ReferenceType", "ReferenceId")
                         .IsUnique()
-                        .HasFilter("[ReferenceId] IS NOT NULL AND [Type] NOT IN (100, 101)");
+                        .HasFilter("[ReferenceId] IS NOT NULL");
 
                     b.ToTable("WalletTransactions", (string)null);
                 });

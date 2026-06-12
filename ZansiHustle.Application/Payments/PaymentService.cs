@@ -12,6 +12,7 @@ using ZansiHustle.Application.Payments.Providers;
 using ZansiHustle.Application.Persistence.Orders;
 using ZansiHustle.Application.Persistence.Payments;
 using ZansiHustle.Application.Persistence.ServiceBookings;
+using ZansiHustle.Application.Wallets;
 using ZansiHustle.Application.ZansiDispatch;
 using ZansiHustle.Domain.Identity;
 using ZansiHustle.Domain.Orders;
@@ -30,6 +31,7 @@ namespace ZansiHustle.Application.Payments
         private readonly IOrderRepository _orderRepository;
         private readonly IServiceBookingRepository _serviceBookingRepository;
         private readonly INotificationService _notificationService;
+        private readonly IWalletService _wallet;
         private readonly IZansiDispatchService _dispatch;
         private readonly IPaystackClient _paystackClient;
         private readonly IOzowClient _ozowClient;
@@ -44,6 +46,7 @@ namespace ZansiHustle.Application.Payments
             IOrderRepository orderRepository,
             IServiceBookingRepository serviceBookingRepository,
             INotificationService notificationService,
+            IWalletService wallet,
             IZansiDispatchService dispatch,
             IPaystackClient paystackClient,
             IOzowClient ozowClient,
@@ -57,6 +60,7 @@ namespace ZansiHustle.Application.Payments
             _orderRepository = orderRepository;
             _serviceBookingRepository = serviceBookingRepository;
             _notificationService = notificationService;
+            _wallet = wallet;
             _dispatch = dispatch;
             _paystackClient = paystackClient;
             _ozowClient = ozowClient;
@@ -122,6 +126,8 @@ namespace ZansiHustle.Application.Payments
                 }
 
                 // Reuse any in-flight attempt — same caller, same order → same checkout session.
+                // The wallet (if any) was already applied when the first attempt was
+                // created, so we just resume it and echo the order's wallet split.
                 var existing = await _paymentRepository.GetActiveAttemptForOrderAsync(order.Id);
 
                 if (existing != null)
@@ -129,24 +135,82 @@ namespace ZansiHustle.Application.Payments
                     _logger.LogInformation(
                         "[Payments][Initialize][Svc] reuse active attempt {Code} for order {OrderCode} via {Provider}. elapsedMs={Elapsed}",
                         existing.Code, order.Code, existing.Provider, sw.ElapsedMilliseconds);
-                    return Result<InitializePaymentResponseDto>.Success(MapInitializeResponse(existing), "Resumed pending payment.");
+                    return Result<InitializePaymentResponseDto>.Success(
+                        BuildWalletResponse(existing, order, requiresExternal: true, paidWithWalletOnly: false),
+                        "Resumed pending payment.");
                 }
 
-                // Default to Ozow when caller didn't specify — it's the only currently
-                // active provider per the live capability matrix.
+                // ── Wallet-as-payment (server-authoritative) ─────────────────────
+                // Apply wallet balance toward the order BEFORE the gateway. This
+                // HOLDS the amount via the ledger (idempotent per order) and tells us
+                // the remaining external amount. Frontend-suggested amounts are only
+                // a hint — the backend clamps to min(requested, balance, total).
+                var (walletApplied, externalDue) = await _wallet.ApplyToOrderAsync(
+                    buyerUserId, order.Id, order.Total, order.Currency,
+                    request.UseWallet, request.WalletAmountRequested);
+
+                if (order.WalletAmountApplied != walletApplied || order.ExternalAmountDue != externalDue)
+                {
+                    order.WalletAmountApplied = walletApplied;
+                    order.ExternalAmountDue = externalDue;
+                    order.UpdatedAtUtc = DateTime.UtcNow;
+                    _orderRepository.Update(order);
+                    await _orderRepository.SaveChangesAsync();
+                }
+
+                _logger.LogInformation(
+                    "[Payments][Initialize][Svc] wallet split orderId={OrderId} total={Total} walletApplied={Wallet} externalDue={External} elapsedMs={Elapsed}",
+                    order.Id, order.Total, walletApplied, externalDue, sw.ElapsedMilliseconds);
+
+                // CASE B — wallet covers the full amount → mark Paid through the same
+                // paid-transition path used after Ozow, and skip the gateway entirely.
+                if (walletApplied > 0m && externalDue <= 0m)
+                {
+                    var walletResult = await MarkOrderPaidByWalletAsync(order, walletApplied);
+                    _logger.LogInformation(
+                        "[Payments][Initialize][Svc] paid-by-wallet orderId={OrderId} amount={Amount} elapsedMs={Elapsed}",
+                        order.Id, walletApplied, sw.ElapsedMilliseconds);
+                    return walletResult;
+                }
+
+                // CASE A / C — gateway charges the external amount due (== order.Total
+                // when no wallet applied). Default to Ozow when unspecified.
                 var providerName = ResolveProvider(request.Provider);
 
                 _logger.LogInformation(
-                    "[Payments][Initialize][Svc] dispatch provider={Provider} orderId={OrderId} orderCode={OrderCode} amount={Amount} elapsedMs={Elapsed}",
-                    providerName, order.Id, order.Code, order.Total, sw.ElapsedMilliseconds);
+                    "[Payments][Initialize][Svc] dispatch provider={Provider} orderId={OrderId} orderCode={OrderCode} chargeAmount={Amount} elapsedMs={Elapsed}",
+                    providerName, order.Id, order.Code, externalDue, sw.ElapsedMilliseconds);
 
                 Result<InitializePaymentResponseDto> result = providerName switch
                 {
-                    PaymentProvider.Ozow => await InitializeOzowAsync(order, buyerUserId, cancellationToken),
-                    PaymentProvider.Yoco => await InitializeYocoAsync(order, buyerUserId, cancellationToken),
-                    PaymentProvider.Paystack => await InitializePaystackAsync(order, buyerUserId, request.CallbackUrl, cancellationToken),
+                    PaymentProvider.Ozow => await InitializeOzowAsync(order, buyerUserId, externalDue, cancellationToken),
+                    PaymentProvider.Yoco => await InitializeYocoAsync(order, buyerUserId, externalDue, cancellationToken),
+                    PaymentProvider.Paystack => await InitializePaystackAsync(order, buyerUserId, externalDue, request.CallbackUrl, cancellationToken),
                     _ => Result<InitializePaymentResponseDto>.Failure(ErrorCodes.BadRequest, $"Unknown payment provider '{providerName}'.")
                 };
+
+                // If the gateway init FAILED but we already held wallet funds, reverse
+                // the hold so the money is never stranded.
+                if (!result.IsSuccess && walletApplied > 0m)
+                {
+                    await _wallet.ReverseOrderPaymentDebitAsync(buyerUserId, order.Id);
+                    order.WalletAmountApplied = 0m;
+                    order.ExternalAmountDue = null;
+                    order.UpdatedAtUtc = DateTime.UtcNow;
+                    _orderRepository.Update(order);
+                    await _orderRepository.SaveChangesAsync();
+                    _logger.LogWarning(
+                        "[Payments][Initialize][Svc] gateway init failed — reversed wallet hold for order {OrderId}.", order.Id);
+                }
+                else if (result.IsSuccess && result.Data is not null)
+                {
+                    // Echo the wallet split on the success response.
+                    result.Data.TotalAmount = order.Total;
+                    result.Data.WalletAmountApplied = walletApplied;
+                    result.Data.ExternalAmountDue = externalDue;
+                    result.Data.RequiresExternalPayment = true;
+                    result.Data.PaidWithWalletOnly = false;
+                }
 
                 _logger.LogInformation(
                     "[Payments][Initialize][Svc] done provider={Provider} success={Success} code={Code} orderId={OrderId} elapsedMs={Elapsed}",
@@ -190,6 +254,7 @@ namespace ZansiHustle.Application.Payments
         private async Task<Result<InitializePaymentResponseDto>> InitializePaystackAsync(
             Order order,
             Guid buyerUserId,
+            decimal amountToCharge,
             string? callbackUrl,
             CancellationToken cancellationToken)
         {
@@ -208,7 +273,7 @@ namespace ZansiHustle.Application.Payments
                 OrderId = order.Id,
                 UserId = buyerUserId,
                 Provider = PaymentProvider.Paystack,
-                Amount = order.Total,
+                Amount = amountToCharge,
                 Currency = string.IsNullOrWhiteSpace(order.Currency) ? "ZAR" : order.Currency,
                 Status = PaymentTransactionStatus.Initialized,
                 CreatedAtUtc = DateTime.UtcNow
@@ -264,6 +329,7 @@ namespace ZansiHustle.Application.Payments
         private async Task<Result<InitializePaymentResponseDto>> InitializeOzowAsync(
             Order order,
             Guid buyerUserId,
+            decimal amountToCharge,
             CancellationToken cancellationToken)
         {
             if (!_ozowClient.IsConfigured)
@@ -307,8 +373,8 @@ namespace ZansiHustle.Application.Payments
             // identifiable in admin/reporting views.
             var uatTestMode = _ozowClient.UatTestMode;
             var chargedAmount = uatTestMode
-                ? Math.Min(order.Total, _ozowClient.UatTestAmount)
-                : order.Total;
+                ? Math.Min(amountToCharge, _ozowClient.UatTestAmount)
+                : amountToCharge;
             // UAT-TEST prefix uses underscores too (see GenerateCode rationale).
             var paymentCode = uatTestMode ? "UAT_TEST_" + GenerateCode() : GenerateCode();
 
@@ -438,6 +504,7 @@ namespace ZansiHustle.Application.Payments
         private async Task<Result<InitializePaymentResponseDto>> InitializeYocoAsync(
             Order order,
             Guid buyerUserId,
+            decimal amountToCharge,
             CancellationToken cancellationToken)
         {
             if (!_yocoClient.IsConfigured)
@@ -449,8 +516,8 @@ namespace ZansiHustle.Application.Payments
             // Same model as Ozow: cap amount, tag the code, mark IsTest.
             var uatTestMode = _yocoClient.UatTestMode;
             var chargedAmount = uatTestMode
-                ? Math.Min(order.Total, _yocoClient.UatTestAmount)
-                : order.Total;
+                ? Math.Min(amountToCharge, _yocoClient.UatTestAmount)
+                : amountToCharge;
             // UAT-TEST prefix uses underscores too (see GenerateCode rationale).
             var paymentCode = uatTestMode ? "UAT_TEST_" + GenerateCode() : GenerateCode();
 
@@ -684,6 +751,56 @@ namespace ZansiHustle.Application.Payments
             {
                 _logger.LogError(ex, "VerifyAsync failed for reference {Reference}.", reference);
                 return Result<PaymentDto>.Failure(ErrorCodes.Exception, $"Verify failed. {ex.Message}");
+            }
+        }
+
+        // ─── Cancel (buyer-initiated) ────────────────────────────────────────
+
+        /// <inheritdoc />
+        public async Task<Result<PaymentDto>> CancelAsync(Guid userId, string reference, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(reference))
+                    return Result<PaymentDto>.Failure(ErrorCodes.BadRequest, "Reference is required.");
+
+                var payment = await _paymentRepository.GetByProviderReferenceAsync(reference)
+                              ?? await _paymentRepository.GetByCodeAsync(reference);
+
+                if (payment is null)
+                    return Result<PaymentDto>.Failure(ErrorCodes.NotFound, "Payment not found.");
+
+                if (payment.UserId != userId)
+                    return Result<PaymentDto>.Failure(ErrorCodes.Forbidden, "You do not have permission to cancel this payment.");
+
+                // Never undo a settled payment — the wallet debit must stand.
+                if (payment.Status == PaymentTransactionStatus.Succeeded
+                    || payment.Status == PaymentTransactionStatus.Refunded)
+                    return Result<PaymentDto>.Success(MapDto(payment), "Payment already settled.");
+
+                // Idempotent — already cancelled/failed (and any wallet hold reversed).
+                if (payment.Status == PaymentTransactionStatus.Cancelled
+                    || payment.Status == PaymentTransactionStatus.Failed)
+                    return Result<PaymentDto>.Success(MapDto(payment), "Payment already cancelled.");
+
+                payment.Status = PaymentTransactionStatus.Cancelled;
+                payment.CancelledAtUtc = DateTime.UtcNow;
+                payment.FailureReason ??= "Cancelled by buyer.";
+                payment.UpdatedAtUtc = DateTime.UtcNow;
+                _paymentRepository.Update(payment);
+
+                // Reverses any wallet hold for the order + releases pending bookings.
+                await MarkOrderPaymentFailedAsync(payment);
+                await _paymentRepository.SaveChangesAsync();
+
+                var refreshed = await _paymentRepository.GetByIdAsync(payment.Id);
+                _logger.LogInformation("[Payments][Cancel] payment {Code} cancelled by buyer.", payment.Code);
+                return Result<PaymentDto>.Success(MapDto(refreshed ?? payment), "Payment cancelled.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "CancelAsync failed for reference {Reference}.", reference);
+                return Result<PaymentDto>.Failure(ErrorCodes.Exception, "Failed to cancel payment.");
             }
         }
 
@@ -1443,6 +1560,54 @@ namespace ZansiHustle.Application.Payments
         }
 
         /// <summary>
+        /// Full-wallet settlement (CASE B): create a Succeeded "Wallet" payment row
+        /// and run the SAME paid-transition path as a gateway success — so bookings
+        /// flip to Requested, the seller is notified, and (for product orders with a
+        /// selected quote) the dispatch shipment is created. No gateway is contacted.
+        /// </summary>
+        private async Task<Result<InitializePaymentResponseDto>> MarkOrderPaidByWalletAsync(Order order, decimal walletAmount)
+        {
+            var nowUtc = DateTime.UtcNow;
+            var payment = new Payment
+            {
+                Id = Guid.NewGuid(),
+                Code = GenerateCode(),
+                OrderId = order.Id,
+                UserId = order.BuyerUserId,
+                Provider = PaymentProvider.Wallet,
+                Amount = walletAmount,
+                Currency = string.IsNullOrWhiteSpace(order.Currency) ? "ZAR" : order.Currency,
+                Status = PaymentTransactionStatus.Succeeded,
+                PaidAtUtc = nowUtc,
+                ChannelUsed = "Wallet",
+                CreatedAtUtc = nowUtc,
+                UpdatedAtUtc = nowUtc
+            };
+            await _paymentRepository.AddAsync(payment);
+
+            await AdvanceOrderOnPaidAsync(payment);
+
+            await _paymentRepository.SaveChangesAsync();
+
+            return Result<InitializePaymentResponseDto>.Success(
+                BuildWalletResponse(payment, order, requiresExternal: false, paidWithWalletOnly: true),
+                "Paid with wallet.");
+        }
+
+        /// <summary>Base init response + the order's wallet-payment breakdown.</summary>
+        private InitializePaymentResponseDto BuildWalletResponse(
+            Payment p, Order order, bool requiresExternal, bool paidWithWalletOnly)
+        {
+            var dto = MapInitializeResponse(p);
+            dto.TotalAmount = order.Total;
+            dto.WalletAmountApplied = order.WalletAmountApplied;
+            dto.ExternalAmountDue = order.ExternalAmountDue ?? (order.Total - order.WalletAmountApplied);
+            dto.RequiresExternalPayment = requiresExternal;
+            dto.PaidWithWalletOnly = paidWithWalletOnly;
+            return dto;
+        }
+
+        /// <summary>
         /// Payment succeeded → promote this order's PendingPayment bookings to
         /// <see cref="ServiceBookingStatus.Requested"/> (paid, awaiting provider
         /// acceptance — NOT Confirmed, which wrongly implied the seller had
@@ -1486,6 +1651,18 @@ namespace ZansiHustle.Application.Payments
             if (order.PaymentStatus != PaymentStatus.Failed)
             {
                 order.PaymentStatus = PaymentStatus.Failed;
+                order.UpdatedAtUtc = DateTime.UtcNow;
+                _orderRepository.Update(order);
+            }
+
+            // Reverse any wallet hold for this order (a split/partial payment whose
+            // external leg failed or was cancelled) so the held balance is restored.
+            // Idempotent — safe under webhook/verify/cancel retries.
+            if (order.WalletAmountApplied > 0m)
+            {
+                await _wallet.ReverseOrderPaymentDebitAsync(order.BuyerUserId, order.Id);
+                order.WalletAmountApplied = 0m;
+                order.ExternalAmountDue = null;
                 order.UpdatedAtUtc = DateTime.UtcNow;
                 _orderRepository.Update(order);
             }

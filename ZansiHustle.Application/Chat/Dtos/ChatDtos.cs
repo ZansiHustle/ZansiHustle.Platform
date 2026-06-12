@@ -57,6 +57,16 @@ namespace ZansiHustle.Application.Chat.Dtos
         /// <summary>Booking start (UTC) when this is a service-booking conversation.</summary>
         public DateTime? BookingStartAtUtc { get; set; }
 
+        // ── Lifecycle (T4 Active/Closed grouping) ───────────────────
+        /// <summary>Normalised service-booking status when this is a service
+        /// conversation (Requested/Accepted/InProgress/Completed/Cancelled/
+        /// Rejected); null for marketplace/product conversations.</summary>
+        public string? ServiceBookingStatus { get; set; }
+        /// <summary>True when the conversation is closed/read-only: a terminal
+        /// service booking (Completed/Cancelled/Rejected) OR the conversation's
+        /// own IsClosed flag. Drives the Active/Closed inbox chips.</summary>
+        public bool IsClosed { get; set; }
+
         public DateTime CreatedAtUtc { get; set; }
         public DateTime? LastMessageAtUtc { get; set; }
         public string? LastMessagePreview { get; set; }
@@ -137,6 +147,16 @@ namespace ZansiHustle.Application.Chat.Dtos
     {
         public List<MessageDto> Messages { get; set; } = new();
         public bool HasMore { get; set; }
+
+        // ── Closed / read-only (T5) ─────────────────────────────────
+        /// <summary>True when the conversation is read-only — the thread shows a
+        /// closed banner and hides the composer. Set for a terminal service
+        /// booking (Completed/Cancelled/Rejected) or the conversation's own
+        /// IsClosed flag.</summary>
+        public bool IsClosed { get; set; }
+        /// <summary>Why it's closed — "Completed" / "Cancelled" / "Rejected" /
+        /// "Closed" — so the client can show the right banner copy. Null when open.</summary>
+        public string? ClosedReason { get; set; }
     }
 
     /// <summary>

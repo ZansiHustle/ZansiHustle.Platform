@@ -29,6 +29,12 @@ namespace ZansiHustle.Application.Orders.Dtos
         public decimal Total { get; set; }
         public string Currency { get; set; } = "ZAR";
 
+        // ── Payment composition (wallet-as-payment). 0/null when no wallet used. ──
+        /// <summary>Wallet balance applied toward this order.</summary>
+        public decimal WalletAmountApplied { get; set; }
+        /// <summary>Amount charged/charged-due via the external gateway (Total − wallet).</summary>
+        public decimal? ExternalAmountDue { get; set; }
+
         public string? DeliveryAddress { get; set; }
         public string? Notes { get; set; }
         public string? CancellationReason { get; set; }

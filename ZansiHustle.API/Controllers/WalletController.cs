@@ -49,5 +49,30 @@ namespace ZansiHustle.API.Controllers
 
             return ToActionResult(await _walletService.GetTransactionsAsync(userId.Value, take));
         }
+
+        /// <summary>Create a manual withdrawal request — holds the amount against the
+        /// wallet balance. No automated payout; reviewed manually.</summary>
+        [HttpPost("withdrawals")]
+        [ProducesResponseType(typeof(Result<WithdrawalRequestDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> RequestWithdrawal([FromBody] CreateWithdrawalRequestDto request)
+        {
+            var userId = _currentUserService.UserId;
+            if (!userId.HasValue)
+                return ToActionResult(Result<WithdrawalRequestDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            return ToActionResult(await _walletService.RequestWithdrawalAsync(userId.Value, request ?? new CreateWithdrawalRequestDto()));
+        }
+
+        /// <summary>The current user's withdrawal requests (account number masked).</summary>
+        [HttpGet("withdrawals")]
+        [ProducesResponseType(typeof(Result<List<WithdrawalRequestDto>>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetWithdrawals([FromQuery] int take = 50)
+        {
+            var userId = _currentUserService.UserId;
+            if (!userId.HasValue)
+                return ToActionResult(Result<List<WithdrawalRequestDto>>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            return ToActionResult(await _walletService.GetWithdrawalsAsync(userId.Value, take));
+        }
     }
 }

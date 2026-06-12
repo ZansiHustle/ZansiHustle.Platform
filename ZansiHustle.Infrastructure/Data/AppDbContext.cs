@@ -149,6 +149,7 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     // for a future scoring layer. Configs auto-applied below.
     public DbSet<Wallet> Wallets => Set<Wallet>();
     public DbSet<WalletTransaction> WalletTransactions => Set<WalletTransaction>();
+    public DbSet<WalletWithdrawalRequest> WalletWithdrawalRequests => Set<WalletWithdrawalRequest>();
     public DbSet<TrustEvent> TrustEvents => Set<TrustEvent>();
 
     public DbSet<Payment> Payments => Set<Payment>();

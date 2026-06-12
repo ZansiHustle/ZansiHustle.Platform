@@ -22,9 +22,25 @@ namespace ZansiHustle.Application.Payments.Dtos
         /// </summary>
         public string? AuthorizationUrl { get; set; }
 
+        /// <summary>The external amount the gateway will charge (== ExternalAmountDue).
+        /// For a full-wallet order this is 0 and there is no AuthorizationUrl.</summary>
         public decimal Amount { get; set; }
         public string Currency { get; set; } = "ZAR";
         public PaymentTransactionStatus Status { get; set; }
+
+        // ── Wallet-as-payment breakdown ──────────────────────────────────────
+        /// <summary>The order total being settled.</summary>
+        public decimal TotalAmount { get; set; }
+        /// <summary>Wallet balance applied (held). 0 when wallet not used.</summary>
+        public decimal WalletAmountApplied { get; set; }
+        /// <summary>Remaining amount the gateway must charge (Total − wallet).</summary>
+        public decimal ExternalAmountDue { get; set; }
+        /// <summary>True when the buyer still needs to complete an external payment
+        /// (open AuthorizationUrl). False for a full-wallet order.</summary>
+        public bool RequiresExternalPayment { get; set; }
+        /// <summary>True when the order was settled entirely from wallet — already
+        /// Paid, no gateway step. The client shows success and skips the browser.</summary>
+        public bool PaidWithWalletOnly { get; set; }
 
         /// <summary>
         /// Paystack Public Key echoed back so in-app native checkout (via a

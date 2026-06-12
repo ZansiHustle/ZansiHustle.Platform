@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using ZansiHustle.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using ZansiHustle.Infrastructure.Data;
 namespace ZansiHustle.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260612101129_AddOrderWalletPayment")]
+    partial class AddOrderWalletPayment
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -3416,7 +3419,7 @@ namespace ZansiHustle.Infrastructure.Migrations
 
                     b.HasIndex("Type", "ReferenceType", "ReferenceId")
                         .IsUnique()
-                        .HasFilter("[ReferenceId] IS NOT NULL AND [Type] NOT IN (100, 101)");
+                        .HasFilter("[ReferenceId] IS NOT NULL");
 
                     b.ToTable("WalletTransactions", (string)null);
                 });

@@ -18,5 +18,16 @@ namespace ZansiHustle.Application.Payments.Dtos
 
         /// <summary>Optional — client may pass a preferred return/callback URL; falls back to the server default.</summary>
         public string? CallbackUrl { get; set; }
+
+        // ── Wallet-as-payment intent (server is the source of truth) ─────────
+        /// <summary>True to apply wallet balance toward this order before charging
+        /// the external gateway for the remainder.</summary>
+        public bool UseWallet { get; set; }
+
+        /// <summary>Preferred wallet amount to apply. The backend clamps it to
+        /// min(requested, availableBalance, orderTotal). Null/0 with UseWallet=true
+        /// means "use the maximum available". Frontend-calculated amounts are NEVER
+        /// trusted — this is only a hint.</summary>
+        public decimal? WalletAmountRequested { get; set; }
     }
 }

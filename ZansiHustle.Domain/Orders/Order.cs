@@ -37,6 +37,16 @@ namespace ZansiHustle.Domain.Orders
         public decimal Total { get; set; }
         public string Currency { get; set; } = "ZAR";
 
+        // ── Wallet-as-payment (additive, default 0/none) ─────────────────────
+        // Server-authoritative split of how Total is settled. WalletAmountApplied
+        // is held via a WalletPaymentDebit ledger entry; ExternalAmountDue is what
+        // the gateway (Ozow) charges. Both 0/null for a plain full-gateway order,
+        // exactly as before wallet payment existed.
+        /// <summary>Wallet balance applied toward this order (held via the ledger).</summary>
+        public decimal WalletAmountApplied { get; set; }
+        /// <summary>Amount the external gateway must charge (Total − wallet). Null = not computed.</summary>
+        public decimal? ExternalAmountDue { get; set; }
+
         // ── ZansiDispatch delivery (additive, nullable, backward-compatible) ──
         // Set only when checkout passed a selected ZansiDispatch quote option.
         // When null the order has no managed delivery fee and Total == Subtotal,

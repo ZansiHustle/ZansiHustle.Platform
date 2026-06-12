@@ -580,6 +580,8 @@ namespace ZansiHustle.Application.Orders
                 DeliveryFee = order.DeliveryFee,
                 Total = order.Total,
                 Currency = order.Currency,
+                WalletAmountApplied = order.WalletAmountApplied,
+                ExternalAmountDue = order.ExternalAmountDue,
                 DeliveryAddress = order.DeliveryAddress,
                 Notes = order.Notes,
                 CancellationReason = order.CancellationReason,

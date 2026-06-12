@@ -48,6 +48,13 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Orders
             builder.Property(x => x.DeliveryFee)
                 .HasPrecision(18, 2);
 
+            // Wallet-as-payment split (additive). Default 0 / null on every order
+            // that didn't use wallet balance.
+            builder.Property(x => x.WalletAmountApplied)
+                .HasPrecision(18, 2);
+            builder.Property(x => x.ExternalAmountDue)
+                .HasPrecision(18, 2);
+
             builder.Property(x => x.Currency)
                 .IsRequired()
                 .HasMaxLength(8);

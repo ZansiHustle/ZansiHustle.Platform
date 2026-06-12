@@ -122,7 +122,17 @@ public static class ServiceExtensions
     /// </summary>
     public static IServiceCollection AddCoreServices(this IServiceCollection services)
     {
-        services.AddControllers();
+        services
+            .AddControllers()
+            .AddJsonOptions(options =>
+            {
+                // Serialize all DateTime as UTC with a trailing 'Z' so clients never
+                // parse a UTC instant as local time (the "2 hours behind" bug). EF
+                // reads datetime2 back as Kind=Unspecified, which would otherwise drop
+                // the 'Z'. Central, additive — only changes the serialized format.
+                options.JsonSerializerOptions.Converters.Add(new ZansiHustle.API.Json.UtcDateTimeConverter());
+                options.JsonSerializerOptions.Converters.Add(new ZansiHustle.API.Json.NullableUtcDateTimeConverter());
+            });
         services.AddEndpointsApiExplorer();
         services.AddHttpContextAccessor();
 
