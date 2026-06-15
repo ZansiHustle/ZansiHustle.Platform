@@ -49,6 +49,13 @@ namespace ZansiHustle.Application.ZansiDispatch
         Task<Result<ShipmentDto>> CreateShipmentFromQuoteAsync(Guid adminUserId, CreateShipmentFromQuoteRequestDto request, CancellationToken ct = default);
         /// <summary>Polls the provider, records events, and returns the current tracking timeline.</summary>
         Task<Result<TrackingResultDto>> TrackShipmentAsync(Guid shipmentId, CancellationToken ct = default);
+        /// <summary>
+        /// CUSTOMER-SAFE read of an order's dispatch state from STORED data only
+        /// (no live provider poll, no seller/cost/reconciliation fields). Returns
+        /// a snapshot with <c>HasShipment=false</c> when dispatch hasn't started.
+        /// Callers must enforce buyer ownership before calling this.
+        /// </summary>
+        Task<Result<OrderDispatchSnapshotDto>> GetOrderDispatchSnapshotAsync(Guid orderId, CancellationToken ct = default);
         /// <summary>Cancels a shipment with the provider (when booked) and internally.</summary>
         Task<Result<ShipmentDto>> CancelShipmentAsync(Guid adminUserId, Guid shipmentId, CancelShipmentRequestDto? request, CancellationToken ct = default);
         /// <summary>Fetches the signed label/waybill URL from the provider (admin/ops only).</summary>

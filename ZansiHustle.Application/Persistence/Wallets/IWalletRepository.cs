@@ -14,6 +14,10 @@ namespace ZansiHustle.Application.Persistence.Wallets
         /// <summary>Newest-first ledger entries for a user, capped at <paramref name="take"/>.</summary>
         Task<List<WalletTransaction>> GetTransactionsAsync(Guid userId, int take);
 
+        /// <summary>ALL ledger entries for a user, newest-first (no cap). Used by the
+        /// customer finance overview which combines the full ledger with orders.</summary>
+        Task<List<WalletTransaction>> GetAllTransactionsAsync(Guid userId);
+
         /// <summary>
         /// True when a Completed transaction of this type already references the
         /// given (referenceType, referenceId) — the idempotency guard that stops

@@ -34,6 +34,15 @@ namespace ZansiHustle.Infrastructure.Persistence.Wallets
                 .ToListAsync();
         }
 
+        public async Task<List<WalletTransaction>> GetAllTransactionsAsync(Guid userId)
+        {
+            return await _context.Set<WalletTransaction>()
+                .AsNoTracking()
+                .Where(t => t.UserId == userId)
+                .OrderByDescending(t => t.CreatedAtUtc)
+                .ToListAsync();
+        }
+
         public async Task<bool> HasCompletedReferenceAsync(
             WalletTransactionType type, string referenceType, Guid referenceId)
         {

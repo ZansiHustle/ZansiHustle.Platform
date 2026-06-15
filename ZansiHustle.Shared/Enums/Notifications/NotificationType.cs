@@ -38,6 +38,19 @@ public enum NotificationType
     /// <summary>Customer cancelled a booking before acceptance — sent to the provider.</summary>
     BookingCancelledByCustomer = 10,
 
+    // ── Product order acceptance lifecycle ──────────────────────────────────
+    /// <summary>A buyer paid for a PRODUCT order — sent to the seller (new request).</summary>
+    SellerOrderRequested = 11,
+
+    /// <summary>Payment secured, awaiting seller confirmation — sent to the buyer.</summary>
+    OrderAwaitingSellerAcceptance = 12,
+
+    /// <summary>Seller accepted the product order — sent to the buyer.</summary>
+    OrderAcceptedBySeller = 13,
+
+    /// <summary>Seller rejected the product order (refund issued) — sent to the buyer.</summary>
+    OrderRejectedBySeller = 14,
+
     /// <summary>Anything without a specific actionable target.</summary>
     Generic = 100
 }

@@ -2,6 +2,7 @@ using System;
 using System.Threading.Tasks;
 using ZansiHustle.Application.Notifications.Dtos;
 using ZansiHustle.Domain.Notifications;
+using ZansiHustle.Domain.Orders;
 using ZansiHustle.Domain.ServiceBookings;
 using ZansiHustle.Shared.Enums.Notifications;
 using ZansiHustle.Shared.Results;
@@ -52,5 +53,15 @@ namespace ZansiHustle.Application.Notifications
             NotificationType type,
             string title,
             string body);
+
+        // ── Product order acceptance lifecycle ──────────────────────────────────
+        /// <summary>Seller alert when a buyer pays for a PRODUCT order (→ AwaitingSellerAcceptance).</summary>
+        Task NotifySellerProductOrderRequestedAsync(Order order);
+        /// <summary>Customer alert: payment secured, awaiting seller confirmation.</summary>
+        Task NotifyCustomerOrderAwaitingAcceptanceAsync(Order order);
+        /// <summary>Customer alert: seller accepted the product order.</summary>
+        Task NotifyCustomerOrderAcceptedAsync(Order order);
+        /// <summary>Customer alert: seller rejected the product order (refund issued).</summary>
+        Task NotifyCustomerOrderRejectedAsync(Order order, string? reason);
     }
 }

@@ -108,6 +108,61 @@ namespace ZansiHustle.API.Controllers
         }
 
         /// <summary>
+        /// Customer-facing order tracking. Returns the order/payment/dispatch
+        /// status and a checkpoint timeline. Privacy-safe: shop display name +
+        /// the buyer's delivery destination only — no seller contact/address.
+        /// The caller must be the buyer or the merchant owner.
+        /// </summary>
+        [HttpGet("{id:guid}/tracking")]
+        [ProducesResponseType(typeof(Result<OrderTrackingDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetTracking(Guid id)
+        {
+            var userId = _currentUserService.UserId;
+
+            if (!userId.HasValue)
+                return ToActionResult(Result<OrderTrackingDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            var result = await _orderService.GetTrackingAsync(userId.Value, id);
+            return ToActionResult(result);
+        }
+
+        /// <summary>
+        /// Seller accepts a paid product order awaiting acceptance
+        /// (AwaitingSellerAcceptance → Confirmed). Only the merchant owner can
+        /// accept; this is what triggers dispatch preparation.
+        /// </summary>
+        [HttpPost("{id:guid}/accept")]
+        [ProducesResponseType(typeof(Result<OrderDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> Accept(Guid id)
+        {
+            var userId = _currentUserService.UserId;
+
+            if (!userId.HasValue)
+                return ToActionResult(Result<OrderDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            var result = await _orderService.AcceptAsync(userId.Value, id);
+            return ToActionResult(result);
+        }
+
+        /// <summary>
+        /// Seller rejects a paid product order awaiting acceptance
+        /// (AwaitingSellerAcceptance → Cancelled). Requires a reason; refunds the
+        /// customer's wallet. Only the merchant owner can reject.
+        /// </summary>
+        [HttpPost("{id:guid}/reject")]
+        [ProducesResponseType(typeof(Result<OrderDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> Reject(Guid id, [FromBody] RejectOrderRequestDto request)
+        {
+            var userId = _currentUserService.UserId;
+
+            if (!userId.HasValue)
+                return ToActionResult(Result<OrderDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            var result = await _orderService.RejectAsync(userId.Value, id, request ?? new RejectOrderRequestDto());
+            return ToActionResult(result);
+        }
+
+        /// <summary>
         /// Updates the order status. Buyers can only cancel their own pending orders;
         /// sellers transition through Pending → Confirmed → InProgress → Completed
         /// (with Cancelled available at any non-terminal step).

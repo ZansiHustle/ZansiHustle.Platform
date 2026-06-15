@@ -70,4 +70,30 @@ namespace ZansiHustle.Application.ZansiDispatch.Dtos
         public bool ShipmentMatched { get; set; }
         public int EventsRecorded { get; set; }
     }
+
+    /// <summary>
+    /// CUSTOMER-SAFE dispatch snapshot for an order, read from STORED shipment
+    /// state + events (no live provider poll, no reconciliation/cost fields, no
+    /// seller pickup address, no raw provider payload). Consumed by the order
+    /// tracking endpoint to build the buyer timeline. <see cref="HasShipment"/>
+    /// is false when dispatch hasn't started yet (all other fields default).
+    /// </summary>
+    public sealed class OrderDispatchSnapshotDto
+    {
+        public bool HasShipment { get; set; }
+        public ZansiDispatchShipmentStatus? Status { get; set; }
+        /// <summary>Provider label (e.g. "CourierGuy"). Null until dispatch starts.</summary>
+        public string? TrackingProvider { get; set; }
+        public string? TrackingNumber { get; set; }
+        public DateTime? DeliveredAt { get; set; }
+        public List<OrderDispatchEventDto> Events { get; set; } = new();
+    }
+
+    /// <summary>A single customer-safe dispatch checkpoint (mapped status + time).</summary>
+    public sealed class OrderDispatchEventDto
+    {
+        public ZansiDispatchShipmentStatus InternalStatus { get; set; }
+        public string? Message { get; set; }
+        public DateTime EventTime { get; set; }
+    }
 }

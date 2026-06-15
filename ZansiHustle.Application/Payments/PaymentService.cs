@@ -1584,7 +1584,10 @@ namespace ZansiHustle.Application.Payments
 
         private async Task AdvanceOrderOnPaidAsync(Payment payment)
         {
-            var order = payment.Order ?? await _orderRepository.GetByIdAsync(payment.OrderId);
+            // Load via the repository (includes Items + Merchant) so we can tell a
+            // product order from a service order and resolve the merchant owner for
+            // the seller notification. Fall back to the payment's loaded order.
+            var order = await _orderRepository.GetByIdAsync(payment.OrderId) ?? payment.Order;
 
             if (order is null) return;
 
@@ -1596,12 +1599,33 @@ namespace ZansiHustle.Application.Payments
                 orderChanged = true;
             }
 
-            // Advance the order status only if still Pending — never regress
-            // a seller who's already moved it forward (Confirmed/InProgress/Completed).
+            // Advance the order status only on the FIRST paid signal (still Pending)
+            // — never regress a seller who already moved it forward. This guard also
+            // makes the notifications below fire exactly once (webhook-retry safe).
+            var justBecamePaid = false;
             if (order.Status == OrderStatus.Pending)
             {
-                order.Status = OrderStatus.Confirmed;
-                order.ConfirmedAtUtc = DateTime.UtcNow;
+                var isServiceOrder = order.Items.Any(i =>
+                    i.ListingType == ZansiHustle.Shared.Enums.Listings.ListingType.Service);
+
+                if (isServiceOrder)
+                {
+                    // Service orders carry their own Requested→Accepted booking
+                    // lifecycle (SyncServiceBookingsOnPaidAsync below); the order-
+                    // level status is cosmetic for services, so keep Confirmed.
+                    order.Status = OrderStatus.Confirmed;
+                    order.ConfirmedAtUtc = DateTime.UtcNow;
+                }
+                else
+                {
+                    // PRODUCT ORDER: "Paid" means the customer's money is secured —
+                    // it does NOT mean the seller confirmed stock/fulfilment. Park at
+                    // AwaitingSellerAcceptance (customer "Pending" / seller "New")
+                    // until the seller explicitly accepts. Dispatch is intentionally
+                    // NOT created here — it waits for acceptance (OrderService.AcceptAsync).
+                    order.Status = OrderStatus.AwaitingSellerAcceptance;
+                    justBecamePaid = true;
+                }
                 orderChanged = true;
             }
 
@@ -1611,30 +1635,26 @@ namespace ZansiHustle.Application.Payments
                 _orderRepository.Update(order);
             }
 
-            // Confirm any service booking on this order — PendingPayment → Confirmed
-            // so the slot is now firmly held (no longer dependent on the hold window).
+            // Confirm any service booking on this order — PendingPayment → Requested
+            // so the slot is now firmly held (notifies the seller for services).
             await SyncServiceBookingsOnPaidAsync(payment.OrderId);
 
-            // Create the ZansiDispatch shipment + QuoteCharged ledger NOW (on
-            // payment success), not at order creation — so unpaid/failed orders
-            // never produce PendingDispatch shipments or "charged" ledger noise.
-            // Idempotent: a no-op if a shipment already exists, so repeated
-            // provider signals / webhook retries can't duplicate. Best-effort:
-            // never throws into the payment flow. Only product orders with a
-            // selected delivery option create a shipment.
-            if (order.DeliveryQuoteOptionId is Guid deliveryOptionId)
+            // PRODUCT order just became paid → tell the seller (new request) and the
+            // customer (payment secured, awaiting confirmation). Best-effort; the
+            // notification service swallows delivery failures. NO dispatch yet.
+            if (justBecamePaid)
             {
-                await _dispatch.CreateShipmentForPaidOrderAsync(
-                    order.Id, order.BuyerUserId, order.MerchantId, deliveryOptionId,
-                    order.DeliveryFee ?? 0m, order.DeliveryAddress);
+                await _notificationService.NotifySellerProductOrderRequestedAsync(order);
+                await _notificationService.NotifyCustomerOrderAwaitingAcceptanceAsync(order);
             }
         }
 
         /// <summary>
         /// Full-wallet settlement (CASE B): create a Succeeded "Wallet" payment row
-        /// and run the SAME paid-transition path as a gateway success — so bookings
-        /// flip to Requested, the seller is notified, and (for product orders with a
-        /// selected quote) the dispatch shipment is created. No gateway is contacted.
+        /// and run the SAME paid-transition path as a gateway success — so service
+        /// bookings flip to Requested and product orders park at
+        /// AwaitingSellerAcceptance (seller must accept before dispatch). No gateway
+        /// is contacted.
         /// </summary>
         private async Task<Result<InitializePaymentResponseDto>> MarkOrderPaidByWalletAsync(Order order, decimal walletAmount)
         {

@@ -658,6 +658,47 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             }
         }
 
+        public async Task<Result<OrderDispatchSnapshotDto>> GetOrderDispatchSnapshotAsync(Guid orderId, CancellationToken ct = default)
+        {
+            try
+            {
+                // STORED state only — no live provider poll (this is a per-open
+                // customer read; polling/webhooks keep the stored state fresh).
+                var s = await _db.ZansiDispatchShipments.AsNoTracking()
+                    .Where(x => x.OrderId == orderId)
+                    .OrderByDescending(x => x.CreatedAt)
+                    .FirstOrDefaultAsync(ct);
+
+                if (s is null)
+                    return Result<OrderDispatchSnapshotDto>.Success(new OrderDispatchSnapshotDto { HasShipment = false });
+
+                var events = await _db.ZansiDispatchShipmentEvents.AsNoTracking()
+                    .Where(e => e.ShipmentId == s.Id)
+                    .OrderBy(e => e.EventTime)
+                    .ToListAsync(ct);
+
+                return Result<OrderDispatchSnapshotDto>.Success(new OrderDispatchSnapshotDto
+                {
+                    HasShipment = true,
+                    Status = s.Status,
+                    TrackingProvider = s.ProviderType.ToString(),
+                    TrackingNumber = s.TrackingNumber,
+                    DeliveredAt = s.DeliveredAt,
+                    Events = events.Select(e => new OrderDispatchEventDto
+                    {
+                        InternalStatus = e.InternalStatus,
+                        Message = e.Message,
+                        EventTime = e.EventTime,
+                    }).ToList(),
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ZansiDispatch GetOrderDispatchSnapshot failed. OrderId={OrderId}", orderId);
+                return Result<OrderDispatchSnapshotDto>.Failure(ErrorCodes.Exception, "Could not read dispatch status.");
+            }
+        }
+
         public async Task<Result<ShipmentDto>> CancelShipmentAsync(Guid adminUserId, Guid shipmentId, CancelShipmentRequestDto? request, CancellationToken ct = default)
         {
             try

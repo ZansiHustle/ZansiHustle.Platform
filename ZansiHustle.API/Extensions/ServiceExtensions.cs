@@ -619,6 +619,14 @@ public static class ServiceExtensions
             ZansiHustle.Application.Shops.IShopProfileService,
             ZansiHustle.Application.Shops.ShopProfileService>();
         services.AddScoped<IOrderService, OrderService>();
+        // Customer financial overview (spending + combined transactions).
+        services.AddScoped<
+            ZansiHustle.Application.CustomerFinance.ICustomerFinanceService,
+            ZansiHustle.Application.CustomerFinance.CustomerFinanceService>();
+        // Seller accountability foundation (records fulfilment incidents; admin applies).
+        services.AddScoped<
+            ZansiHustle.Application.Sellers.Incidents.ISellerIncidentService,
+            ZansiHustle.Infrastructure.Sellers.SellerIncidentService>();
         services.AddScoped<IPaymentRepository, PaymentRepository>();
         services.AddScoped<IPaymentService, PaymentService>();
         services.AddScoped<IEventPlanService, EventPlanService>();

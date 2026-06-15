@@ -8,6 +8,7 @@ using ZansiHustle.Application.Notifications.Dtos;
 using ZansiHustle.Application.Persistence.Notifications;
 using ZansiHustle.Application.Realtime;
 using ZansiHustle.Domain.Notifications;
+using ZansiHustle.Domain.Orders;
 using ZansiHustle.Domain.ServiceBookings;
 using ZansiHustle.Shared.Enums.Notifications;
 using ZansiHustle.Shared.Enums.ServiceBookings;
@@ -236,6 +237,92 @@ namespace ZansiHustle.Application.Notifications
                     "[Notifications] Failed to notify booking status change for {BookingId}.", booking.Id);
             }
         }
+
+        // ─── Product order acceptance lifecycle ──────────────────────────────────
+
+        public async Task NotifySellerProductOrderRequestedAsync(Order order)
+        {
+            var sellerUserId = order.Merchant?.OwnerUserId;
+            if (sellerUserId is null || sellerUserId == Guid.Empty)
+            {
+                _logger.LogWarning(
+                    "[Notifications] Cannot notify seller for order {OrderId} — merchant owner not resolved.",
+                    order.Id);
+                return;
+            }
+            try
+            {
+                await CreateAndDispatchAsync(
+                    sellerUserId.Value,
+                    NotificationType.SellerOrderRequested,
+                    "New order to confirm",
+                    $"You have a new paid order ({order.Code}). Accept it to start fulfilment.",
+                    OrderData(order, "SellerOrder"));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Notifications] Failed to notify seller for order {OrderId}.", order.Id);
+            }
+        }
+
+        public async Task NotifyCustomerOrderAwaitingAcceptanceAsync(Order order)
+        {
+            try
+            {
+                await CreateAndDispatchAsync(
+                    order.BuyerUserId,
+                    NotificationType.OrderAwaitingSellerAcceptance,
+                    "Payment received",
+                    $"Your payment for {order.Code} is secured. We're waiting for the seller to confirm this order.",
+                    OrderData(order, "Order"));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Notifications] Failed to notify buyer (awaiting) for order {OrderId}.", order.Id);
+            }
+        }
+
+        public async Task NotifyCustomerOrderAcceptedAsync(Order order)
+        {
+            try
+            {
+                await CreateAndDispatchAsync(
+                    order.BuyerUserId,
+                    NotificationType.OrderAcceptedBySeller,
+                    "Order accepted",
+                    $"The seller accepted your order {order.Code}. Dispatch updates will appear once arranged.",
+                    OrderData(order, "Order"));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Notifications] Failed to notify buyer (accepted) for order {OrderId}.", order.Id);
+            }
+        }
+
+        public async Task NotifyCustomerOrderRejectedAsync(Order order, string? reason)
+        {
+            try
+            {
+                var tail = string.IsNullOrWhiteSpace(reason) ? "" : $" Reason: {reason.Trim()}";
+                await CreateAndDispatchAsync(
+                    order.BuyerUserId,
+                    NotificationType.OrderRejectedBySeller,
+                    "Order could not be fulfilled",
+                    $"The seller could not fulfil order {order.Code}. Your payment was refunded to your wallet.{tail}",
+                    OrderData(order, "Order"));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Notifications] Failed to notify buyer (rejected) for order {OrderId}.", order.Id);
+            }
+        }
+
+        private static object OrderData(Order o, string targetType) => new
+        {
+            targetType,
+            orderId = o.Id.ToString(),
+            code = o.Code
+        };
 
         // ─── Helpers ──────────────────────────────────────────────────────────────
 

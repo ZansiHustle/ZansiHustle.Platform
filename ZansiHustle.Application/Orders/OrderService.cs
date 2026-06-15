@@ -5,11 +5,13 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Logging;
+using ZansiHustle.Application.Notifications;
 using ZansiHustle.Application.Orders.Dtos;
 using ZansiHustle.Application.Persistence.Listings;
 using ZansiHustle.Application.Persistence.Orders;
 using ZansiHustle.Application.Persistence.ServiceBookings;
 using ZansiHustle.Application.ServiceBookings;
+using ZansiHustle.Application.Wallets;
 using ZansiHustle.Application.ZansiDispatch;
 using ZansiHustle.Application.ZansiDispatch.Dtos;
 using ZansiHustle.Domain.Identity;
@@ -18,6 +20,8 @@ using ZansiHustle.Domain.ServiceBookings;
 using ZansiHustle.Shared.Enums.Listings;
 using ZansiHustle.Shared.Enums.Orders;
 using ZansiHustle.Shared.Enums.ServiceBookings;
+using ZansiHustle.Shared.Enums.Wallets;
+using ZansiHustle.Shared.Enums.ZansiDispatch;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
 
@@ -30,15 +34,19 @@ namespace ZansiHustle.Application.Orders
         private readonly IServiceBookingRepository _serviceBookingRepository;
         private readonly UserManager<User> _userManager;
         private readonly IZansiDispatchService _dispatch;
+        private readonly IWalletService _wallet;
+        private readonly INotificationService _notifications;
         private readonly ILogger<OrderService> _logger;
 
-        public OrderService(IOrderRepository orderRepository, IListingRepository listingRepository, IServiceBookingRepository serviceBookingRepository, UserManager<User> userManager, IZansiDispatchService dispatch, ILogger<OrderService> logger)
+        public OrderService(IOrderRepository orderRepository, IListingRepository listingRepository, IServiceBookingRepository serviceBookingRepository, UserManager<User> userManager, IZansiDispatchService dispatch, IWalletService wallet, INotificationService notifications, ILogger<OrderService> logger)
         {
             _orderRepository = orderRepository;
             _listingRepository = listingRepository;
             _serviceBookingRepository = serviceBookingRepository;
             _userManager = userManager;
             _dispatch = dispatch;
+            _wallet = wallet;
+            _notifications = notifications;
             _logger = logger;
         }
 
@@ -437,6 +445,329 @@ namespace ZansiHustle.Application.Orders
             {
                 _logger.LogError(ex, "Failed to retrieve order {OrderId} for user {UserId}.", orderId, userId);
                 return Result<OrderDto>.Failure(ErrorCodes.Exception, $"Failed to retrieve order. {ex.Message}");
+            }
+        }
+
+        /// <inheritdoc />
+        public async Task<Result<OrderTrackingDto>> GetTrackingAsync(Guid userId, Guid orderId)
+        {
+            try
+            {
+                var order = await _orderRepository.GetByIdAsync(orderId);
+
+                if (order is null)
+                    return Result<OrderTrackingDto>.Failure(ErrorCodes.NotFound, "Order not found.");
+
+                if (!IsBuyerOrSeller(order, userId))
+                    return Result<OrderTrackingDto>.Failure(ErrorCodes.Forbidden, "You do not have permission to view this order.");
+
+                // Customer-safe dispatch snapshot (stored state only; no seller
+                // contact/address, no cost/reconciliation). Best-effort: a
+                // dispatch read failure degrades to the "no dispatch yet" state
+                // rather than failing the whole tracking call.
+                var snapResult = await _dispatch.GetOrderDispatchSnapshotAsync(orderId);
+                var snap = snapResult.IsSuccess ? snapResult.Data : null;
+
+                var dto = new OrderTrackingDto
+                {
+                    OrderId = order.Id,
+                    OrderCode = order.Code,
+                    CurrentOrderStatus = order.Status,
+                    PaymentStatus = order.PaymentStatus,
+                    HasDispatch = snap?.HasShipment ?? false,
+                    DispatchStatus = snap?.HasShipment == true ? snap.Status : null,
+                    TrackingProvider = snap?.HasShipment == true ? snap.TrackingProvider : null,
+                    TrackingNumber = snap?.HasShipment == true ? snap.TrackingNumber : null,
+                    TrackingUrl = null, // not surfaced to customers yet
+                    EstimatedDeliveryUtc = null, // provider ETA not stored yet
+                    DeliveredAtUtc = snap?.DeliveredAt,
+                    // Shop display name ONLY — never seller phone/address.
+                    SellerDisplayName = order.Merchant?.Name,
+                    // Buyer's delivery destination (NOT the seller pickup address).
+                    DestinationSummary = order.DeliveryAddress,
+                    Timeline = BuildTrackingTimeline(order, snap),
+                };
+
+                return Result<OrderTrackingDto>.Success(dto, "Tracking retrieved successfully.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to retrieve tracking for order {OrderId} / user {UserId}.", orderId, userId);
+                return Result<OrderTrackingDto>.Failure(ErrorCodes.Exception, $"Failed to retrieve tracking. {ex.Message}");
+            }
+        }
+
+        // ── Customer tracking timeline ───────────────────────────────────────
+        // Fixed, ordered checkpoints surfaced to the buyer. The first two are
+        // order-level (paid → seller accepted); the rest collapse the dispatch
+        // sub-states. A newly-paid order sits at "Seller accepted = Current"
+        // (waiting for the seller); dispatch can't begin before acceptance.
+        private const int StagePaid = 0;
+        private const int StageAccepted = 1;
+        private const int StageAwaitingDispatch = 2;
+        private const int StageDelivered = 6;
+        private static readonly (string Key, string Label)[] TrackingCheckpoints =
+        {
+            ("paid",             "Order paid"),
+            ("accepted",         "Seller accepted"),
+            ("awaiting_dispatch","Waiting for dispatch"),
+            ("collected",        "Collected from seller"),
+            ("in_transit",       "In transit"),
+            ("out_for_delivery", "Out for delivery"),
+            ("delivered",        "Delivered"),
+        };
+
+        /// <summary>Maps a dispatch status to its checkpoint index (2-6). Dispatch
+        /// only begins after seller acceptance, so the lowest dispatch stage is
+        /// "Waiting for dispatch" (2).</summary>
+        private static int DispatchStageIndex(ZansiDispatchShipmentStatus status) => status switch
+        {
+            ZansiDispatchShipmentStatus.PendingDispatch    => 2, // waiting for dispatch
+            ZansiDispatchShipmentStatus.PreparingPickup    => 2,
+            ZansiDispatchShipmentStatus.BookedWithCourier  => 2, // pickup arranged, not yet collected
+            ZansiDispatchShipmentStatus.PickedUp           => 3, // collected
+            ZansiDispatchShipmentStatus.InTransit          => 4, // in transit
+            ZansiDispatchShipmentStatus.OutForDelivery     => 5, // out for delivery
+            ZansiDispatchShipmentStatus.Delivered          => 6, // delivered
+            ZansiDispatchShipmentStatus.OnHold             => 2,
+            _                                              => 2,
+        };
+
+        private static bool IsFailedDispatch(ZansiDispatchShipmentStatus status) =>
+            status is ZansiDispatchShipmentStatus.Failed
+                or ZansiDispatchShipmentStatus.Cancelled
+                or ZansiDispatchShipmentStatus.Returned
+                or ZansiDispatchShipmentStatus.Exception;
+
+        /// <summary>
+        /// Builds the customer timeline from the order lifecycle + the stored
+        /// dispatch snapshot. No live polling, no seller-private data.
+        ///   • AwaitingSellerAcceptance → paid Done, "Seller accepted" Current.
+        ///   • Confirmed/InProgress (accepted) → accepted Done, dispatch stages.
+        ///   • Cancelled (seller rejected) → "Seller accepted" Failed + reason.
+        /// </summary>
+        private static List<OrderTrackingTimelineItemDto> BuildTrackingTimeline(Order order, OrderDispatchSnapshotDto? snap)
+        {
+            // "Paid-ish": Refunded means it WAS paid (then refunded on rejection).
+            var isPaidish = order.PaymentStatus == PaymentStatus.Paid
+                || order.PaymentStatus == PaymentStatus.Refunded;
+
+            int reached;
+            var failed = false;
+            string? failureMsg = null;
+
+            if (order.Status == OrderStatus.Cancelled)
+            {
+                // Seller rejected / order cancelled — it stalled at acceptance.
+                failed = true;
+                failureMsg = string.IsNullOrWhiteSpace(order.CancellationReason)
+                    ? "This order was cancelled. Any payment was refunded to your wallet."
+                    : $"{order.CancellationReason} Any payment was refunded to your wallet.";
+                reached = isPaidish ? StageAccepted : StagePaid;
+            }
+            else if (order.PaymentStatus != PaymentStatus.Paid)
+            {
+                reached = StagePaid; // payment not secured yet
+            }
+            else if (order.Status == OrderStatus.AwaitingSellerAcceptance)
+            {
+                reached = StageAccepted; // paid Done, waiting for the seller
+            }
+            else if (order.Status == OrderStatus.Completed)
+            {
+                reached = StageDelivered;
+            }
+            else
+            {
+                // Confirmed / InProgress = seller accepted. Default to "Waiting for
+                // dispatch", advancing as the dispatch snapshot progresses.
+                reached = StageAwaitingDispatch;
+                if (snap is { HasShipment: true } && snap.Status is { } st)
+                {
+                    reached = Math.Max(StageAwaitingDispatch, DispatchStageIndex(st));
+                    if (IsFailedDispatch(st))
+                    {
+                        failed = true;
+                        failureMsg = st == ZansiDispatchShipmentStatus.Returned ? "The parcel was returned. Support is on it."
+                            : st == ZansiDispatchShipmentStatus.Cancelled ? "Delivery was cancelled. Support is on it."
+                            : "There was a problem with delivery. Support is on it.";
+                    }
+                }
+            }
+
+            // occurredAt for the dispatch stages comes from the latest matching event.
+            var eventTimeByStage = new Dictionary<int, DateTime>();
+            if (snap?.Events is { Count: > 0 })
+            {
+                foreach (var ev in snap.Events)
+                {
+                    var idx = DispatchStageIndex(ev.InternalStatus);
+                    if (!eventTimeByStage.TryGetValue(idx, out var existing) || ev.EventTime > existing)
+                        eventTimeByStage[idx] = ev.EventTime;
+                }
+            }
+
+            var timeline = new List<OrderTrackingTimelineItemDto>(TrackingCheckpoints.Length);
+            for (var i = 0; i < TrackingCheckpoints.Length; i++)
+            {
+                var (key, label) = TrackingCheckpoints[i];
+
+                string status;
+                if (i < reached)
+                    status = "Done";
+                else if (i == reached)
+                    status = failed ? "Failed" : (reached == StageDelivered ? "Done" : "Current");
+                else
+                    status = "Pending";
+
+                DateTime? occurredAt = i switch
+                {
+                    StagePaid => isPaidish ? order.CreatedAtUtc : null,
+                    StageAccepted => order.ConfirmedAtUtc
+                        ?? (order.Status == OrderStatus.Cancelled ? order.CancelledAtUtc : null),
+                    StageDelivered => snap?.DeliveredAt
+                        ?? (order.Status == OrderStatus.Completed ? order.CompletedAtUtc : null),
+                    _ => eventTimeByStage.TryGetValue(i, out var t) ? t : (DateTime?)null,
+                };
+
+                // Friendly per-stage copy at the active step.
+                string? description = null;
+                if (failed && i == reached)
+                    description = failureMsg;
+                else if (status == "Current" && i == StageAccepted)
+                    description = "Your payment is secured. We're waiting for the seller to confirm this order.";
+                else if (status == "Current" && i == StageAwaitingDispatch)
+                    description = "Your order has been accepted. Dispatch updates will appear here once arranged.";
+
+                timeline.Add(new OrderTrackingTimelineItemDto
+                {
+                    Key = key,
+                    Label = label,
+                    Status = status,
+                    OccurredAtUtc = occurredAt,
+                    Description = description,
+                });
+            }
+
+            return timeline;
+        }
+
+        /// <inheritdoc />
+        public async Task<Result<OrderDto>> AcceptAsync(Guid userId, Guid orderId)
+        {
+            try
+            {
+                var order = await _orderRepository.GetByIdAsync(orderId);
+                if (order is null)
+                    return Result<OrderDto>.Failure(ErrorCodes.NotFound, "Order not found.");
+
+                if (order.Merchant?.OwnerUserId != userId)
+                    return Result<OrderDto>.Failure(ErrorCodes.Forbidden, "Only the seller can accept this order.");
+
+                if (order.Items.Any(i => i.ListingType == ListingType.Service))
+                    return Result<OrderDto>.Failure(ErrorCodes.BadRequest, "Service bookings are accepted from the booking screen.");
+
+                // Concurrency/double-accept guard: must still be awaiting acceptance.
+                if (order.Status != OrderStatus.AwaitingSellerAcceptance)
+                    return Result<OrderDto>.Failure(ErrorCodes.Conflict, "This order can no longer be accepted.");
+
+                if (order.PaymentStatus != PaymentStatus.Paid)
+                    return Result<OrderDto>.Failure(ErrorCodes.Conflict, "This order is not paid.");
+
+                var now = DateTime.UtcNow;
+                order.Status = OrderStatus.Confirmed;
+                order.ConfirmedAtUtc = now;
+                order.UpdatedAtUtc = now;
+                _orderRepository.Update(order);
+                var saved = await _orderRepository.SaveChangesAsync();
+                if (!saved)
+                    return Result<OrderDto>.Failure(ErrorCodes.Exception, "Failed to accept the order.");
+
+                // Dispatch is created ON ACCEPTANCE (not at payment) — so a courier
+                // pickup is never arranged before the seller confirms fulfilment.
+                // Idempotent + best-effort; only product orders with a selected
+                // delivery option create a shipment.
+                if (order.DeliveryQuoteOptionId is Guid deliveryOptionId)
+                {
+                    await _dispatch.CreateShipmentForPaidOrderAsync(
+                        order.Id, order.BuyerUserId, order.MerchantId, deliveryOptionId,
+                        order.DeliveryFee ?? 0m, order.DeliveryAddress);
+                }
+
+                await _notifications.NotifyCustomerOrderAcceptedAsync(order);
+
+                var reloaded = await _orderRepository.GetByIdAsync(order.Id);
+                return Result<OrderDto>.Success(MapToDto(reloaded ?? order), "Order accepted.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to accept order {OrderId} for seller {UserId}.", orderId, userId);
+                return Result<OrderDto>.Failure(ErrorCodes.Exception, $"Failed to accept the order. {ex.Message}");
+            }
+        }
+
+        /// <inheritdoc />
+        public async Task<Result<OrderDto>> RejectAsync(Guid userId, Guid orderId, RejectOrderRequestDto request)
+        {
+            try
+            {
+                var reason = request?.Reason?.Trim();
+                if (string.IsNullOrWhiteSpace(reason))
+                    return Result<OrderDto>.Failure(ErrorCodes.BadRequest, "A reason is required to reject an order.");
+
+                var order = await _orderRepository.GetByIdAsync(orderId);
+                if (order is null)
+                    return Result<OrderDto>.Failure(ErrorCodes.NotFound, "Order not found.");
+
+                if (order.Merchant?.OwnerUserId != userId)
+                    return Result<OrderDto>.Failure(ErrorCodes.Forbidden, "Only the seller can reject this order.");
+
+                if (order.Items.Any(i => i.ListingType == ListingType.Service))
+                    return Result<OrderDto>.Failure(ErrorCodes.BadRequest, "Service bookings are rejected from the booking screen.");
+
+                // Concurrency/double-reject guard: rejectable only while awaiting acceptance.
+                if (order.Status != OrderStatus.AwaitingSellerAcceptance)
+                    return Result<OrderDto>.Failure(ErrorCodes.Conflict, "This order can no longer be rejected.");
+
+                var now = DateTime.UtcNow;
+
+                // Refund the customer to their wallet FIRST (idempotent + self-saving).
+                // Crediting before we mark the order Refunded means a later failure
+                // can't leave the order "refunded" without the money actually moving;
+                // a retry re-runs this and the duplicate-credit guard makes it a no-op.
+                if (order.PaymentStatus == PaymentStatus.Paid)
+                {
+                    var currency = string.IsNullOrWhiteSpace(order.Currency) ? "ZAR" : order.Currency;
+                    if (order.Total > 0m)
+                    {
+                        await _wallet.CreditAsync(
+                            order.BuyerUserId,
+                            WalletTransactionType.OrderCancelledCredit,
+                            order.Total, currency,
+                            "Order", order.Id,
+                            "Refund for seller-rejected order");
+                    }
+                    order.PaymentStatus = PaymentStatus.Refunded;
+                }
+
+                order.Status = OrderStatus.Cancelled;
+                order.CancelledAtUtc = now;
+                order.CancellationReason = reason;
+                order.UpdatedAtUtc = now;
+                _orderRepository.Update(order);
+                var saved = await _orderRepository.SaveChangesAsync();
+                if (!saved)
+                    return Result<OrderDto>.Failure(ErrorCodes.Exception, "Failed to reject the order.");
+
+                await _notifications.NotifyCustomerOrderRejectedAsync(order, reason);
+
+                var reloaded = await _orderRepository.GetByIdAsync(order.Id);
+                return Result<OrderDto>.Success(MapToDto(reloaded ?? order), "Order rejected.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to reject order {OrderId} for seller {UserId}.", orderId, userId);
+                return Result<OrderDto>.Failure(ErrorCodes.Exception, $"Failed to reject the order. {ex.Message}");
             }
         }
 

@@ -117,6 +117,9 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
 
     public DbSet<Merchant> Merchants => Set<Merchant>();
 
+    /// <summary>Seller fulfilment incidents (accountability foundation). Config auto-applied.</summary>
+    public DbSet<SellerIncident> SellerIncidents => Set<SellerIncident>();
+
     public DbSet<SellerCategory> SellerCategories => Set<SellerCategory>();
     public DbSet<SellerSubcategory> SellerSubcategories => Set<SellerSubcategory>();
 
