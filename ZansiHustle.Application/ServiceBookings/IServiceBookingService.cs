@@ -19,8 +19,10 @@ namespace ZansiHustle.Application.ServiceBookings
         Task<Result<ServiceBookingDto>> GetByOrderForUserAsync(Guid userId, Guid orderId);
 
         /// <summary>Server-filtered bookings for the seller's shops — genuine
-        /// post-payment requests/work only (never failed/stale PendingPayment).</summary>
-        Task<Result<List<SellerBookingListItemDto>>> GetForSellerAsync(Guid sellerUserId);
+        /// post-payment requests/work (never failed/stale PendingPayment). When
+        /// <paramref name="includeClosed"/> is true, terminal Cancelled/Rejected
+        /// rows are also returned for the seller's "Closed" history filter.</summary>
+        Task<Result<List<SellerBookingListItemDto>>> GetForSellerAsync(Guid sellerUserId, bool includeClosed = false);
 
         /// <summary>Provider accepts a requested booking (Requested → Accepted).</summary>
         Task<Result<ServiceBookingDto>> AcceptAsync(Guid userId, Guid bookingId);

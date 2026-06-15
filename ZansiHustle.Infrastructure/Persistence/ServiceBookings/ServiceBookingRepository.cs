@@ -115,9 +115,13 @@ namespace ZansiHustle.Infrastructure.Persistence.ServiceBookings
         }
 
         /// <inheritdoc />
-        public async Task<List<ServiceBooking>> GetForSellerAsync(Guid sellerUserId)
+        public async Task<List<ServiceBooking>> GetForSellerAsync(Guid sellerUserId, bool includeClosed = false)
         {
-            var visible = new[]
+            // Always-visible (active lifecycle) statuses. Failed-payment / stale
+            // PendingPayment are never returned (noise). When includeClosed is
+            // set, the terminal Cancelled/Rejected rows are added so the seller's
+            // "Closed" filter has history — otherwise they're hidden as before.
+            var visible = new List<ServiceBookingStatus>
             {
                 ServiceBookingStatus.Requested,
                 ServiceBookingStatus.Confirmed,
@@ -125,6 +129,11 @@ namespace ZansiHustle.Infrastructure.Persistence.ServiceBookings
                 ServiceBookingStatus.InProgress,
                 ServiceBookingStatus.Completed
             };
+            if (includeClosed)
+            {
+                visible.Add(ServiceBookingStatus.Cancelled);
+                visible.Add(ServiceBookingStatus.Rejected);
+            }
 
             return await _context.Set<ServiceBooking>()
                 .AsNoTracking()

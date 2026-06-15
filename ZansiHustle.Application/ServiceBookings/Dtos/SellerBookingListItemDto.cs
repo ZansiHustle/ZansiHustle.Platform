@@ -29,5 +29,16 @@ namespace ZansiHustle.Application.ServiceBookings.Dtos
         public bool NeedsAction { get; set; }
 
         public DateTime CreatedAtUtc { get; set; }
+
+        // ── Closed-booking context (only set for Cancelled/Rejected rows; the
+        //    seller's "Closed" filter shows these). Lets the list card render
+        //    "Cancelled by customer" / "Rejected by provider" + a reason preview
+        //    without a second round-trip to the detail endpoint. ───────────────
+        /// <summary>"Customer" | "Provider" | null — who cancelled (Cancelled only).</summary>
+        public string? CancelledByRole { get; set; }
+        /// <summary>Free-text cancellation reason preview (Cancelled only).</summary>
+        public string? CancellationReasonText { get; set; }
+        /// <summary>Free-text rejection reason preview (Rejected only; always provider).</summary>
+        public string? RejectionReasonText { get; set; }
     }
 }

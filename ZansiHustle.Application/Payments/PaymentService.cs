@@ -125,21 +125,6 @@ namespace ZansiHustle.Application.Payments
                     return Result<InitializePaymentResponseDto>.Failure(guard.Code, guard.Message);
                 }
 
-                // Reuse any in-flight attempt — same caller, same order → same checkout session.
-                // The wallet (if any) was already applied when the first attempt was
-                // created, so we just resume it and echo the order's wallet split.
-                var existing = await _paymentRepository.GetActiveAttemptForOrderAsync(order.Id);
-
-                if (existing != null)
-                {
-                    _logger.LogInformation(
-                        "[Payments][Initialize][Svc] reuse active attempt {Code} for order {OrderCode} via {Provider}. elapsedMs={Elapsed}",
-                        existing.Code, order.Code, existing.Provider, sw.ElapsedMilliseconds);
-                    return Result<InitializePaymentResponseDto>.Success(
-                        BuildWalletResponse(existing, order, requiresExternal: true, paidWithWalletOnly: false),
-                        "Resumed pending payment.");
-                }
-
                 // ── Wallet-as-payment (server-authoritative) ─────────────────────
                 // Apply wallet balance toward the order BEFORE the gateway. This
                 // HOLDS the amount via the ledger (idempotent per order) and tells us
@@ -162,10 +147,27 @@ namespace ZansiHustle.Application.Payments
                     "[Payments][Initialize][Svc] wallet split orderId={OrderId} total={Total} walletApplied={Wallet} externalDue={External} elapsedMs={Elapsed}",
                     order.Id, order.Total, walletApplied, externalDue, sw.ElapsedMilliseconds);
 
+                // Provider is needed for both the full-wallet supersede path and the
+                // external-charge reconcile path below. Default to Ozow when unspecified.
+                var providerName = ResolveProvider(request.Provider);
+
+                // Any in-flight attempt for this order. We reconcile it against the
+                // CURRENT wallet split below rather than blindly reusing it — a stale
+                // attempt created at a different amount (e.g. before the buyer elected
+                // to use wallet) must NEVER be handed back, or the gateway would charge
+                // the wrong amount.
+                var existing = await _paymentRepository.GetActiveAttemptForOrderAsync(order.Id);
+
                 // CASE B — wallet covers the full amount → mark Paid through the same
                 // paid-transition path used after Ozow, and skip the gateway entirely.
                 if (walletApplied > 0m && externalDue <= 0m)
                 {
+                    // Cancel any earlier external attempt — the order is now fully
+                    // wallet-paid, so a stray completion/webhook on that attempt must
+                    // not charge the buyer again or double-advance the order.
+                    if (existing != null)
+                        await SupersedeAttemptAsync(existing, "Order fully paid with wallet.");
+
                     var walletResult = await MarkOrderPaidByWalletAsync(order, walletApplied);
                     _logger.LogInformation(
                         "[Payments][Initialize][Svc] paid-by-wallet orderId={OrderId} amount={Amount} elapsedMs={Elapsed}",
@@ -174,8 +176,39 @@ namespace ZansiHustle.Application.Payments
                 }
 
                 // CASE A / C — gateway charges the external amount due (== order.Total
-                // when no wallet applied). Default to Ozow when unspecified.
-                var providerName = ResolveProvider(request.Provider);
+                // when no wallet applied).
+                //
+                // Reuse the in-flight attempt ONLY when it still matches what we'd
+                // charge now — same provider AND same external amount (honouring the
+                // UAT cap). Otherwise supersede it and create a fresh attempt at the
+                // correct amount. This is the fix for "Ozow charged the full total on a
+                // wallet split": the buyer toggled wallet AFTER a full-amount attempt
+                // already existed, and the old reuse handed that full-amount URL back.
+                var expectedCharge = ExpectedExternalCharge(providerName, externalDue);
+                if (existing != null)
+                {
+                    var sameProvider = string.Equals(existing.Provider, providerName, StringComparison.OrdinalIgnoreCase);
+                    var sameAmount = Math.Abs(existing.Amount - expectedCharge) <= 0.01m;
+                    var hasUrl = !string.IsNullOrWhiteSpace(existing.ProviderAuthorizationUrl);
+
+                    if (sameProvider && sameAmount && hasUrl)
+                    {
+                        _logger.LogInformation(
+                            "[Payments][Initialize][Svc] reuse active attempt {Code} for order {OrderCode} via {Provider} amount={Amount}. elapsedMs={Elapsed}",
+                            existing.Code, order.Code, existing.Provider, existing.Amount, sw.ElapsedMilliseconds);
+                        return Result<InitializePaymentResponseDto>.Success(
+                            BuildWalletResponse(existing, order, requiresExternal: true, paidWithWalletOnly: false),
+                            "Resumed pending payment.");
+                    }
+
+                    // Stale checkout session (wrong amount/provider). Cancel it so it
+                    // can never be completed for the wrong amount, then fall through to
+                    // create a fresh one. Do NOT reverse the wallet here — the hold
+                    // belongs to the ORDER and is carried into the new attempt.
+                    await SupersedeAttemptAsync(
+                        existing,
+                        $"Superseded — order now charges {expectedCharge.ToString("0.00", CultureInfo.InvariantCulture)} via {providerName}.");
+                }
 
                 _logger.LogInformation(
                     "[Payments][Initialize][Svc] dispatch provider={Provider} orderId={OrderId} orderCode={OrderCode} chargeAmount={Amount} elapsedMs={Elapsed}",
@@ -247,6 +280,44 @@ namespace ZansiHustle.Application.Payments
             if (string.Equals(requested, PaymentProvider.Yoco,     StringComparison.OrdinalIgnoreCase)) return PaymentProvider.Yoco;
             if (string.Equals(requested, PaymentProvider.Paystack, StringComparison.OrdinalIgnoreCase)) return PaymentProvider.Paystack;
             return requested;
+        }
+
+        /// <summary>
+        /// The amount the gateway will actually be asked to charge for a given
+        /// external-due, honouring the provider's UAT test cap. Mirrors the cap
+        /// logic inside each Initialize{Provider}Async so the reuse comparison in
+        /// <see cref="InitializeAsync"/> lines up with what was stored on the
+        /// Payment row (Payment.Amount == the post-cap charged amount).
+        /// </summary>
+        private decimal ExpectedExternalCharge(string providerName, decimal externalDue)
+        {
+            if (string.Equals(providerName, PaymentProvider.Ozow, StringComparison.OrdinalIgnoreCase))
+                return _ozowClient.UatTestMode ? Math.Min(externalDue, _ozowClient.UatTestAmount) : externalDue;
+            if (string.Equals(providerName, PaymentProvider.Yoco, StringComparison.OrdinalIgnoreCase))
+                return _yocoClient.UatTestMode ? Math.Min(externalDue, _yocoClient.UatTestAmount) : externalDue;
+            // Paystack has no UAT cap path — it charges the full external amount.
+            return externalDue;
+        }
+
+        /// <summary>
+        /// Cancels a stale/obsolete non-terminal payment attempt so it can never
+        /// be completed (a stray gateway redirect or webhook on it would otherwise
+        /// charge the buyer for the wrong amount or double-advance the order).
+        /// Deliberately does NOT reverse any wallet hold — the hold belongs to the
+        /// ORDER, not the individual attempt, and is carried into the replacement
+        /// attempt (or, for a full-wallet order, settled by the wallet-paid path).
+        /// </summary>
+        private async Task SupersedeAttemptAsync(Payment attempt, string reason)
+        {
+            attempt.Status = PaymentTransactionStatus.Cancelled;
+            attempt.CancelledAtUtc = DateTime.UtcNow;
+            attempt.FailureReason ??= reason;
+            attempt.UpdatedAtUtc = DateTime.UtcNow;
+            _paymentRepository.Update(attempt);
+            await _paymentRepository.SaveChangesAsync();
+            _logger.LogInformation(
+                "[Payments] Superseded stale attempt {Code} (amount={Amount} provider={Provider}) — {Reason}",
+                attempt.Code, attempt.Amount, attempt.Provider, reason);
         }
 
         // ─── Initialize: Paystack ────────────────────────────────────────────

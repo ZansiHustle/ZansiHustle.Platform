@@ -95,12 +95,12 @@ namespace ZansiHustle.Application.ServiceBookings
         }
 
         /// <inheritdoc />
-        public async Task<Result<List<SellerBookingListItemDto>>> GetForSellerAsync(Guid sellerUserId)
+        public async Task<Result<List<SellerBookingListItemDto>>> GetForSellerAsync(Guid sellerUserId, bool includeClosed = false)
         {
             if (sellerUserId == Guid.Empty)
                 return Result<List<SellerBookingListItemDto>>.Failure(ErrorCodes.Unauthorized, "User identifier not found.");
 
-            var bookings = await _serviceBookingRepository.GetForSellerAsync(sellerUserId);
+            var bookings = await _serviceBookingRepository.GetForSellerAsync(sellerUserId, includeClosed);
             var items = bookings.Select(b =>
             {
                 var localStart = b.StartAtUtc + BookingAvailabilityDefaults.SaUtcOffset;
@@ -120,11 +120,25 @@ namespace ZansiHustle.Application.ServiceBookings
                     Amount = b.Order?.Total ?? 0m,
                     Currency = string.IsNullOrWhiteSpace(b.Order?.Currency) ? "ZAR" : b.Order!.Currency,
                     NeedsAction = IsAwaitingSeller(b.Status),
-                    CreatedAtUtc = b.CreatedAtUtc
+                    CreatedAtUtc = b.CreatedAtUtc,
+                    // Closed-context (only meaningful for Cancelled/Rejected rows).
+                    CancelledByRole = ResolveCancelledByRole(b),
+                    CancellationReasonText = b.Status == ServiceBookingStatus.Cancelled ? b.CancellationReasonText : null,
+                    RejectionReasonText = b.Status == ServiceBookingStatus.Rejected ? b.RejectionReasonText : null
                 };
             }).ToList();
 
             return Result<List<SellerBookingListItemDto>>.Success(items, "Bookings loaded.");
+        }
+
+        /// <summary>"Customer" | "Provider" | null — who cancelled (Cancelled only).
+        /// V1 self-cancel is always the customer; any other canceller is the
+        /// provider/seller side. Null when not cancelled.</summary>
+        private static string? ResolveCancelledByRole(ServiceBooking b)
+        {
+            if (b.Status != ServiceBookingStatus.Cancelled || b.CancelledByUserId is null)
+                return null;
+            return b.CancelledByUserId == b.CustomerUserId ? "Customer" : "Provider";
         }
 
         /// <inheritdoc />
@@ -633,6 +647,7 @@ namespace ZansiHustle.Application.ServiceBookings
                 CanCustomerCancel = canCustomerCancel,
                 RejectionReasonCode = b.RejectionReasonCode,
                 RejectionReasonText = b.RejectionReasonText,
+                CancelledByRole = ResolveCancelledByRole(b),
                 CancellationReasonCode = b.CancellationReasonCode,
                 CancellationReasonText = b.CancellationReasonText,
                 CancelledAtUtc = b.CancelledAtUtc,

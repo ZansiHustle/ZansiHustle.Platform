@@ -80,6 +80,8 @@ namespace ZansiHustle.Application.ServiceBookings.Dtos
         public string? RejectionReasonText { get; set; }
 
         // Cancellation (set when Status == Cancelled).
+        /// <summary>"Customer" | "Provider" | null — who cancelled the booking.</summary>
+        public string? CancelledByRole { get; set; }
         public string? CancellationReasonCode { get; set; }
         public string? CancellationReasonText { get; set; }
         public DateTime? CancelledAtUtc { get; set; }

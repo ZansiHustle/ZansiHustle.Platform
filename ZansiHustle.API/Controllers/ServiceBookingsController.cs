@@ -35,16 +35,17 @@ namespace ZansiHustle.API.Controllers
         // ─── Booking workflow ────────────────────────────────────────────────
 
         /// <summary>Bookings for the current seller's shops (server-filtered:
-        /// never failed/stale PendingPayment).</summary>
+        /// never failed/stale PendingPayment). Pass <c>includeClosed=true</c> to
+        /// also return terminal Cancelled/Rejected rows for the "Closed" filter.</summary>
         [HttpGet("seller")]
         [ProducesResponseType(typeof(Result<List<SellerBookingListItemDto>>), StatusCodes.Status200OK)]
-        public async Task<IActionResult> GetSellerBookings()
+        public async Task<IActionResult> GetSellerBookings([FromQuery] bool includeClosed = false)
         {
             var userId = _currentUserService.UserId;
             if (!userId.HasValue)
                 return ToActionResult(Result<List<SellerBookingListItemDto>>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
 
-            return ToActionResult(await _serviceBookingService.GetForSellerAsync(userId.Value));
+            return ToActionResult(await _serviceBookingService.GetForSellerAsync(userId.Value, includeClosed));
         }
 
         /// <summary>Booking detail for the current user (provider or customer).</summary>

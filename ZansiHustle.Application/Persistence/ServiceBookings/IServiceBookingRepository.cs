@@ -49,11 +49,13 @@ namespace ZansiHustle.Application.Persistence.ServiceBookings
         /// <summary>
         /// Bookings for shops owned by <paramref name="sellerUserId"/> that are
         /// genuine post-payment requests/work — Requested/Accepted/InProgress/
-        /// Completed (legacy Confirmed included). NEVER PendingPayment, Cancelled
-        /// or Rejected. Newest first. Backed by a server-side filter so the
+        /// Completed (legacy Confirmed included). NEVER PendingPayment-stale or
+        /// failed. When <paramref name="includeClosed"/> is true, terminal
+        /// Cancelled/Rejected rows are also returned so the seller's "Closed"
+        /// history filter has data. Newest first. Server-side filtered so the
         /// client can't be relied on to hide failed-payment bookings.
         /// </summary>
-        Task<List<ServiceBooking>> GetForSellerAsync(Guid sellerUserId);
+        Task<List<ServiceBooking>> GetForSellerAsync(Guid sellerUserId, bool includeClosed = false);
 
         Task AddAsync(ServiceBooking booking);
         void Update(ServiceBooking booking);

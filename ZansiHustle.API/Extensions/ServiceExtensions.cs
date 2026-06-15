@@ -537,6 +537,9 @@ public static class ServiceExtensions
             ZansiHustle.Application.Wallets.IWalletService,
             ZansiHustle.Application.Wallets.WalletService>();
         services.AddScoped<
+            ZansiHustle.Application.Seller.Earnings.ISellerEarningsService,
+            ZansiHustle.Application.Seller.Earnings.SellerEarningsService>();
+        services.AddScoped<
             ZansiHustle.Application.Persistence.Trust.ITrustEventRepository,
             ZansiHustle.Infrastructure.Persistence.Trust.TrustEventRepository>();
         services.AddScoped<
