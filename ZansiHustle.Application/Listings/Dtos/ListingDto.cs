@@ -62,6 +62,14 @@ namespace ZansiHustle.Application.Listings.Dtos
         public ListingCondition? Condition { get; set; }
         public List<string>? DeliveryOptions { get; set; }
 
+        /// <summary>
+        /// Delivery package details (parcel profile) for a product. Null until
+        /// the seller completes package details — the buyer checkout uses
+        /// <c>Parcel?.IsComplete</c> to decide whether courier delivery may be
+        /// offered. Always null for services.
+        /// </summary>
+        public ListingParcelDto? Parcel { get; set; }
+
         // Service-only.
         public PricingModel? PricingModel { get; set; }
         public string? ServiceArea { get; set; }

@@ -321,6 +321,19 @@ namespace ZansiHustle.Application.Listings
                     listing.Stock = request.Stock ?? 0;
                     listing.Condition = request.Condition;
                     listing.DeliveryOptions = Clean(request.DeliveryOptions);
+
+                    // Delivery package details (parcel profile).
+                    listing.PackageSizeCategory = request.PackageSizeCategory;
+                    listing.PackageWeightKg = request.PackageWeightKg;
+                    listing.PackageLengthCm = request.PackageLengthCm;
+                    listing.PackageWidthCm = request.PackageWidthCm;
+                    listing.PackageHeightCm = request.PackageHeightCm;
+                    listing.PackageFragile = request.PackageFragile;
+                    listing.PackageContentsDescription = request.PackageContentsDescription?.Trim();
+
+                    var parcelCheck = ValidateParcel(listing);
+                    if (!parcelCheck.IsSuccess)
+                        return Result<ListingDto>.Failure(parcelCheck.Code, parcelCheck.Message);
                 }
                 else
                 {
@@ -471,6 +484,20 @@ namespace ZansiHustle.Application.Listings
 
                     if (request.DeliveryOptions is not null)
                         listing.DeliveryOptions = Clean(request.DeliveryOptions);
+
+                    // Parcel merge — null fields leave existing values unchanged.
+                    listing.PackageSizeCategory = request.PackageSizeCategory ?? listing.PackageSizeCategory;
+                    listing.PackageWeightKg = request.PackageWeightKg ?? listing.PackageWeightKg;
+                    listing.PackageLengthCm = request.PackageLengthCm ?? listing.PackageLengthCm;
+                    listing.PackageWidthCm = request.PackageWidthCm ?? listing.PackageWidthCm;
+                    listing.PackageHeightCm = request.PackageHeightCm ?? listing.PackageHeightCm;
+                    listing.PackageFragile = request.PackageFragile ?? listing.PackageFragile;
+                    listing.PackageContentsDescription =
+                        request.PackageContentsDescription?.Trim() ?? listing.PackageContentsDescription;
+
+                    var parcelCheck = ValidateParcel(listing);
+                    if (!parcelCheck.IsSuccess)
+                        return Result<ListingDto>.Failure(parcelCheck.Code, parcelCheck.Message);
                 }
                 else
                 {
@@ -711,6 +738,81 @@ namespace ZansiHustle.Application.Listings
                 return Result.Failure(ErrorCodes.BadRequest, "Stock cannot be negative.");
 
             return Result.Success();
+        }
+
+        // ── Product parcel profile ──────────────────────────────────────────
+
+        /// <summary>
+        /// Validate a product's delivery package details. Migration-safe: a
+        /// product with NO parcel data at all passes (legacy rows / drafts /
+        /// in-store-only items are never retro-blocked — the buyer checkout +
+        /// create-from-quote guard gate courier delivery on completeness). But
+        /// once the seller starts entering package details, the parcel must be
+        /// COMPLETE and coherent: weight + all three dimensions positive and
+        /// within sane bounds. No half-filled / token parcels.
+        /// </summary>
+        private static Result ValidateParcel(Listing l)
+        {
+            if (l.Type != ListingType.Product)
+                return Result.Success();
+
+            var anyProvided =
+                l.PackageSizeCategory.HasValue
+                || l.PackageWeightKg.HasValue
+                || l.PackageLengthCm.HasValue
+                || l.PackageWidthCm.HasValue
+                || l.PackageHeightCm.HasValue
+                || (l.PackageFragile ?? false)
+                || !string.IsNullOrWhiteSpace(l.PackageContentsDescription);
+
+            if (!anyProvided)
+                return Result.Success();
+
+            if (!(l.PackageWeightKg is > 0m)
+                || !(l.PackageLengthCm is > 0m)
+                || !(l.PackageWidthCm is > 0m)
+                || !(l.PackageHeightCm is > 0m))
+                return Result.Failure(ErrorCodes.BadRequest,
+                    "Package weight and all dimensions (length, width, height) are required for delivery.");
+
+            // Sanity caps — guard against fat-fingered values that would break
+            // courier rating (e.g. cm entered as mm, kg as grams).
+            if (l.PackageWeightKg > 1000m)
+                return Result.Failure(ErrorCodes.BadRequest, "Package weight looks too large (max 1000 kg).");
+            if (l.PackageLengthCm > 500m || l.PackageWidthCm > 500m || l.PackageHeightCm > 500m)
+                return Result.Failure(ErrorCodes.BadRequest, "Package dimensions look too large (max 500 cm per side).");
+
+            return Result.Success();
+        }
+
+        private static ListingParcelDto? BuildParcelDto(Listing l)
+        {
+            if (l.Type != ListingType.Product)
+                return null;
+
+            var anyProvided =
+                l.PackageSizeCategory.HasValue
+                || l.PackageWeightKg.HasValue
+                || l.PackageLengthCm.HasValue
+                || l.PackageWidthCm.HasValue
+                || l.PackageHeightCm.HasValue
+                || (l.PackageFragile ?? false)
+                || !string.IsNullOrWhiteSpace(l.PackageContentsDescription);
+
+            if (!anyProvided)
+                return null;
+
+            return new ListingParcelDto
+            {
+                SizeCategory = l.PackageSizeCategory,
+                WeightKg = l.PackageWeightKg,
+                LengthCm = l.PackageLengthCm,
+                WidthCm = l.PackageWidthCm,
+                HeightCm = l.PackageHeightCm,
+                Fragile = l.PackageFragile ?? false,
+                ContentsDescription = l.PackageContentsDescription,
+                IsComplete = l.IsParcelComplete,
+            };
         }
 
         // ── Service fulfilment ──────────────────────────────────────────────
@@ -1174,6 +1276,7 @@ namespace ZansiHustle.Application.Listings
                 Stock = listing.Stock,
                 Condition = listing.Condition,
                 DeliveryOptions = listing.DeliveryOptions,
+                Parcel = BuildParcelDto(listing),
                 PricingModel = listing.PricingModel,
                 ServiceArea = listing.ServiceArea,
                 Turnaround = listing.Turnaround,

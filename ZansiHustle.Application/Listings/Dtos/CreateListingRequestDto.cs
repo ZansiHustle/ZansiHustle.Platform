@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using ZansiHustle.Shared.Enums.Listings;
+using ZansiHustle.Shared.Enums.ZansiDispatch;
 
 namespace ZansiHustle.Application.Listings.Dtos
 {
@@ -62,6 +63,19 @@ namespace ZansiHustle.Application.Listings.Dtos
         public int? Stock { get; set; }
         public ListingCondition? Condition { get; set; }
         public List<string>? DeliveryOptions { get; set; }
+
+        // ── Product parcel profile (delivery package details) ───────────────
+        // Optional on the DTO so non-dispatch products / drafts still save, but
+        // required before a product can be sold with ZansiDispatch courier
+        // delivery (validated in ListingService when delivery is enabled).
+        // Presets on the seller form prefill weight + dimensions.
+        public ZansiDispatchItemSizeCategory? PackageSizeCategory { get; set; }
+        public decimal? PackageWeightKg { get; set; }
+        public decimal? PackageLengthCm { get; set; }
+        public decimal? PackageWidthCm { get; set; }
+        public decimal? PackageHeightCm { get; set; }
+        public bool? PackageFragile { get; set; }
+        public string? PackageContentsDescription { get; set; }
 
         // Service-only.
         public PricingModel? PricingModel { get; set; }

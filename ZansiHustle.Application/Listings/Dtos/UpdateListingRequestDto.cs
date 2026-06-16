@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using ZansiHustle.Shared.Enums.Listings;
+using ZansiHustle.Shared.Enums.ZansiDispatch;
 
 namespace ZansiHustle.Application.Listings.Dtos
 {
@@ -37,6 +38,16 @@ namespace ZansiHustle.Application.Listings.Dtos
         public int? Stock { get; set; }
         public ListingCondition? Condition { get; set; }
         public List<string>? DeliveryOptions { get; set; }
+
+        // ── Product parcel profile — null fields leave existing values
+        // unchanged (same merge pattern as the service fulfilment block). ──
+        public ZansiDispatchItemSizeCategory? PackageSizeCategory { get; set; }
+        public decimal? PackageWeightKg { get; set; }
+        public decimal? PackageLengthCm { get; set; }
+        public decimal? PackageWidthCm { get; set; }
+        public decimal? PackageHeightCm { get; set; }
+        public bool? PackageFragile { get; set; }
+        public string? PackageContentsDescription { get; set; }
 
         // Service-only.
         public PricingModel? PricingModel { get; set; }

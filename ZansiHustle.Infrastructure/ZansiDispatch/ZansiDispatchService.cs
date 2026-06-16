@@ -85,6 +85,13 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 var (sellerProvince, sellerCity, sellerAddress, sellerStreet, sellerLocal, sellerPostal, sellerCountry, sellerLat, sellerLng) =
                     await ResolveSellerAddressAsync(request, merchantId, ct);
 
+                // Resolve the parcel profile: prefer values supplied on the
+                // request, otherwise fall back to the listing's stored package
+                // details. This is what makes the persisted quote (and thus
+                // create-from-quote) carry real weight/dimensions for an old
+                // listing-only checkout. `parcelSource` is logged for debug.
+                var parcel = await ResolveParcelAsync(request, ct);
+
                 // Seller-origin guard. A courier/internal quote needs a pickup
                 // origin. When the seller address wasn't supplied AND can't be
                 // resolved from the merchant (no province/city), DON'T fabricate a
@@ -128,14 +135,14 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     SellerLat = sellerLat,
                     SellerLng = sellerLng,
                     SellerAddressSummary = sellerAddress,
-                    ParcelDescription = Trim(request.ParcelDescription),
-                    ItemSizeCategory = request.ItemSizeCategory,
-                    EstimatedWeightKg = request.EstimatedWeightKg,
-                    SubmittedLengthCm = request.SubmittedLengthCm,
-                    SubmittedWidthCm = request.SubmittedWidthCm,
-                    SubmittedHeightCm = request.SubmittedHeightCm,
+                    ParcelDescription = parcel.Description,
+                    ItemSizeCategory = parcel.SizeCategory,
+                    EstimatedWeightKg = parcel.WeightKg,
+                    SubmittedLengthCm = parcel.LengthCm,
+                    SubmittedWidthCm = parcel.WidthCm,
+                    SubmittedHeightCm = parcel.HeightCm,
                     DistanceKm = request.DistanceKm,
-                    DeclaredValue = request.DeclaredValue,
+                    DeclaredValue = parcel.DeclaredValue,
                     CollectionMinDate = request.CollectionMinDate,
                     DeliveryMinDate = request.DeliveryMinDate,
                 };
@@ -148,13 +155,14 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     _logger.LogInformation(
                         "[DispatchQuoteDebug] Resolved quote context correlationId={Cid} listingId={ListingId} merchantId={MerchantId} shopId={ShopId} " +
                         "pickup={Pickup} dropoff={Dropoff} parcelSize={Size} weightKg={WeightKg} dims={Dims} declaredValue={DeclaredValue} " +
-                        "collectionIncluded={Collection} context={Context}",
+                        "parcelSource={ParcelSource} parcelComplete={ParcelComplete} collectionIncluded={Collection} context={Context}",
                         cid, context.ListingId, context.MerchantId, context.ShopId,
                         Redact($"{context.SellerLocalArea} / {context.SellerCity} / {context.SellerProvince} / {context.SellerPostalCode} / {context.SellerAddressSummary}"),
                         Redact($"{context.BuyerLocalArea} / {context.BuyerCity} / {context.BuyerProvince} / {context.BuyerPostalCode} / {context.BuyerAddressSummary}"),
                         context.ItemSizeCategory, context.EstimatedWeightKg,
                         $"{context.SubmittedLengthCm}x{context.SubmittedWidthCm}x{context.SubmittedHeightCm}",
                         context.DeclaredValue,
+                        parcel.Source, parcel.IsComplete,
                         settings.CollectionEnabled && (request.IncludeCollectionOption ?? true),
                         Redact(SafeJson(context)));
                 }
@@ -189,13 +197,13 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     SellerLng = context.SellerLng,
                     SellerAddressType = context.SellerAddressType,
                     ParcelDescription = context.ParcelDescription,
-                    ItemSizeCategory = request.ItemSizeCategory,
-                    EstimatedWeightKg = request.EstimatedWeightKg,
-                    SubmittedLengthCm = request.SubmittedLengthCm,
-                    SubmittedWidthCm = request.SubmittedWidthCm,
-                    SubmittedHeightCm = request.SubmittedHeightCm,
+                    ItemSizeCategory = context.ItemSizeCategory,
+                    EstimatedWeightKg = context.EstimatedWeightKg,
+                    SubmittedLengthCm = context.SubmittedLengthCm,
+                    SubmittedWidthCm = context.SubmittedWidthCm,
+                    SubmittedHeightCm = context.SubmittedHeightCm,
                     DistanceKm = request.DistanceKm,
-                    DeclaredValue = request.DeclaredValue,
+                    DeclaredValue = context.DeclaredValue,
                     Status = ZansiDispatchQuoteStatus.Presented,
                     ExpiresAt = now.AddMinutes(settings.QuoteExpiryMinutes),
                     CreatedAt = now,
@@ -304,6 +312,103 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             }
 
             return (province, city, summary, street, local, postal, country, lat, lng);
+        }
+
+        private sealed record ResolvedParcel(
+            ZansiDispatchItemSizeCategory? SizeCategory,
+            decimal? WeightKg,
+            decimal? LengthCm,
+            decimal? WidthCm,
+            decimal? HeightCm,
+            string? Description,
+            decimal? DeclaredValue,
+            string Source)
+        {
+            // Courier-bookable parcel: weight + all three dimensions positive.
+            public bool IsComplete =>
+                WeightKg is > 0m && LengthCm is > 0m && WidthCm is > 0m && HeightCm is > 0m;
+        }
+
+        /// <summary>
+        /// Resolve the parcel profile a quote is priced against. Prefers values
+        /// supplied on the request (manual Portal quotes, future richer mobile
+        /// payloads); otherwise falls back to the listing's stored package
+        /// details so an old listing-only checkout still carries real
+        /// weight/dimensions into the persisted quote (and create-from-quote).
+        /// Declared value defaults to the listing price when not supplied.
+        /// <c>Source</c> is one of: <c>request</c> (seller-provided on the
+        /// request), <c>listing</c> (from the stored profile), <c>missing</c>
+        /// (neither — InternalEstimate falls back to a Medium estimate, and
+        /// courier booking is blocked by the readiness guard).
+        /// </summary>
+        private async Task<ResolvedParcel> ResolveParcelAsync(CreateQuoteRequestDto request, CancellationToken ct)
+        {
+            var requestHasParcel =
+                request.EstimatedWeightKg is > 0m
+                && request.SubmittedLengthCm is > 0m
+                && request.SubmittedWidthCm is > 0m
+                && request.SubmittedHeightCm is > 0m;
+
+            if (requestHasParcel)
+            {
+                return new ResolvedParcel(
+                    request.ItemSizeCategory,
+                    request.EstimatedWeightKg,
+                    request.SubmittedLengthCm,
+                    request.SubmittedWidthCm,
+                    request.SubmittedHeightCm,
+                    Trim(request.ParcelDescription),
+                    request.DeclaredValue,
+                    "request");
+            }
+
+            // No complete parcel on the request — try the listing profile.
+            if (request.ListingId is Guid lid)
+            {
+                var row = await _db.Listings.AsNoTracking()
+                    .Where(l => l.Id == lid)
+                    .Select(l => new
+                    {
+                        l.PackageSizeCategory,
+                        l.PackageWeightKg,
+                        l.PackageLengthCm,
+                        l.PackageWidthCm,
+                        l.PackageHeightCm,
+                        l.PackageContentsDescription,
+                        l.Price,
+                    })
+                    .FirstOrDefaultAsync(ct);
+
+                if (row is not null
+                    && row.PackageWeightKg is > 0m
+                    && row.PackageLengthCm is > 0m
+                    && row.PackageWidthCm is > 0m
+                    && row.PackageHeightCm is > 0m)
+                {
+                    return new ResolvedParcel(
+                        row.PackageSizeCategory ?? request.ItemSizeCategory,
+                        row.PackageWeightKg,
+                        row.PackageLengthCm,
+                        row.PackageWidthCm,
+                        row.PackageHeightCm,
+                        Trim(request.ParcelDescription) ?? Trim(row.PackageContentsDescription),
+                        request.DeclaredValue ?? (row.Price > 0m ? row.Price : (decimal?)null),
+                        "listing");
+                }
+            }
+
+            // Neither source has a complete parcel. Keep whatever partial hints
+            // the request carried (size category lets InternalEstimate estimate)
+            // but flag the source as missing — courier booking is blocked later.
+            return new ResolvedParcel(
+                request.ItemSizeCategory,
+                request.EstimatedWeightKg,
+                request.SubmittedLengthCm,
+                request.SubmittedWidthCm,
+                request.SubmittedHeightCm,
+                Trim(request.ParcelDescription),
+                request.DeclaredValue,
+                "missing");
         }
 
         /// <summary>

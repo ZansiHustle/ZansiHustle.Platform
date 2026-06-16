@@ -163,6 +163,17 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Listings
             builder.Property(x => x.FreeTravelRadiusKm).HasPrecision(9, 2);
             builder.Property(x => x.MaxTravelDistanceKm).HasPrecision(9, 2);
 
+            // ── Product parcel profile (all nullable, additive) ─────────────
+            builder.Property(x => x.PackageSizeCategory)
+                .HasConversion<int?>();
+            builder.Property(x => x.PackageWeightKg).HasPrecision(9, 3);
+            builder.Property(x => x.PackageLengthCm).HasPrecision(9, 2);
+            builder.Property(x => x.PackageWidthCm).HasPrecision(9, 2);
+            builder.Property(x => x.PackageHeightCm).HasPrecision(9, 2);
+            builder.Property(x => x.PackageContentsDescription).HasMaxLength(250);
+            // IsParcelComplete is a computed C# property — not mapped.
+            builder.Ignore(x => x.IsParcelComplete);
+
             builder.Property(x => x.Rating)
                 .HasPrecision(5, 2);
 

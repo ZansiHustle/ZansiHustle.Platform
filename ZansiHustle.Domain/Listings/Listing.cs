@@ -4,6 +4,7 @@ using ZansiHustle.Domain.Merchants;
 using ZansiHustle.Domain.SellerCategories;
 using ZansiHustle.Domain.Shops;
 using ZansiHustle.Shared.Enums.Listings;
+using ZansiHustle.Shared.Enums.ZansiDispatch;
 
 namespace ZansiHustle.Domain.Listings
 {
@@ -160,6 +161,34 @@ namespace ZansiHustle.Domain.Listings
         /// only).
         /// </summary>
         public int? EstimatedDurationMinutes { get; set; }
+
+        // ── Product delivery / parcel profile (platform-managed courier) ────
+        // All nullable + additive: existing product rows + every service row
+        // stay null. A product is courier-bookable via ZansiDispatch only when
+        // weight + all three dimensions are positive (see IsParcelComplete).
+        // The seller form prefills these from a size preset; "Custom" lets the
+        // seller enter exact values. Consumed by the ZansiDispatch quote flow
+        // (accurate Courier Guy rates) and the create-from-quote booking guard.
+        public ZansiDispatchItemSizeCategory? PackageSizeCategory { get; set; }
+        public decimal? PackageWeightKg { get; set; }
+        public decimal? PackageLengthCm { get; set; }
+        public decimal? PackageWidthCm { get; set; }
+        public decimal? PackageHeightCm { get; set; }
+        public bool? PackageFragile { get; set; }
+        public string? PackageContentsDescription { get; set; }
+
+        /// <summary>
+        /// True when this listing carries a complete parcel profile (weight +
+        /// all three dimensions positive) — i.e. it can be quoted accurately
+        /// and booked with a courier. Products without it must not reach
+        /// courier delivery checkout. Always false for services.
+        /// </summary>
+        public bool IsParcelComplete =>
+            Type == ListingType.Product
+            && PackageWeightKg is > 0m
+            && PackageLengthCm is > 0m
+            && PackageWidthCm is > 0m
+            && PackageHeightCm is > 0m;
 
         /// <summary>
         /// Child variants (colour / size / storage / package options).
