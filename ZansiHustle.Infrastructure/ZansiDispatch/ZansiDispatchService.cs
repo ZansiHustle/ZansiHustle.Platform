@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using ZansiHustle.Application.Common.Paging;
 using ZansiHustle.Application.ZansiDispatch;
 using ZansiHustle.Application.ZansiDispatch.Dtos;
 using ZansiHustle.Application.ZansiDispatch.Providers;
@@ -1851,25 +1852,73 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             }
         }
 
-        public async Task<Result<List<ShipmentListItemDto>>> GetShipmentsAsync(ZansiDispatchShipmentStatus? status, int page, int pageSize, CancellationToken ct = default)
+        public async Task<Result<PagedResult<ShipmentListItemDto>>> GetShipmentsAsync(ShipmentQueryDto query, CancellationToken ct = default)
         {
             try
             {
-                page = Math.Max(1, page);
-                pageSize = Math.Clamp(pageSize, 1, 100);
+                query ??= new ShipmentQueryDto();
+                var page = Math.Max(1, query.Page);
+                var pageSize = Math.Clamp(query.PageSize, 1, 100);
+
                 var q = _db.ZansiDispatchShipments.AsNoTracking().AsQueryable();
-                if (status.HasValue) q = q.Where(s => s.Status == status.Value);
-                var rows = await q.OrderByDescending(s => s.CreatedAt).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+
+                // ── Filters (all server-side) ───────────────────────────────
+                if (query.Status.HasValue) q = q.Where(s => s.Status == query.Status.Value);
+                if (query.Provider.HasValue) q = q.Where(s => s.ProviderType == query.Provider.Value);
+                if (query.DateFrom is DateTime from) q = q.Where(s => s.CreatedAt >= from);
+                if (query.DateTo is DateTime to) q = q.Where(s => s.CreatedAt <= to);
+
+                var search = query.Search?.Trim();
+                if (!string.IsNullOrWhiteSpace(search))
+                {
+                    var term = search.ToLower();
+                    q = q.Where(s =>
+                        (s.TrackingNumber != null && s.TrackingNumber.ToLower().Contains(term))
+                        || (s.ShortTrackingReference != null && s.ShortTrackingReference.ToLower().Contains(term))
+                        || (s.ProviderShipmentId != null && s.ProviderShipmentId.ToLower().Contains(term))
+                        || _db.Orders.Any(o => o.Id == s.OrderId && o.Code.ToLower().Contains(term))
+                        || _db.Users.Any(u => u.Id == s.UserId
+                            && ((((u.FirstName ?? "") + " " + (u.LastName ?? "")).ToLower().Contains(term))
+                                || (u.Email != null && u.Email.ToLower().Contains(term)))));
+                }
+
+                var total = await q.CountAsync(ct);
+
+                // ── Sort (default createdAt desc = latest first) ────────────
+                var desc = !string.Equals(query.SortDirection, "asc", StringComparison.OrdinalIgnoreCase);
+                q = (query.SortBy?.Trim().ToLowerInvariant()) switch
+                {
+                    "orderid" => desc ? q.OrderByDescending(s => s.OrderId) : q.OrderBy(s => s.OrderId),
+                    "provider" => desc ? q.OrderByDescending(s => s.ProviderType) : q.OrderBy(s => s.ProviderType),
+                    "status" => desc ? q.OrderByDescending(s => s.Status) : q.OrderBy(s => s.Status),
+                    "quoted" => desc ? q.OrderByDescending(s => s.QuotedDeliveryFee) : q.OrderBy(s => s.QuotedDeliveryFee),
+                    "actual" => desc ? q.OrderByDescending(s => s.ActualCourierCost) : q.OrderBy(s => s.ActualCourierCost),
+                    "net" => desc ? q.OrderByDescending(s => s.NetAmount) : q.OrderBy(s => s.NetAmount),
+                    // Customer name via correlated subquery (no full-table fetch).
+                    "customer" => desc
+                        ? q.OrderByDescending(s => _db.Users.Where(u => u.Id == s.UserId).Select(u => u.FirstName).FirstOrDefault())
+                        : q.OrderBy(s => _db.Users.Where(u => u.Id == s.UserId).Select(u => u.FirstName).FirstOrDefault()),
+                    _ => desc ? q.OrderByDescending(s => s.CreatedAt) : q.OrderBy(s => s.CreatedAt),
+                };
+
+                var rows = await q.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
 
                 // Resolve buyer display names in one batched query (no per-row N+1).
                 var names = await ResolveCustomerNamesAsync(rows.Select(r => r.UserId), ct);
-                return Result<List<ShipmentListItemDto>>.Success(
-                    rows.Select(s => MapShipmentListItem(s, names.GetValueOrDefault(s.UserId))).ToList());
+                var items = rows.Select(s => MapShipmentListItem(s, names.GetValueOrDefault(s.UserId))).ToList();
+
+                return Result<PagedResult<ShipmentListItemDto>>.Success(new PagedResult<ShipmentListItemDto>
+                {
+                    Items = items,
+                    Total = total,
+                    Page = page,
+                    PageSize = pageSize,
+                });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "ZansiDispatch GetShipments failed.");
-                return Result<List<ShipmentListItemDto>>.Failure(ErrorCodes.Exception, "Could not load shipments.");
+                return Result<PagedResult<ShipmentListItemDto>>.Failure(ErrorCodes.Exception, "Could not load shipments.");
             }
         }
 

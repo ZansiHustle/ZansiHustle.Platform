@@ -50,8 +50,8 @@ ORDER BY s.CreatedAt;
 
 /* ---------------------------------------------------------------------------
    STEP 2 — DELETE (transactional). Set @Commit = 1 to apply; 0 = dry run.
-   Also removes the matched shipments' orphan ledger entries + events
-   (those tables hold loose, un-FK'd ShipmentId references).
+   Also removes the matched shipments' orphan events, ACTIONS, and ledger
+   entries (those tables hold loose, un-FK'd ShipmentId references).
    --------------------------------------------------------------------------- */
 DECLARE @Commit bit = 0;   -- <<< set to 1 to actually delete
 
@@ -73,6 +73,10 @@ BEGIN TRAN;
     DELETE e
     FROM dbo.ZansiDispatchShipmentEvents AS e
     INNER JOIN @Doomed d ON d.Id = e.ShipmentId;
+
+    DELETE a
+    FROM dbo.ZansiDispatchShipmentActions AS a
+    INNER JOIN @Doomed d ON d.Id = a.ShipmentId;
 
     DELETE l
     FROM dbo.ZansiDispatchLedgerEntries AS l

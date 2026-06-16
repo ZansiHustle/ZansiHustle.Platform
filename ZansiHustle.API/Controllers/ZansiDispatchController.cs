@@ -84,15 +84,15 @@ namespace ZansiHustle.API.Controllers
         public async Task<IActionResult> Overview([FromQuery] DateTime? from, [FromQuery] DateTime? to, CancellationToken ct)
             => ToActionResult(await _dispatch.GetOverviewAsync(from, to, ct));
 
-        /// <summary>Lists shipments, optionally filtered by status.</summary>
+        /// <summary>
+        /// Lists shipments with SERVER-SIDE paging / sorting / filtering. Returns a
+        /// paged envelope (items + total + page + pageSize). Defaults: createdAt desc
+        /// (latest first), pageSize 25.
+        /// </summary>
         [HttpGet("shipments")]
         [Authorize(Roles = CommandCentreReadRoles)]
-        public async Task<IActionResult> Shipments(
-            [FromQuery] ZansiDispatchShipmentStatus? status,
-            [FromQuery] int page = 1,
-            [FromQuery] int pageSize = 30,
-            CancellationToken ct = default)
-            => ToActionResult(await _dispatch.GetShipmentsAsync(status, page, pageSize, ct));
+        public async Task<IActionResult> Shipments([FromQuery] ShipmentQueryDto query, CancellationToken ct = default)
+            => ToActionResult(await _dispatch.GetShipmentsAsync(query ?? new ShipmentQueryDto(), ct));
 
         /// <summary>Returns a single shipment's full detail.</summary>
         [HttpGet("shipments/{id:guid}")]

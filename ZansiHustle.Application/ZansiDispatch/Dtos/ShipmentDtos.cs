@@ -3,6 +3,26 @@ using ZansiHustle.Shared.Enums.ZansiDispatch;
 
 namespace ZansiHustle.Application.ZansiDispatch.Dtos
 {
+    /// <summary>
+    /// Server-side query for the command-centre shipments grid: paging, sorting,
+    /// and filtering all applied in the database (no full-table client fetch).
+    /// </summary>
+    public sealed class ShipmentQueryDto
+    {
+        public int Page { get; set; } = 1;
+        public int PageSize { get; set; } = 25;
+        /// <summary>createdAt | orderId | customer | provider | status | quoted | actual | net. Default createdAt.</summary>
+        public string? SortBy { get; set; }
+        /// <summary>asc | desc. Default desc (latest first).</summary>
+        public string? SortDirection { get; set; }
+        public ZansiDispatchShipmentStatus? Status { get; set; }
+        public ZansiDispatchProviderType? Provider { get; set; }
+        /// <summary>Free-text: tracking ref / short ref / provider shipment id / order code / customer name+email.</summary>
+        public string? Search { get; set; }
+        public DateTime? DateFrom { get; set; }
+        public DateTime? DateTo { get; set; }
+    }
+
     /// <summary>Full shipment detail for the command centre.</summary>
     public sealed class ShipmentDto
     {

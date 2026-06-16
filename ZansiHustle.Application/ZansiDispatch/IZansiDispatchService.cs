@@ -100,7 +100,7 @@ namespace ZansiHustle.Application.ZansiDispatch
 
         // ── Command centre (admin/ops) ──────────────────────────────────────
         Task<Result<CommandCentreOverviewDto>> GetOverviewAsync(DateTime? from, DateTime? to, CancellationToken ct = default);
-        Task<Result<List<ShipmentListItemDto>>> GetShipmentsAsync(ZansiDispatchShipmentStatus? status, int page, int pageSize, CancellationToken ct = default);
+        Task<Result<ZansiHustle.Application.Common.Paging.PagedResult<ShipmentListItemDto>>> GetShipmentsAsync(ShipmentQueryDto query, CancellationToken ct = default);
         Task<Result<ShipmentDto>> GetShipmentAsync(Guid shipmentId, CancellationToken ct = default);
         Task<Result<ShipmentDto>> CaptureActualCostAsync(Guid adminUserId, Guid shipmentId, CaptureActualCostRequestDto request, CancellationToken ct = default);
         Task<Result<ShipmentDto>> UpdateShipmentStatusAsync(Guid adminUserId, Guid shipmentId, UpdateShipmentStatusRequestDto request, CancellationToken ct = default);
