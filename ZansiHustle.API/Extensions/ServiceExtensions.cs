@@ -711,6 +711,10 @@ public static class ServiceExtensions
         // the configured one and falls back to ManualFallback.
         services.Configure<ZansiHustle.Infrastructure.Configuration.ZansiDispatchOptions>(
             configuration.GetSection(ZansiHustle.Infrastructure.Configuration.ZansiDispatchOptions.SectionName));
+        // UAT/dev quote observability switch (root "DispatchDebug" section;
+        // toggle with DispatchDebug__Enabled=true). Off by default.
+        services.Configure<ZansiHustle.Infrastructure.Configuration.DispatchDebugOptions>(
+            configuration.GetSection(ZansiHustle.Infrastructure.Configuration.DispatchDebugOptions.SectionName));
 
         // Deterministic in-house providers (always available, no credentials).
         services.AddScoped<
@@ -888,6 +892,23 @@ public static class ServiceExtensions
             var cg = dispatchOpts.CourierGuy;
             var courierGuyIsDefault =
                 string.Equals(configuredDefault, "CourierGuy", StringComparison.OrdinalIgnoreCase);
+
+            // Real-booking kill-switch warning — independent of the default
+            // provider. When booking is ON, create-from-quote can place REAL,
+            // billable courier shipments. SandboxMode does NOT prevent charges.
+            if (cg.Enabled && cg.AllowShipmentBooking)
+            {
+                logger.LogWarning(
+                    "[ZansiDispatch] Courier shipment BOOKING is ENABLED (CourierGuy.Enabled=true, AllowShipmentBooking=true, Configured={Configured}, SandboxMode={Sandbox}). " +
+                    "create-from-quote can place REAL, billable bookings. SandboxMode does NOT prevent billable bookings — ensure the configured Shiplogic/Courier Guy API key is a sandbox/test key. " +
+                    "Set ZansiDispatch__CourierGuy__AllowShipmentBooking=false to disable booking entirely.",
+                    cg.IsConfigured, cg.SandboxMode);
+            }
+            else if (cg.Enabled)
+            {
+                logger.LogInformation(
+                    "[ZansiDispatch] Courier shipment booking is DISABLED (AllowShipmentBooking=false). Quotes/tracking work; create-from-quote will not call the provider booking endpoint.");
+            }
 
             if (courierGuyIsDefault && cg.Enabled)
             {

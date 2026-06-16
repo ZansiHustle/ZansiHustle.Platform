@@ -57,7 +57,14 @@ namespace ZansiHustle.API.Controllers
         {
             if (!TryGetUserId(out var userId))
                 return ToActionResult(Result<QuoteDto>.Failure(ErrorCodes.Unauthorized, "Sign in to get delivery options."));
-            return ToActionResult(await _dispatch.CreateQuoteAsync(userId, request, ct));
+
+            // Client-supplied correlation id (UAT quote debug) — echoed into the
+            // dispatch logs so app → API → provider can be matched. Optional.
+            var correlationId = Request.Headers.TryGetValue("X-Correlation-Id", out var c)
+                ? c.ToString()
+                : null;
+
+            return ToActionResult(await _dispatch.CreateQuoteAsync(userId, request, ct, correlationId));
         }
 
         /// <summary>Marks a delivery option selected before checkout/order creation.</summary>

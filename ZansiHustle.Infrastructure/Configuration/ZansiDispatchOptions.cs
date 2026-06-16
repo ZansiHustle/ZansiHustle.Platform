@@ -48,6 +48,17 @@ namespace ZansiHustle.Infrastructure.Configuration
         /// <summary>Optional shared secret to authenticate inbound Courier Guy webhooks.</summary>
         public string? WebhookSecret { get; set; }
 
+        /// <summary>
+        /// Independent KILL SWITCH for real courier shipment booking (the
+        /// <c>POST /shipments</c> call that charges the courier account). Default
+        /// FALSE for safety: quotes/tracking still work, but
+        /// <c>create-from-quote</c> refuses to call the provider booking endpoint
+        /// until this is explicitly enabled. NOTE: <see cref="SandboxMode"/> does
+        /// NOT gate charges — THIS flag (plus using a sandbox/test API key) does.
+        /// Env: <c>ZansiDispatch__CourierGuy__AllowShipmentBooking</c>.
+        /// </summary>
+        public bool AllowShipmentBooking { get; set; }
+
         /// <summary>True only when the minimum credentials to call the API are present.</summary>
         public bool IsConfigured =>
             !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(ApiKey);

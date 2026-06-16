@@ -21,7 +21,10 @@ namespace ZansiHustle.Application.ZansiDispatch
     public interface IZansiDispatchService
     {
         // ── Checkout quoting ────────────────────────────────────────────────
-        Task<Result<QuoteDto>> CreateQuoteAsync(Guid userId, CreateQuoteRequestDto request, CancellationToken ct = default);
+        /// <param name="correlationId">Optional client-supplied id (X-Correlation-Id)
+        /// echoed into the UAT quote debug logs so a request can be matched across
+        /// app → API → provider.</param>
+        Task<Result<QuoteDto>> CreateQuoteAsync(Guid userId, CreateQuoteRequestDto request, CancellationToken ct = default, string? correlationId = null);
         Task<Result<QuoteDto>> SelectOptionAsync(Guid userId, bool isAdmin, Guid quoteId, Guid quoteOptionId, CancellationToken ct = default);
 
         // ── Order-creation bridge ───────────────────────────────────────────

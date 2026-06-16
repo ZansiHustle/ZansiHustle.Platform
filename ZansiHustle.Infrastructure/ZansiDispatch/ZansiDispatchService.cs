@@ -37,6 +37,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
         private readonly IEnumerable<IZansiDispatchQuoteProvider> _quoteProviders;
         private readonly IEnumerable<IZansiDispatchShipmentProvider> _shipmentProviders;
         private readonly ZansiDispatchOptions _opts;
+        private readonly DispatchDebugOptions _debug;
         private readonly ILogger<ZansiDispatchService> _logger;
 
         public ZansiDispatchService(
@@ -44,12 +45,14 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             IEnumerable<IZansiDispatchQuoteProvider> quoteProviders,
             IEnumerable<IZansiDispatchShipmentProvider> shipmentProviders,
             IOptions<ZansiDispatchOptions> opts,
+            IOptions<DispatchDebugOptions> debug,
             ILogger<ZansiDispatchService> logger)
         {
             _db = db;
             _quoteProviders = quoteProviders;
             _shipmentProviders = shipmentProviders;
             _opts = opts.Value;
+            _debug = debug.Value;
             _logger = logger;
         }
 
@@ -57,12 +60,23 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
         // Quoting
         // ════════════════════════════════════════════════════════════════════
 
-        public async Task<Result<QuoteDto>> CreateQuoteAsync(Guid userId, CreateQuoteRequestDto request, CancellationToken ct = default)
+        public async Task<Result<QuoteDto>> CreateQuoteAsync(Guid userId, CreateQuoteRequestDto request, CancellationToken ct = default, string? correlationId = null)
         {
+            var cid = string.IsNullOrWhiteSpace(correlationId) ? $"dq-{Guid.NewGuid():N}" : correlationId.Trim();
             try
             {
                 if (request is null)
                     return Result<QuoteDto>.Failure(ErrorCodes.BadRequest, "Request is required.");
+
+                if (_debug.Enabled)
+                {
+                    _logger.LogInformation(
+                        "[DispatchQuoteDebug] Incoming quote request correlationId={Cid} userId={UserId} listingId={ListingId} merchantId={MerchantId} destination={Destination} parcel={Parcel} request={Request}",
+                        cid, userId, request.ListingId, request.MerchantId ?? request.SellerId,
+                        Redact(request.BuyerAddressSummary),
+                        $"size={request.ItemSizeCategory} weightKg={request.EstimatedWeightKg} declaredValue={request.DeclaredValue}",
+                        Redact(SafeJson(request)));
+                }
 
                 var settings = ZansiDispatchDefaults.Resolve(await LoadSettingsAsync(ct));
                 var now = DateTime.UtcNow;
@@ -126,7 +140,26 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     DeliveryMinDate = request.DeliveryMinDate,
                 };
 
-                var (providerOptions, providerUsed, fallbackUsed) = await ResolveQuoteAsync(context, settings, ct);
+                if (_debug.Enabled)
+                {
+                    // The DERIVED quote input — what the provider actually prices
+                    // against (seller/pickup resolved from the merchant, parcel
+                    // defaults applied), which the thin mobile request doesn't show.
+                    _logger.LogInformation(
+                        "[DispatchQuoteDebug] Resolved quote context correlationId={Cid} listingId={ListingId} merchantId={MerchantId} shopId={ShopId} " +
+                        "pickup={Pickup} dropoff={Dropoff} parcelSize={Size} weightKg={WeightKg} dims={Dims} declaredValue={DeclaredValue} " +
+                        "collectionIncluded={Collection} context={Context}",
+                        cid, context.ListingId, context.MerchantId, context.ShopId,
+                        Redact($"{context.SellerLocalArea} / {context.SellerCity} / {context.SellerProvince} / {context.SellerPostalCode} / {context.SellerAddressSummary}"),
+                        Redact($"{context.BuyerLocalArea} / {context.BuyerCity} / {context.BuyerProvince} / {context.BuyerPostalCode} / {context.BuyerAddressSummary}"),
+                        context.ItemSizeCategory, context.EstimatedWeightKg,
+                        $"{context.SubmittedLengthCm}x{context.SubmittedWidthCm}x{context.SubmittedHeightCm}",
+                        context.DeclaredValue,
+                        settings.CollectionEnabled && (request.IncludeCollectionOption ?? true),
+                        Redact(SafeJson(context)));
+                }
+
+                var (providerOptions, providerUsed, fallbackUsed) = await ResolveQuoteAsync(context, settings, ct, cid);
 
                 var quote = new ZansiDispatchQuote
                 {
@@ -201,10 +234,27 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 dto.PricingSource = fallbackUsed
                     ? $"{providerUsed} (fallback)"
                     : providerUsed.ToString();
+
+                if (_debug.Enabled)
+                {
+                    // Human-readable enum names alongside the ints so the log is
+                    // self-explanatory (providerUsed=3 → CourierGuy, status=2 → Presented).
+                    _logger.LogInformation(
+                        "[DispatchQuoteDebug] Mapped quote response correlationId={Cid} quoteId={QuoteId} providerUsed={Provider} providerUsedName={ProviderName} status={Status} statusName={StatusName} fallbackUsed={Fallback} pricingSource={PricingSource} optionCount={Count} response={Response}",
+                        cid, dto.QuoteId, (int)providerUsed, providerUsed.ToString(), (int)dto.Status, dto.Status.ToString(),
+                        fallbackUsed, dto.PricingSource, dto.Options.Count, Redact(SafeJson(dto)));
+                }
+
                 return Result<QuoteDto>.Success(dto, "Delivery options ready.");
             }
             catch (Exception ex)
             {
+                if (_debug.Enabled)
+                {
+                    _logger.LogWarning(
+                        "[DispatchQuoteDebug] Quote failed correlationId={Cid} userId={UserId} exceptionType={ExType} error={Error}",
+                        cid, userId, ex.GetType().Name, ex.Message);
+                }
                 _logger.LogError(ex, "ZansiDispatch CreateQuote failed. UserId={UserId}", userId);
                 return Result<QuoteDto>.Failure(ErrorCodes.Exception, "Could not generate delivery options.");
             }
@@ -262,7 +312,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
         /// Persists a provider-request log per HTTP attempt (saved with the quote).
         /// </summary>
         private async Task<(List<ProviderQuoteOption> options, ZansiDispatchProviderType providerUsed, bool fallbackUsed)>
-            ResolveQuoteAsync(ZansiDispatchQuoteContext context, ZansiDispatchSettings settings, CancellationToken ct)
+            ResolveQuoteAsync(ZansiDispatchQuoteContext context, ZansiDispatchSettings settings, CancellationToken ct, string? cid = null)
         {
             var quoteByType = _quoteProviders.GroupBy(p => p.ProviderType).ToDictionary(g => g.Key, g => g.First());
             var desired = EffectiveDefaultProvider(settings);
@@ -270,7 +320,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             // Primary attempt.
             if (quoteByType.TryGetValue(desired, out var primary) && primary.IsEnabled)
             {
-                var res = await RunQuoteProviderAsync(primary, context, settings, ct);
+                var res = await RunQuoteProviderAsync(primary, context, settings, ct, cid);
                 if (res is { Ok: true, Options.Count: > 0 })
                     return (res.Options, desired, false);
             }
@@ -282,7 +332,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 && quoteByType.TryGetValue(ZansiDispatchProviderType.InternalEstimate, out var internalEstimate)
                 && internalEstimate.IsEnabled)
             {
-                var fb = await RunQuoteProviderAsync(internalEstimate, context, settings, ct);
+                var fb = await RunQuoteProviderAsync(internalEstimate, context, settings, ct, cid);
                 if (fb is { Ok: true, Options.Count: > 0 })
                     return (fb.Options, ZansiDispatchProviderType.InternalEstimate, true);
             }
@@ -296,7 +346,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 ? cfg : settings.DefaultProvider;
 
         private async Task<ProviderQuoteResult?> RunQuoteProviderAsync(
-            IZansiDispatchQuoteProvider provider, ZansiDispatchQuoteContext context, ZansiDispatchSettings settings, CancellationToken ct)
+            IZansiDispatchQuoteProvider provider, ZansiDispatchQuoteContext context, ZansiDispatchSettings settings, CancellationToken ct, string? cid = null)
         {
             var sw = Stopwatch.StartNew();
             Result<ProviderQuoteResult> result;
@@ -305,13 +355,31 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             sw.Stop();
 
             var data = result.IsSuccess ? result.Data : null;
+            var reqJson = data?.RawRequestJson ?? SafeJson(context);
+            var error = data?.Ok == false ? data.ErrorMessage : (result.IsSuccess ? null : result.Message);
             AddProviderLog(provider.ProviderType, ZansiDispatchProviderOperation.GetRates,
-                requestJson: data?.RawRequestJson ?? SafeJson(context),
+                requestJson: reqJson,
                 responseJson: data?.RawResponseJson,
                 ok: data?.Ok ?? false,
-                error: data?.Ok == false ? data.ErrorMessage : (result.IsSuccess ? null : result.Message),
+                error: error,
                 statusCode: data?.StatusCode,
                 durationMs: (int)sw.ElapsedMilliseconds);
+
+            if (_debug.Enabled)
+            {
+                // Provider outbound + inbound payloads. For InternalEstimate (no
+                // HTTP) the "request" is the quote context and the response is the
+                // deterministic estimate; for CourierGuy these are the real /rates
+                // payloads. API keys live in HTTP headers (never serialized here)
+                // and are redacted defensively regardless.
+                _logger.LogInformation(
+                    "[DispatchQuoteDebug] Provider quote request correlationId={Cid} provider={Provider} enabled={Enabled} payload={Payload}",
+                    cid, provider.ProviderType, provider.IsEnabled, Redact(reqJson));
+                _logger.LogInformation(
+                    "[DispatchQuoteDebug] Provider quote response correlationId={Cid} provider={Provider} ok={Ok} statusCode={Status} durationMs={Ms} error={Error} response={Response}",
+                    cid, provider.ProviderType, data?.Ok ?? false, data?.StatusCode, (int)sw.ElapsedMilliseconds,
+                    error, Redact(data?.RawResponseJson));
+            }
             return data;
         }
 
@@ -506,13 +574,61 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
 
                 var order = await _db.Orders.AsNoTracking()
                     .Where(o => o.Id == request.OrderId)
-                    .Select(o => new { o.Id, o.Code, o.BuyerUserId, o.MerchantId })
+                    .Select(o => new { o.Id, o.Code, o.BuyerUserId, o.MerchantId, o.PaymentStatus, o.Status, o.DeliveryQuoteOptionId })
                     .FirstOrDefaultAsync(ct);
                 if (order is null) return Result<ShipmentDto>.Failure(ErrorCodes.NotFound, "Order not found.");
 
                 var now = DateTime.UtcNow;
                 var shipment = await _db.ZansiDispatchShipments.FirstOrDefaultAsync(s => s.OrderId == request.OrderId, ct);
-                var newlyCreated = false;
+
+                // Idempotency FIRST: already booked with a courier → safe no-op
+                // return, before any guard, so a duplicate call after a successful
+                // booking is harmless (no error, no second charge).
+                if (shipment is not null && !string.IsNullOrWhiteSpace(shipment.ProviderShipmentId))
+                    return Result<ShipmentDto>.Success(MapShipment(shipment), "Shipment already booked.");
+
+                // ── SAFETY GATE ───────────────────────────────────────────────
+                // Never place a billable courier booking before the order is paid
+                // + seller-accepted, the option matches the order/customer, and
+                // (for a courier booking) booking is enabled and the addresses +
+                // parcel are complete. Validation runs BEFORE we create a shipment
+                // row or call the provider — a failed check creates nothing and
+                // never reaches the courier.
+                var shipmentProvider = ResolveShipmentProvider(option.ProviderType);
+                var willCallProvider = shipmentProvider is not null && shipmentProvider.IsEnabled
+                    && option.ServiceLevel != ZansiDispatchServiceLevel.Collection;
+
+                if (option.ServiceLevel == ZansiDispatchServiceLevel.Collection)
+                    return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, "Collection options cannot be booked with courier.");
+
+                if (order.PaymentStatus != ZansiHustle.Shared.Enums.Orders.PaymentStatus.Paid)
+                    return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, "Order must be paid before dispatch can be booked.");
+
+                // Seller acceptance moves a product order to Confirmed (see
+                // OrderService.AcceptAsync); AwaitingSellerAcceptance/Pending means
+                // the seller hasn't accepted yet.
+                if (order.Status != ZansiHustle.Shared.Enums.Orders.OrderStatus.Confirmed)
+                    return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, "Seller must accept the order before dispatch can be booked.");
+
+                // The option must be the one the customer selected + paid for on THIS order.
+                var optionMatchesOrder = order.DeliveryQuoteOptionId is Guid sel && sel == option.Id;
+                if (quote.UserId != order.BuyerUserId || !optionMatchesOrder)
+                    return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, "This delivery option does not belong to the order/customer.");
+
+                if (willCallProvider)
+                {
+                    // Kill switch — refuse to call the provider booking endpoint
+                    // unless explicitly enabled for this environment.
+                    if (!_opts.CourierGuy.AllowShipmentBooking)
+                        return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, "Courier booking is disabled in this environment.");
+
+                    // Hard-require complete pickup/delivery contact + address
+                    // (incl. postal codes) and valid parcel before any /shipments call.
+                    var gate = ValidateCourierBookingReadiness(quote, request);
+                    if (gate is not null)
+                        return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, gate);
+                }
+
                 if (shipment is null)
                 {
                     shipment = new ZansiDispatchShipment
@@ -538,22 +654,12 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     };
                     _db.ZansiDispatchShipments.Add(shipment);
                     _db.ZansiDispatchLedgerEntries.Add(QuoteChargedLedger(shipment.Id, order.Id, option.QuotedAmount, order.BuyerUserId, now));
-                    newlyCreated = true;
                 }
 
-                // Already booked with a courier → idempotent return.
-                if (!string.IsNullOrWhiteSpace(shipment.ProviderShipmentId))
-                {
-                    if (newlyCreated) await _db.SaveChangesAsync(ct);
-                    return Result<ShipmentDto>.Success(MapShipment(shipment), "Shipment already booked.");
-                }
-
-                // Book with Courier Guy only when the option is a courier option
-                // and the provider is enabled. Otherwise the shipment stays
-                // PendingDispatch (internal/collection — no courier booking).
-                var shipmentProvider = ResolveShipmentProvider(option.ProviderType);
-                if (shipmentProvider is not null && shipmentProvider.IsEnabled
-                    && option.ServiceLevel != ZansiDispatchServiceLevel.Collection)
+                // Book with Courier Guy only when the option is a courier option,
+                // the provider is enabled, AND booking passed the gate above.
+                // Otherwise the shipment stays PendingDispatch (no courier booking).
+                if (willCallProvider)
                 {
                     var providerReq = BuildShipmentRequest(shipment, quote, option, order.Code, request);
                     var sw = Stopwatch.StartNew();
@@ -1381,7 +1487,71 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
         }
 
         private static string? Trim(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+        // ── create-from-quote courier booking gate ───────────────────────────
+        // Returns an error message when the order/quote isn't ready for a REAL
+        // courier booking, or null when it's safe to call POST /shipments. Only
+        // invoked when a courier booking would actually be placed.
+        private static string? ValidateCourierBookingReadiness(
+            ZansiDispatchQuote quote, CreateShipmentFromQuoteRequestDto request)
+        {
+            // Pickup (seller/collection) contact + address.
+            if (!HasContact(request.CollectionContact))
+                return "Pickup contact (name and phone or email) is required before booking courier.";
+            if (string.IsNullOrWhiteSpace(quote.SellerStreetAddress) && string.IsNullOrWhiteSpace(quote.SellerAddressSummary))
+                return "Pickup street address is required before booking courier.";
+            if (string.IsNullOrWhiteSpace(quote.SellerCity))
+                return "Pickup city is required before booking courier.";
+            if (string.IsNullOrWhiteSpace(quote.SellerProvince))
+                return "Pickup province is required before booking courier.";
+            if (string.IsNullOrWhiteSpace(quote.SellerPostalCode))
+                return "Pickup postal code is required before booking courier.";
+
+            // Delivery (buyer) contact + address.
+            if (!HasContact(request.DeliveryContact))
+                return "Delivery contact (name and phone or email) is required before booking courier.";
+            if (string.IsNullOrWhiteSpace(quote.BuyerStreetAddress) && string.IsNullOrWhiteSpace(quote.BuyerAddressSummary))
+                return "Delivery street address is required before booking courier.";
+            if (string.IsNullOrWhiteSpace(quote.BuyerCity))
+                return "Delivery city is required before booking courier.";
+            if (string.IsNullOrWhiteSpace(quote.BuyerProvince))
+                return "Delivery province is required before booking courier.";
+            if (string.IsNullOrWhiteSpace(quote.BuyerPostalCode))
+                return "Delivery postal code is required before booking courier.";
+
+            // Parcel — weight + all three dimensions must be positive; declared value non-negative.
+            if (!(quote.EstimatedWeightKg > 0m)
+                || !(quote.SubmittedLengthCm > 0m)
+                || !(quote.SubmittedWidthCm > 0m)
+                || !(quote.SubmittedHeightCm > 0m))
+                return "Parcel weight and dimensions are required before booking courier.";
+            if (quote.DeclaredValue is decimal dv && dv < 0m)
+                return "Declared value cannot be negative.";
+
+            return null;
+        }
+
+        private static bool HasContact(DispatchContactDto? c) =>
+            c is not null
+            && !string.IsNullOrWhiteSpace(c.Name)
+            && (!string.IsNullOrWhiteSpace(c.MobileNumber) || !string.IsNullOrWhiteSpace(c.Email));
+
         private static string? TruncateRaw(string? s) => s is null ? null : (s.Length <= 8000 ? s : s.Substring(0, 8000));
         private static string? SafeJson(object? value) { try { return value is null ? null : JsonSerializer.Serialize(value); } catch { return null; } }
+
+        // Masks the value of any sensitive-looking JSON field before it reaches a
+        // log line — a defensive net for the UAT quote debug logs (API keys live
+        // in HTTP headers and are never serialized into these payloads, but we
+        // never want a key/token/secret/account number to slip through). Also
+        // truncates so a huge provider body can't flood the log.
+        private static readonly System.Text.RegularExpressions.Regex SensitiveJsonRegex =
+            new("\"(apikey|api_key|authorization|password|secret|token|bearer|accountnumber|account_number|webhooksecret)\"\\s*:\\s*\"[^\"]*\"",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private static string? Redact(string? json)
+        {
+            if (string.IsNullOrEmpty(json)) return json;
+            var masked = SensitiveJsonRegex.Replace(json, m => $"\"{m.Groups[1].Value}\":\"***\"");
+            return TruncateRaw(masked);
+        }
     }
 }
