@@ -52,6 +52,22 @@ namespace ZansiHustle.Infrastructure.Persistence.Orders
         }
 
         /// <inheritdoc />
+        public async Task<int> CountAwaitingSellerAcceptanceAsync(Guid sellerUserId)
+        {
+            // Actionable product requests: PAID orders parked at
+            // AwaitingSellerAcceptance for a merchant this user owns. Lightweight
+            // COUNT — no row materialisation. Same ownership filter as the seller
+            // order list (no cross-seller leakage). Returns 0 for non-sellers.
+            return await _context.Orders
+                .AsNoTracking()
+                .Where(x => x.Merchant != null
+                    && x.Merchant.OwnerUserId == sellerUserId
+                    && x.PaymentStatus == ZansiHustle.Shared.Enums.Orders.PaymentStatus.Paid
+                    && x.Status == ZansiHustle.Shared.Enums.Orders.OrderStatus.AwaitingSellerAcceptance)
+                .CountAsync();
+        }
+
+        /// <inheritdoc />
         public async Task<List<Order>> GetByMerchantAsync(Guid merchantId)
         {
             return await _context.Orders

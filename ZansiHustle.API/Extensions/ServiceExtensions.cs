@@ -627,6 +627,10 @@ public static class ServiceExtensions
         services.AddScoped<
             ZansiHustle.Application.Sellers.Incidents.ISellerIncidentService,
             ZansiHustle.Infrastructure.Sellers.SellerIncidentService>();
+        // Seller actionable-request count (Sell-tab badge).
+        services.AddScoped<
+            ZansiHustle.Application.Sellers.Requests.ISellerRequestsService,
+            ZansiHustle.Application.Sellers.Requests.SellerRequestsService>();
         services.AddScoped<IPaymentRepository, PaymentRepository>();
         services.AddScoped<IPaymentService, PaymentService>();
         services.AddScoped<IEventPlanService, EventPlanService>();

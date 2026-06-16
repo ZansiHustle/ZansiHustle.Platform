@@ -450,6 +450,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     ShopId = quote.ShopId,
                     PickupAddressSummary = quote.SellerAddressSummary,
                     DropoffAddressSummary = quote.BuyerAddressSummary,
+                    BuyerPostalCode = quote.BuyerPostalCode,
                 });
             }
             catch (Exception ex)

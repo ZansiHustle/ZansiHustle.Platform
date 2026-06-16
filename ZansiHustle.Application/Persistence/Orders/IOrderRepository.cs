@@ -10,6 +10,9 @@ namespace ZansiHustle.Application.Persistence.Orders
         Task<Order?> GetByIdAsync(Guid id);
         Task<List<Order>> GetByBuyerAsync(Guid buyerUserId);
         Task<List<Order>> GetBySellerUserAsync(Guid sellerUserId);
+        /// <summary>Lightweight count of PAID product orders awaiting seller
+        /// acceptance for merchants owned by <paramref name="sellerUserId"/>.</summary>
+        Task<int> CountAwaitingSellerAcceptanceAsync(Guid sellerUserId);
         Task<List<Order>> GetByMerchantAsync(Guid merchantId);
         Task<bool> ExistsByCodeAsync(string code);
         Task AddAsync(Order order);

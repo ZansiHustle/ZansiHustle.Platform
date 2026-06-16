@@ -137,6 +137,15 @@ namespace ZansiHustle.Application.Orders
                     if (!optionResult.IsSuccess || optionResult.Data is null)
                         return Result<OrderDto>.Failure(optionResult.Code, optionResult.Message);
                     deliveryOption = optionResult.Data;
+
+                    // Address completeness guard (server-side; protects against old
+                    // app versions / bad clients). A dispatchable courier option
+                    // can't be fulfilled without the buyer's postal code, so reject
+                    // BEFORE the order/payment is created. Collection options carry
+                    // no courier and are exempt.
+                    if (deliveryOption.ServiceLevel != ZansiDispatchServiceLevel.Collection
+                        && string.IsNullOrWhiteSpace(deliveryOption.BuyerPostalCode))
+                        return Result<OrderDto>.Failure(ErrorCodes.BadRequest, "Delivery postal code is required before payment.");
                 }
 
                 var buyer = await _userManager.FindByIdAsync(buyerUserId.ToString());

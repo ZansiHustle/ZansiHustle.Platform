@@ -57,6 +57,11 @@ namespace ZansiHustle.Application.Persistence.ServiceBookings
         /// </summary>
         Task<List<ServiceBooking>> GetForSellerAsync(Guid sellerUserId, bool includeClosed = false);
 
+        /// <summary>Lightweight count of service bookings awaiting provider
+        /// acceptance (status Requested) for shops owned by
+        /// <paramref name="sellerUserId"/>.</summary>
+        Task<int> CountRequestedForSellerAsync(Guid sellerUserId);
+
         Task AddAsync(ServiceBooking booking);
         void Update(ServiceBooking booking);
         Task<bool> SaveChangesAsync();

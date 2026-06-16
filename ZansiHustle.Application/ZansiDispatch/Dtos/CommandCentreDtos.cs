@@ -51,5 +51,8 @@ namespace ZansiHustle.Application.ZansiDispatch.Dtos
         public Guid? ShopId { get; set; }
         public string? PickupAddressSummary { get; set; }
         public string? DropoffAddressSummary { get; set; }
+        /// <summary>Buyer (delivery) postal code captured on the quote — required
+        /// before a dispatchable order can be paid for.</summary>
+        public string? BuyerPostalCode { get; set; }
     }
 }

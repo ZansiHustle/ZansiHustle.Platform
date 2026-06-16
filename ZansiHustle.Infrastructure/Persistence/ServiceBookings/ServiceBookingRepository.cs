@@ -147,6 +147,20 @@ namespace ZansiHustle.Infrastructure.Persistence.ServiceBookings
         }
 
         /// <inheritdoc />
+        public async Task<int> CountRequestedForSellerAsync(Guid sellerUserId)
+        {
+            // Actionable service requests: bookings awaiting provider acceptance
+            // (Requested) for shops this user owns. Lightweight COUNT, same owner
+            // filter as GetForSellerAsync (no cross-seller leakage). 0 for non-sellers.
+            return await _context.Set<ServiceBooking>()
+                .AsNoTracking()
+                .Where(b => b.Merchant != null
+                            && b.Merchant.OwnerUserId == sellerUserId
+                            && b.Status == ServiceBookingStatus.Requested)
+                .CountAsync();
+        }
+
+        /// <inheritdoc />
         public async Task AddAsync(ServiceBooking booking)
         {
             ArgumentNullException.ThrowIfNull(booking);
