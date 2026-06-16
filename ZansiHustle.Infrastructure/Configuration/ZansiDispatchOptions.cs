@@ -49,15 +49,52 @@ namespace ZansiHustle.Infrastructure.Configuration
         public string? WebhookSecret { get; set; }
 
         /// <summary>
-        /// Independent KILL SWITCH for real courier shipment booking (the
-        /// <c>POST /shipments</c> call that charges the courier account). Default
-        /// FALSE for safety: quotes/tracking still work, but
-        /// <c>create-from-quote</c> refuses to call the provider booking endpoint
-        /// until this is explicitly enabled. NOTE: <see cref="SandboxMode"/> does
-        /// NOT gate charges — THIS flag (plus using a sandbox/test API key) does.
+        /// KILL SWITCH for CREATING NEW courier shipments only (the
+        /// <c>POST /shipments</c> booking call that charges the courier account):
+        /// create-from-quote, auto-book after acceptance, and retry-booking.
+        /// Default FALSE for safety. This DOES NOT gate risk-reducing operations
+        /// on an ALREADY-BOOKED shipment — provider cancellation, status/tracking
+        /// refresh, label reads — nor internal cancellation of unbooked shipments;
+        /// those are governed by <see cref="AllowProviderCancellation"/> /
+        /// <see cref="AllowProviderStatusRefresh"/> (both default TRUE). NOTE:
+        /// <see cref="SandboxMode"/> does NOT gate charges — THIS flag (plus a
+        /// sandbox/test API key) does.
         /// Env: <c>ZansiDispatch__CourierGuy__AllowShipmentBooking</c>.
         /// </summary>
         public bool AllowShipmentBooking { get; set; }
+
+        /// <summary>
+        /// Whether the platform may CANCEL an already-booked courier shipment via
+        /// the provider. Default TRUE — cancelling an existing booking is a
+        /// risk-REDUCING action, so we must not get stuck with a booked shipment
+        /// ops can't cancel just because new bookings are disabled. Independent of
+        /// <see cref="AllowShipmentBooking"/>. Set false only to freeze ALL
+        /// provider cancellation (then a booked shipment's cancel is parked as
+        /// NeedsAttention instead of silently cancelled internally).
+        /// Env: <c>ZansiDispatch__CourierGuy__AllowProviderCancellation</c>.
+        /// </summary>
+        public bool AllowProviderCancellation { get; set; } = true;
+
+        /// <summary>
+        /// Whether the platform may poll the provider for live status/tracking.
+        /// Default TRUE — reading status is non-billable and never creates a
+        /// booking. Independent of <see cref="AllowShipmentBooking"/>.
+        /// Env: <c>ZansiDispatch__CourierGuy__AllowProviderStatusRefresh</c>.
+        /// </summary>
+        public bool AllowProviderStatusRefresh { get; set; } = true;
+
+        /// <summary>
+        /// When true, the backend AUTOMATICALLY books the courier shipment once
+        /// the seller ACCEPTS a paid product order (no Swagger/manual call).
+        /// Default FALSE for safety. This is independent of — and gated behind —
+        /// <see cref="AllowShipmentBooking"/>: auto-book never bypasses the kill
+        /// switch or any create-from-quote guard. Booking still happens only
+        /// after seller acceptance (never in the payment webhook), and a failed
+        /// auto-book marks the shipment <c>NeedsAttention</c> (it never fails the
+        /// seller-accept). Env:
+        /// <c>ZansiDispatch__CourierGuy__AutoBookAfterSellerAcceptance</c>.
+        /// </summary>
+        public bool AutoBookAfterSellerAcceptance { get; set; }
 
         /// <summary>True only when the minimum credentials to call the API are present.</summary>
         public bool IsConfigured =>

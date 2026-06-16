@@ -111,6 +111,7 @@ namespace ZansiHustle.Infrastructure.Persistence.ZansiDispatch
             builder.Property(x => x.DropoffAddressSummary).HasMaxLength(500);
             builder.Property(x => x.LabelUrl).HasMaxLength(1000);
             builder.Property(x => x.Notes).HasMaxLength(2000);
+            builder.Property(x => x.FailureReason).HasMaxLength(1000);
 
             // One shipment per order in v1 (single-merchant orders).
             builder.HasIndex(x => x.OrderId).IsUnique();
@@ -139,6 +140,25 @@ namespace ZansiHustle.Infrastructure.Persistence.ZansiDispatch
 
             builder.HasIndex(x => x.ShipmentId);
             builder.HasIndex(x => new { x.ShipmentId, x.EventTime });
+        }
+    }
+
+    public sealed class ZansiDispatchShipmentActionConfiguration : IEntityTypeConfiguration<ZansiDispatchShipmentAction>
+    {
+        public void Configure(EntityTypeBuilder<ZansiDispatchShipmentAction> builder)
+        {
+            builder.ToTable("ZansiDispatchShipmentActions");
+            builder.HasKey(x => x.Id);
+
+            builder.Property(x => x.ProviderStatusBefore).HasMaxLength(80);
+            builder.Property(x => x.ProviderStatusAfter).HasMaxLength(80);
+            builder.Property(x => x.Reason).HasMaxLength(1000);
+            builder.Property(x => x.Notes).HasMaxLength(1000);
+            builder.Property(x => x.CorrelationId).HasMaxLength(100);
+
+            builder.HasIndex(x => x.ShipmentId);
+            builder.HasIndex(x => new { x.ShipmentId, x.CreatedAtUtc });
+            builder.HasIndex(x => x.OrderId);
         }
     }
 

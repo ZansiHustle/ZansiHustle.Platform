@@ -132,6 +132,20 @@ namespace ZansiHustle.API.Controllers
             return ToActionResult(await _dispatch.CreateShipmentFromQuoteAsync(userId, request, ct));
         }
 
+        /// <summary>
+        /// Retries a failed / needs-attention courier booking from STORED data
+        /// (no manual payload — addresses/parcel/contacts are resolved server-side).
+        /// Idempotent; obeys every booking guard + the kill switch.
+        /// </summary>
+        [HttpPost("shipments/{id:guid}/retry-booking")]
+        [Authorize(Roles = CommandCentreWriteRoles)]
+        public async Task<IActionResult> RetryBooking(Guid id, CancellationToken ct)
+        {
+            if (!TryGetUserId(out var userId))
+                return ToActionResult(Result<ShipmentDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+            return ToActionResult(await _dispatch.RetryBookingAsync(userId, id, ct));
+        }
+
         /// <summary>Polls the courier, records events, and returns the tracking timeline.</summary>
         [HttpGet("shipments/{id:guid}/track")]
         [Authorize(Roles = CommandCentreReadRoles)]
@@ -153,6 +167,55 @@ namespace ZansiHustle.API.Controllers
         [Authorize(Roles = CommandCentreWriteRoles)]
         public async Task<IActionResult> Label(Guid id, CancellationToken ct)
             => ToActionResult(await _dispatch.GetShipmentLabelAsync(id, ct));
+
+        // ── Post-acceptance lifecycle (admin/ops) ───────────────────────────
+
+        /// <summary>Refresh live courier status from the provider + record the action.</summary>
+        [HttpPost("shipments/{id:guid}/refresh-status")]
+        [Authorize(Roles = CommandCentreReadRoles)]
+        public async Task<IActionResult> RefreshStatus(Guid id, CancellationToken ct)
+        {
+            if (!TryGetUserId(out var userId))
+                return ToActionResult(Result<ShipmentDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+            return ToActionResult(await _dispatch.RefreshStatusAsync(userId, id, ct));
+        }
+
+        /// <summary>Status-based provider cancellation (refresh → cancel / block / needs-attention).</summary>
+        [HttpPost("shipments/{id:guid}/cancel-provider")]
+        [Authorize(Roles = CommandCentreWriteRoles)]
+        public async Task<IActionResult> CancelProvider(Guid id, [FromBody] CancelShipmentRequestDto? request, CancellationToken ct)
+        {
+            if (!TryGetUserId(out var userId))
+                return ToActionResult(Result<ShipmentDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+            return ToActionResult(await _dispatch.CancelProviderAsync(userId, id, request, ct));
+        }
+
+        /// <summary>Reschedule pickup (provider call if supported, else an ops task — never faked).</summary>
+        [HttpPost("shipments/{id:guid}/reschedule-pickup")]
+        [Authorize(Roles = CommandCentreWriteRoles)]
+        public async Task<IActionResult> ReschedulePickup(Guid id, [FromBody] ReschedulePickupRequestDto request, CancellationToken ct)
+        {
+            if (!TryGetUserId(out var userId))
+                return ToActionResult(Result<ShipmentDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+            return ToActionResult(await _dispatch.ReschedulePickupAsync(userId, ZansiDispatchActor.Admin, id, request, ct));
+        }
+
+        /// <summary>Submit a delivery-date-change request on a shipment (ops, on the customer's behalf).</summary>
+        [HttpPost("shipments/{id:guid}/request-delivery-change")]
+        [Authorize(Roles = CommandCentreWriteRoles)]
+        public async Task<IActionResult> RequestDeliveryChange(Guid id, [FromBody] RequestDeliveryChangeRequestDto request, CancellationToken ct)
+        {
+            if (!TryGetUserId(out var userId))
+                return ToActionResult(Result<ShipmentDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+            // Ops submits on behalf — the service still records the action against the shipment.
+            return ToActionResult(await _dispatch.RequestDeliveryChangeAsync(userId, id, request, ct));
+        }
+
+        /// <summary>The shipment "Activity / Actions" audit timeline.</summary>
+        [HttpGet("shipments/{id:guid}/actions")]
+        [Authorize(Roles = CommandCentreReadRoles)]
+        public async Task<IActionResult> Actions(Guid id, CancellationToken ct)
+            => ToActionResult(await _dispatch.GetShipmentActionsAsync(id, ct));
 
         // ── Webhook foundation (courier → us; anonymous + optional secret) ──
 

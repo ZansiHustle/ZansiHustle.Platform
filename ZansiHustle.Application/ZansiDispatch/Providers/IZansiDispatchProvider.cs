@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using ZansiHustle.Shared.Enums.ZansiDispatch;
@@ -39,9 +40,27 @@ namespace ZansiHustle.Application.ZansiDispatch.Providers
     /// </summary>
     public interface IZansiDispatchShipmentProvider : IZansiDispatchProvider
     {
+        // ── Capability flags — true ONLY when the real provider API supports the
+        //    action. The service checks these before attempting an action and
+        //    NEVER fakes success for an unsupported one (it creates an ops task
+        //    instead). ──────────────────────────────────────────────────────────
+        /// <summary>Can cancel a booked shipment with the courier.</summary>
+        bool SupportsCancelShipment { get; }
+        /// <summary>Can poll the courier for live tracking/status.</summary>
+        bool SupportsStatusRefresh { get; }
+        /// <summary>Can reschedule the collection/pickup date with the courier.</summary>
+        bool SupportsPickupReschedule { get; }
+        /// <summary>Can reschedule the delivery date with the courier.</summary>
+        bool SupportsDeliveryReschedule { get; }
+
         Task<Result<ProviderShipmentResult>> CreateShipmentAsync(ProviderShipmentRequest request, CancellationToken ct = default);
         Task<Result<ProviderTrackingResult>> GetShipmentStatusAsync(string trackingReference, CancellationToken ct = default);
         Task<Result<ProviderCancelResult>> CancelShipmentAsync(string trackingReference, CancellationToken ct = default);
         Task<Result<ProviderLabelResult>> GetShipmentLabelAsync(string providerShipmentId, CancellationToken ct = default);
+
+        /// <summary>Reschedule pickup (only call when <see cref="SupportsPickupReschedule"/> is true).</summary>
+        Task<Result<ProviderRescheduleResult>> ReschedulePickupAsync(string trackingReference, DateTime newPickupDateUtc, CancellationToken ct = default);
+        /// <summary>Reschedule delivery (only call when <see cref="SupportsDeliveryReschedule"/> is true).</summary>
+        Task<Result<ProviderRescheduleResult>> RescheduleDeliveryAsync(string trackingReference, DateTime newDeliveryDateUtc, CancellationToken ct = default);
     }
 }

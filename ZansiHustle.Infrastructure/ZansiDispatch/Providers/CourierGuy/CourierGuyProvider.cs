@@ -57,6 +57,15 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch.Providers.CourierGuy
 
         public bool IsEnabled => Cg.Enabled && Cg.IsConfigured;
 
+        // ── Capability flags ────────────────────────────────────────────────
+        // Shiplogic / Courier Guy supports cancel + tracking. There is NO clean
+        // pickup/delivery reschedule endpoint, so these report false and the
+        // service raises an ops task instead of pretending the change worked.
+        public bool SupportsCancelShipment => true;
+        public bool SupportsStatusRefresh => true;
+        public bool SupportsPickupReschedule => false;
+        public bool SupportsDeliveryReschedule => false;
+
         private string BaseUrl => string.IsNullOrWhiteSpace(Cg.BaseUrl) ? DefaultSandboxBaseUrl : Cg.BaseUrl!.TrimEnd('/');
 
         // ── Quote (POST /rates) ─────────────────────────────────────────────
@@ -350,6 +359,26 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch.Providers.CourierGuy
             }
             return Result<ProviderCancelResult>.Success(result);
         }
+
+        // ── Reschedule (UNSUPPORTED) ────────────────────────────────────────
+        // Shiplogic has no clean reschedule endpoint. We return Supported=false
+        // (NOT a fake success) so the service raises an ops task instead.
+
+        public Task<Result<ProviderRescheduleResult>> ReschedulePickupAsync(string trackingReference, DateTime newPickupDateUtc, CancellationToken ct = default)
+            => Task.FromResult(Result<ProviderRescheduleResult>.Success(new ProviderRescheduleResult
+            {
+                Ok = false,
+                Supported = false,
+                ErrorMessage = "Pickup reschedule is not supported by the courier integration.",
+            }));
+
+        public Task<Result<ProviderRescheduleResult>> RescheduleDeliveryAsync(string trackingReference, DateTime newDeliveryDateUtc, CancellationToken ct = default)
+            => Task.FromResult(Result<ProviderRescheduleResult>.Success(new ProviderRescheduleResult
+            {
+                Ok = false,
+                Supported = false,
+                ErrorMessage = "Delivery reschedule is not supported by the courier integration.",
+            }));
 
         // ── Label (GET /shipments/label) ────────────────────────────────────
 

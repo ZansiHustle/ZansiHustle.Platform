@@ -911,7 +911,8 @@ public static class ServiceExtensions
             else if (cg.Enabled)
             {
                 logger.LogInformation(
-                    "[ZansiDispatch] Courier shipment booking is DISABLED (AllowShipmentBooking=false). Quotes/tracking work; create-from-quote will not call the provider booking endpoint.");
+                    "[ZansiDispatch] Courier shipment booking is DISABLED (AllowShipmentBooking=false). NEW bookings (create-from-quote / auto-book / retry) are blocked. Risk-reducing ops on already-booked shipments still work — provider cancellation={Cancel}, status/tracking refresh={Status} (defaults true).",
+                    cg.AllowProviderCancellation, cg.AllowProviderStatusRefresh);
             }
 
             if (courierGuyIsDefault && cg.Enabled)

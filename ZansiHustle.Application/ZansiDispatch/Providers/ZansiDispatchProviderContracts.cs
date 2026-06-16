@@ -202,4 +202,16 @@ namespace ZansiHustle.Application.ZansiDispatch.Providers
         public string? RawResponseJson { get; set; }
         public int? StatusCode { get; set; }
     }
+
+    /// <summary>Result of a pickup/delivery reschedule attempt.</summary>
+    public sealed class ProviderRescheduleResult
+    {
+        public bool Ok { get; set; }
+        /// <summary>False when the provider integration doesn't support rescheduling
+        /// (the service then creates an ops task rather than faking success).</summary>
+        public bool Supported { get; set; }
+        public string? ErrorMessage { get; set; }
+        public string? RawResponseJson { get; set; }
+        public int? StatusCode { get; set; }
+    }
 }

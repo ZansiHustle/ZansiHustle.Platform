@@ -85,8 +85,17 @@ namespace ZansiHustle.Application.ZansiDispatch.Dtos
         /// <summary>Provider label (e.g. "CourierGuy"). Null until dispatch starts.</summary>
         public string? TrackingProvider { get; set; }
         public string? TrackingNumber { get; set; }
+        /// <summary>Customer-displayable tracking reference: full tracking number when
+        /// present, else the courier short reference (e.g. <c>7D67MD</c>).</summary>
+        public string? TrackingReference { get; set; }
         public DateTime? DeliveredAt { get; set; }
         public List<OrderDispatchEventDto> Events { get; set; } = new();
+        /// <summary>
+        /// Customer-safe lifecycle updates derived from the shipment action log
+        /// (reschedule/cancellation requests etc.). Friendly labels only — never
+        /// raw provider errors, reasons, or admin notes.
+        /// </summary>
+        public List<OrderDispatchCustomerUpdateDto> Updates { get; set; } = new();
     }
 
     /// <summary>A single customer-safe dispatch checkpoint (mapped status + time).</summary>
@@ -95,5 +104,12 @@ namespace ZansiHustle.Application.ZansiDispatch.Dtos
         public ZansiDispatchShipmentStatus InternalStatus { get; set; }
         public string? Message { get; set; }
         public DateTime EventTime { get; set; }
+    }
+
+    /// <summary>A customer-safe lifecycle update (friendly label + time).</summary>
+    public sealed class OrderDispatchCustomerUpdateDto
+    {
+        public string Label { get; set; } = string.Empty;
+        public DateTime OccurredAtUtc { get; set; }
     }
 }

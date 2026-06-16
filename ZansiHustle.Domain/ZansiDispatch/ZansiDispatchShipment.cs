@@ -64,6 +64,19 @@ namespace ZansiHustle.Domain.ZansiDispatch
         /// <summary>Latest raw provider response (booking/tracking) for debugging. Never returned to buyers.</summary>
         public string? RawProviderResponseJson { get; set; }
 
+        // ── Booking-attempt / failure tracking (auto-book + retry) ──────────
+        /// <summary>
+        /// Why the most recent courier-booking attempt failed (or was blocked).
+        /// Set when <see cref="Status"/> is <c>NeedsAttention</c>; cleared on a
+        /// successful booking. Provider-safe message (no secrets) — surfaced in
+        /// the ops "Needs attention" queue.
+        /// </summary>
+        public string? FailureReason { get; set; }
+        /// <summary>UTC time of the last courier-booking attempt (auto or retry).</summary>
+        public DateTime? LastBookingAttemptAtUtc { get; set; }
+        /// <summary>How many times a courier booking has been attempted for this shipment.</summary>
+        public int BookingAttemptCount { get; set; }
+
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     }

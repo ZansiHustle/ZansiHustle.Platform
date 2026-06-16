@@ -20,6 +20,7 @@ using ZansiHustle.Domain.ServiceBookings;
 using ZansiHustle.Shared.Enums.Listings;
 using ZansiHustle.Shared.Enums.Orders;
 using ZansiHustle.Shared.Enums.ServiceBookings;
+using ZansiHustle.Shared.Enums.ZansiDispatch;
 using ZansiHustle.Shared.Enums.Wallets;
 using ZansiHustle.Shared.Enums.ZansiDispatch;
 using ZansiHustle.Shared.Errors;
@@ -477,6 +478,13 @@ namespace ZansiHustle.Application.Orders
                 var snapResult = await _dispatch.GetOrderDispatchSnapshotAsync(orderId);
                 var snap = snapResult.IsSuccess ? snapResult.Data : null;
 
+                // Customer-safe lifecycle updates: dispatch action-log milestones
+                // (reschedule/cancellation) + payment-confirmed refund state.
+                var updates = (snap?.Updates ?? new List<OrderDispatchCustomerUpdateDto>())
+                    .Select(u => new OrderTrackingUpdateDto { Label = u.Label, OccurredAtUtc = u.OccurredAtUtc })
+                    .ToList();
+                AppendRefundUpdates(order, updates);
+
                 var dto = new OrderTrackingDto
                 {
                     OrderId = order.Id,
@@ -487,6 +495,8 @@ namespace ZansiHustle.Application.Orders
                     DispatchStatus = snap?.HasShipment == true ? snap.Status : null,
                     TrackingProvider = snap?.HasShipment == true ? snap.TrackingProvider : null,
                     TrackingNumber = snap?.HasShipment == true ? snap.TrackingNumber : null,
+                    // Display ref: full tracking number, else the courier short ref.
+                    TrackingReference = snap?.HasShipment == true ? snap.TrackingReference : null,
                     TrackingUrl = null, // not surfaced to customers yet
                     EstimatedDeliveryUtc = null, // provider ETA not stored yet
                     DeliveredAtUtc = snap?.DeliveredAt,
@@ -495,6 +505,7 @@ namespace ZansiHustle.Application.Orders
                     // Buyer's delivery destination (NOT the seller pickup address).
                     DestinationSummary = order.DeliveryAddress,
                     Timeline = BuildTrackingTimeline(order, snap),
+                    Updates = updates,
                 };
 
                 return Result<OrderTrackingDto>.Success(dto, "Tracking retrieved successfully.");
@@ -547,6 +558,39 @@ namespace ZansiHustle.Application.Orders
                 or ZansiDispatchShipmentStatus.Cancelled
                 or ZansiDispatchShipmentStatus.Returned
                 or ZansiDispatchShipmentStatus.Exception;
+
+        /// <summary>
+        /// Append CUSTOMER-SAFE refund updates driven by ACTUAL payment state — not
+        /// by a cancellation request. Only a real <c>PaymentStatus.Refunded</c>
+        /// surfaces a completion line; a cancelled-but-not-yet-refunded order shows
+        /// "Refund processing". No raw provider/payment errors are ever exposed.
+        /// </summary>
+        private static void AppendRefundUpdates(Order order, List<OrderTrackingUpdateDto> updates)
+        {
+            var when = order.CancelledAtUtc ?? order.UpdatedAtUtc ?? order.CreatedAtUtc;
+
+            if (order.PaymentStatus == PaymentStatus.Refunded)
+            {
+                // ZansiHustle refunds for cancelled orders are credited to the
+                // buyer's wallet (OrderService refund path) — so a confirmed
+                // Refunded state means the wallet credit completed.
+                updates.Add(new OrderTrackingUpdateDto
+                {
+                    Label = "Refund credited to wallet",
+                    OccurredAtUtc = when,
+                });
+            }
+            else if (order.Status == OrderStatus.Cancelled && order.PaymentStatus == PaymentStatus.Paid)
+            {
+                // Cancelled but the money hasn't been returned yet — never claim
+                // "completed" until PaymentStatus actually flips to Refunded.
+                updates.Add(new OrderTrackingUpdateDto
+                {
+                    Label = "Refund processing",
+                    OccurredAtUtc = when,
+                });
+            }
+        }
 
         /// <summary>
         /// Builds the customer timeline from the order lifecycle + the stored
@@ -616,10 +660,20 @@ namespace ZansiHustle.Application.Orders
                 }
             }
 
+            // Courier booked but not yet collected → the "awaiting dispatch" stage
+            // should read "Preparing pickup", not "Waiting for dispatch".
+            var dispatchBooked = snap is { HasShipment: true }
+                && snap.Status is ZansiDispatchShipmentStatus.BookedWithCourier
+                    or ZansiDispatchShipmentStatus.PreparingPickup;
+
             var timeline = new List<OrderTrackingTimelineItemDto>(TrackingCheckpoints.Length);
             for (var i = 0; i < TrackingCheckpoints.Length; i++)
             {
                 var (key, label) = TrackingCheckpoints[i];
+
+                // Once the courier is booked, relabel the awaiting-dispatch step.
+                if (i == StageAwaitingDispatch && dispatchBooked)
+                    label = "Preparing pickup";
 
                 string status;
                 if (i < reached)
@@ -646,7 +700,9 @@ namespace ZansiHustle.Application.Orders
                 else if (status == "Current" && i == StageAccepted)
                     description = "Your payment is secured. We're waiting for the seller to confirm this order.";
                 else if (status == "Current" && i == StageAwaitingDispatch)
-                    description = "Your order has been accepted. Dispatch updates will appear here once arranged.";
+                    description = dispatchBooked
+                        ? "Courier has been booked and is preparing collection from the seller."
+                        : "Your order has been accepted. Dispatch updates will appear here once arranged.";
 
                 timeline.Add(new OrderTrackingTimelineItemDto
                 {
@@ -701,6 +757,13 @@ namespace ZansiHustle.Application.Orders
                     await _dispatch.CreateShipmentForPaidOrderAsync(
                         order.Id, order.BuyerUserId, order.MerchantId, deliveryOptionId,
                         order.DeliveryFee ?? 0m, order.DeliveryAddress);
+
+                    // Optionally auto-book the courier now that the seller has
+                    // accepted (gated behind AutoBookAfterSellerAcceptance AND the
+                    // AllowShipmentBooking kill switch). Best-effort: a booking
+                    // failure is recorded as NeedsAttention for ops and never fails
+                    // the acceptance. NEVER runs in the payment webhook.
+                    await _dispatch.AutoBookForAcceptedOrderAsync(order.Id);
                 }
 
                 await _notifications.NotifyCustomerOrderAcceptedAsync(order);
@@ -777,6 +840,124 @@ namespace ZansiHustle.Application.Orders
             {
                 _logger.LogError(ex, "Failed to reject order {OrderId} for seller {UserId}.", orderId, userId);
                 return Result<OrderDto>.Failure(ErrorCodes.Exception, $"Failed to reject the order. {ex.Message}");
+            }
+        }
+
+        /// <inheritdoc />
+        public async Task<Result<OrderDto>> CancelFulfilmentAsync(Guid userId, Guid orderId, RejectOrderRequestDto? request)
+        {
+            try
+            {
+                var reason = request?.Reason?.Trim();
+
+                var order = await _orderRepository.GetByIdAsync(orderId);
+                if (order is null)
+                    return Result<OrderDto>.Failure(ErrorCodes.NotFound, "Order not found.");
+
+                if (order.Merchant?.OwnerUserId != userId)
+                    return Result<OrderDto>.Failure(ErrorCodes.Forbidden, "Only the seller can cancel this order's fulfilment.");
+
+                if (order.Items.Any(i => i.ListingType == ListingType.Service))
+                    return Result<OrderDto>.Failure(ErrorCodes.BadRequest, "Service bookings are managed from the booking screen.");
+
+                // This is the AFTER-ACCEPTANCE path. Before acceptance the seller
+                // uses Reject. Only an accepted (Confirmed/InProgress) order can have
+                // its fulfilment cancelled.
+                if (order.Status is not (OrderStatus.Confirmed or OrderStatus.InProgress))
+                    return Result<OrderDto>.Failure(ErrorCodes.Conflict, "This order can't have its fulfilment cancelled in its current state.");
+
+                // Ask ZansiDispatch what's safe based on the REAL shipment/provider
+                // status (not a time window). This also cancels the shipment with the
+                // courier when possible + writes the audit actions.
+                var decision = await _dispatch.TryCancelForOrderAsync(
+                    orderId, ZansiDispatchActor.Seller, userId, reason);
+                if (!decision.IsSuccess || decision.Data is null)
+                    return Result<OrderDto>.Failure(ErrorCodes.Exception, "Could not check the courier status. Please try again.");
+
+                var outcome = decision.Data;
+                if (!outcome.CanRefund)
+                {
+                    // Blocked (already collected/in transit) or provider cancel failed
+                    // (needs ops). Order stays as-is; surface the customer-safe message.
+                    return Result<OrderDto>.Failure(ErrorCodes.BadRequest, outcome.Message);
+                }
+
+                var now = DateTime.UtcNow;
+                if (order.PaymentStatus == PaymentStatus.Paid)
+                {
+                    var currency = string.IsNullOrWhiteSpace(order.Currency) ? "ZAR" : order.Currency;
+                    if (order.Total > 0m)
+                    {
+                        await _wallet.CreditAsync(
+                            order.BuyerUserId,
+                            WalletTransactionType.OrderCancelledCredit,
+                            order.Total, currency,
+                            "Order", order.Id,
+                            "Refund for seller-cancelled order");
+                    }
+                    order.PaymentStatus = PaymentStatus.Refunded;
+                }
+
+                order.Status = OrderStatus.Cancelled;
+                order.CancelledAtUtc = now;
+                order.CancellationReason = string.IsNullOrWhiteSpace(reason)
+                    ? "Seller cancelled after acceptance."
+                    : $"Seller cancelled after acceptance: {reason}";
+                order.UpdatedAtUtc = now;
+                _orderRepository.Update(order);
+                var saved = await _orderRepository.SaveChangesAsync();
+                if (!saved)
+                    return Result<OrderDto>.Failure(ErrorCodes.Exception, "Failed to cancel the order.");
+
+                await _notifications.NotifyCustomerOrderRejectedAsync(order, reason);
+
+                var reloaded = await _orderRepository.GetByIdAsync(order.Id);
+                return Result<OrderDto>.Success(MapToDto(reloaded ?? order), outcome.Message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to cancel fulfilment for order {OrderId} / seller {UserId}.", orderId, userId);
+                return Result<OrderDto>.Failure(ErrorCodes.Exception, $"Failed to cancel the order. {ex.Message}");
+            }
+        }
+
+        /// <inheritdoc />
+        public async Task<Result<ShipmentDto>> ReschedulePickupAsync(Guid userId, Guid orderId, ReschedulePickupRequestDto request)
+        {
+            try
+            {
+                var order = await _orderRepository.GetByIdAsync(orderId);
+                if (order is null)
+                    return Result<ShipmentDto>.Failure(ErrorCodes.NotFound, "Order not found.");
+                if (order.Merchant?.OwnerUserId != userId)
+                    return Result<ShipmentDto>.Failure(ErrorCodes.Forbidden, "Only the seller can reschedule pickup for this order.");
+
+                return await _dispatch.ReschedulePickupForOrderAsync(userId, ZansiDispatchActor.Seller, orderId, request);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to reschedule pickup for order {OrderId} / seller {UserId}.", orderId, userId);
+                return Result<ShipmentDto>.Failure(ErrorCodes.Exception, "Could not request the pickup reschedule.");
+            }
+        }
+
+        /// <inheritdoc />
+        public async Task<Result<ShipmentDto>> RequestDeliveryChangeAsync(Guid userId, Guid orderId, RequestDeliveryChangeRequestDto request)
+        {
+            try
+            {
+                var order = await _orderRepository.GetByIdAsync(orderId);
+                if (order is null)
+                    return Result<ShipmentDto>.Failure(ErrorCodes.NotFound, "Order not found.");
+                if (order.BuyerUserId != userId)
+                    return Result<ShipmentDto>.Failure(ErrorCodes.Forbidden, "Only the customer can request a delivery change.");
+
+                return await _dispatch.RequestDeliveryChangeForOrderAsync(userId, orderId, request);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to request delivery change for order {OrderId} / user {UserId}.", orderId, userId);
+                return Result<ShipmentDto>.Failure(ErrorCodes.Exception, "Could not submit your delivery change request.");
             }
         }
 

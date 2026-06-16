@@ -50,6 +50,17 @@ public enum ZansiDispatchShipmentStatus
     OutForDelivery = 10,
     Exception = 11,
     OnHold = 12,
+
+    /// <summary>
+    /// Automatic / retried courier booking FAILED (or was blocked) and the
+    /// shipment needs ops action — e.g. provider rejected the parcel, a postal
+    /// code is missing, the provider timed out, booking is disabled by the
+    /// environment, or the quote expired. The failure reason is stored on the
+    /// shipment (<c>FailureReason</c>); the portal surfaces these as a red
+    /// "Needs attention" queue with a Retry action. NOT shown as a failure to
+    /// the customer — their tracking still reads "awaiting dispatch".
+    /// </summary>
+    NeedsAttention = 13,
 }
 
 /// <summary>Reconciliation state of a shipment's delivery-fee vs actual courier cost.</summary>
@@ -123,4 +134,42 @@ public enum ZansiDispatchAddressType
     Counter = 3,
     Locker = 4,
     Unknown = 5,
+}
+
+/// <summary>Who performed a shipment action (for the audit log). Stored as int.</summary>
+public enum ZansiDispatchActor
+{
+    System = 0,
+    Seller = 1,
+    Customer = 2,
+    Admin = 3,
+    Webhook = 4,
+}
+
+/// <summary>
+/// Audited shipment lifecycle action (the "Activity / Actions" timeline in the
+/// ZansiDispatch detail drawer). Stored as int.
+/// </summary>
+public enum ZansiDispatchActionType
+{
+    SellerAccepted = 1,
+    AutoBookingAttempted = 2,
+    BookingSucceeded = 3,
+    BookingFailed = 4,
+    SellerCancellationRequested = 5,
+    ProviderStatusRefreshed = 6,
+    ProviderCancellationAttempted = 7,
+    ProviderCancellationSucceeded = 8,
+    ProviderCancellationFailed = 9,
+    PickupRescheduleRequested = 10,
+    PickupRescheduleSucceeded = 11,
+    PickupRescheduleFailed = 12,
+    CustomerDeliveryChangeRequested = 13,
+    DeliveryRescheduleSucceeded = 14,
+    DeliveryRescheduleFailed = 15,
+    OpsManualOverride = 16,
+    WebhookStatusReceived = 17,
+    TrackingRefreshed = 18,
+    /// <summary>Seller self-cancel blocked because the parcel is already collected/in transit.</summary>
+    CancellationBlocked = 19,
 }

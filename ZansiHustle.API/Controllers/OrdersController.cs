@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using ZansiHustle.Application.Common.Interfaces.Shared;
 using ZansiHustle.Application.Orders;
 using ZansiHustle.Application.Orders.Dtos;
+using ZansiHustle.Application.ZansiDispatch.Dtos;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
 
@@ -159,6 +160,46 @@ namespace ZansiHustle.API.Controllers
                 return ToActionResult(Result<OrderDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
 
             var result = await _orderService.RejectAsync(userId.Value, id, request ?? new RejectOrderRequestDto());
+            return ToActionResult(result);
+        }
+
+        /// <summary>
+        /// Seller cancels fulfilment AFTER acceptance. Status-based: cancels the
+        /// shipment (with the courier where possible) + refunds when safe; blocks
+        /// when the parcel is already collected/in transit (→ support).
+        /// </summary>
+        [HttpPost("{id:guid}/cancel-fulfilment")]
+        [ProducesResponseType(typeof(Result<OrderDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> CancelFulfilment(Guid id, [FromBody] RejectOrderRequestDto? request)
+        {
+            var userId = _currentUserService.UserId;
+            if (!userId.HasValue)
+                return ToActionResult(Result<OrderDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+            var result = await _orderService.CancelFulfilmentAsync(userId.Value, id, request);
+            return ToActionResult(result);
+        }
+
+        /// <summary>Seller requests a pickup reschedule for an accepted order's shipment.</summary>
+        [HttpPost("{id:guid}/reschedule-pickup")]
+        [ProducesResponseType(typeof(Result<ShipmentDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> ReschedulePickup(Guid id, [FromBody] ReschedulePickupRequestDto request)
+        {
+            var userId = _currentUserService.UserId;
+            if (!userId.HasValue)
+                return ToActionResult(Result<ShipmentDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+            var result = await _orderService.ReschedulePickupAsync(userId.Value, id, request);
+            return ToActionResult(result);
+        }
+
+        /// <summary>Customer requests a delivery-date change (a request — not a guaranteed change).</summary>
+        [HttpPost("{id:guid}/request-delivery-change")]
+        [ProducesResponseType(typeof(Result<ShipmentDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> RequestDeliveryChange(Guid id, [FromBody] RequestDeliveryChangeRequestDto request)
+        {
+            var userId = _currentUserService.UserId;
+            if (!userId.HasValue)
+                return ToActionResult(Result<ShipmentDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+            var result = await _orderService.RequestDeliveryChangeAsync(userId.Value, id, request);
             return ToActionResult(result);
         }
 

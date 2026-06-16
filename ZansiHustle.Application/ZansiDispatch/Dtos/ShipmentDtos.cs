@@ -34,6 +34,10 @@ namespace ZansiHustle.Application.ZansiDispatch.Dtos
         public string? ProviderShipmentId { get; set; }
         public string? TrackingNumber { get; set; }
         public string? ShortTrackingReference { get; set; }
+        /// <summary>Display tracking reference: <c>TrackingNumber</c> when present,
+        /// otherwise the courier <c>ShortTrackingReference</c>. Avoids showing a
+        /// null tracking number when a usable short ref exists.</summary>
+        public string? TrackingReference { get; set; }
         public string? ProviderShipmentReference { get; set; }
         public string? CourierReference { get; set; }
         public string? PickupAddressSummary { get; set; }
@@ -43,6 +47,12 @@ namespace ZansiHustle.Application.ZansiDispatch.Dtos
         public string? LabelUrl { get; set; }
         public DateTime? LabelUrlExpiresAt { get; set; }
         public string? Notes { get; set; }
+
+        // ── Booking-attempt / failure (NeedsAttention queue) ────────────
+        /// <summary>Why the last courier-booking attempt failed (NeedsAttention).</summary>
+        public string? FailureReason { get; set; }
+        public DateTime? LastBookingAttemptAtUtc { get; set; }
+        public int BookingAttemptCount { get; set; }
 
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
@@ -67,6 +77,12 @@ namespace ZansiHustle.Application.ZansiDispatch.Dtos
         public decimal NetAmount { get; set; }
         public string? TrackingNumber { get; set; }
         public string? ShortTrackingReference { get; set; }
+        /// <summary>Display tracking reference: TrackingNumber ?? ShortTrackingReference.</summary>
+        public string? TrackingReference { get; set; }
+        /// <summary>Why the last courier-booking attempt failed (NeedsAttention queue).</summary>
+        public string? FailureReason { get; set; }
+        public DateTime? LastBookingAttemptAtUtc { get; set; }
+        public int BookingAttemptCount { get; set; }
         public DateTime CreatedAt { get; set; }
     }
 

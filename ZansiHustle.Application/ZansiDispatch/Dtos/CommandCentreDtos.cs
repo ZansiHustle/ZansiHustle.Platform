@@ -23,8 +23,10 @@ namespace ZansiHustle.Application.ZansiDispatch.Dtos
         public int ShipmentsBookedWithCourier { get; set; }
         public int ShipmentsInTransit { get; set; }
         public int ShipmentsDelivered { get; set; }
-        /// <summary>Shipments in an exception/failed state (Failed + Exception).</summary>
+        /// <summary>Shipments in an exception/failed state (Failed + Exception + NeedsAttention).</summary>
         public int ShipmentsExceptions { get; set; }
+        /// <summary>Shipments whose courier booking failed and need ops action (NeedsAttention).</summary>
+        public int ShipmentsNeedingAttention { get; set; }
         public int ShipmentsPendingReconciliation { get; set; }
         public int ShipmentsTotal { get; set; }
 

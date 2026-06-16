@@ -238,6 +238,7 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     public DbSet<ZansiDispatchQuoteOption> ZansiDispatchQuoteOptions => Set<ZansiDispatchQuoteOption>();
     public DbSet<ZansiDispatchShipment> ZansiDispatchShipments => Set<ZansiDispatchShipment>();
     public DbSet<ZansiDispatchShipmentEvent> ZansiDispatchShipmentEvents => Set<ZansiDispatchShipmentEvent>();
+    public DbSet<ZansiDispatchShipmentAction> ZansiDispatchShipmentActions => Set<ZansiDispatchShipmentAction>();
     public DbSet<ZansiDispatchLedgerEntry> ZansiDispatchLedgerEntries => Set<ZansiDispatchLedgerEntry>();
     public DbSet<ZansiDispatchProviderRequestLog> ZansiDispatchProviderRequestLogs => Set<ZansiDispatchProviderRequestLog>();
     public DbSet<ZansiDispatchSetting> ZansiDispatchSettings => Set<ZansiDispatchSetting>();

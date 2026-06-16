@@ -50,6 +50,20 @@ namespace ZansiHustle.Application.ZansiDispatch
         // ── Shipment lifecycle (provider-backed) ────────────────────────────
         /// <summary>Books a real shipment for an order from its selected quote option (CourierGuy when applicable).</summary>
         Task<Result<ShipmentDto>> CreateShipmentFromQuoteAsync(Guid adminUserId, CreateShipmentFromQuoteRequestDto request, CancellationToken ct = default);
+        /// <summary>
+        /// Retries a failed / NeedsAttention courier booking using STORED
+        /// quote/order/merchant/customer data (no manual payload). Admin-only,
+        /// idempotent, obeys every guard + the kill switch.
+        /// </summary>
+        Task<Result<ShipmentDto>> RetryBookingAsync(Guid adminUserId, Guid shipmentId, CancellationToken ct = default);
+        /// <summary>
+        /// Automatically books the courier after a seller ACCEPTS a paid product
+        /// order, IF <c>CourierGuy.AutoBookAfterSellerAcceptance</c> is enabled.
+        /// Best-effort: a failure is recorded on the shipment (NeedsAttention) and
+        /// never thrown — seller acceptance always succeeds. Never bypasses the
+        /// kill switch or any booking guard, and never runs in the payment webhook.
+        /// </summary>
+        Task AutoBookForAcceptedOrderAsync(Guid orderId, CancellationToken ct = default);
         /// <summary>Polls the provider, records events, and returns the current tracking timeline.</summary>
         Task<Result<TrackingResultDto>> TrackShipmentAsync(Guid shipmentId, CancellationToken ct = default);
         /// <summary>
@@ -63,6 +77,24 @@ namespace ZansiHustle.Application.ZansiDispatch
         Task<Result<ShipmentDto>> CancelShipmentAsync(Guid adminUserId, Guid shipmentId, CancelShipmentRequestDto? request, CancellationToken ct = default);
         /// <summary>Fetches the signed label/waybill URL from the provider (admin/ops only).</summary>
         Task<Result<ShipmentLabelDto>> GetShipmentLabelAsync(Guid shipmentId, CancellationToken ct = default);
+
+        // ── Post-acceptance lifecycle (status-based; audited) ───────────────
+        /// <summary>Refresh live courier status from the provider + log the action (admin).</summary>
+        Task<Result<ShipmentDto>> RefreshStatusAsync(Guid adminUserId, Guid shipmentId, CancellationToken ct = default);
+        /// <summary>Admin status-based provider cancellation (refresh → cancel/block/needs-attention).</summary>
+        Task<Result<ShipmentDto>> CancelProviderAsync(Guid adminUserId, Guid shipmentId, CancelShipmentRequestDto? request, CancellationToken ct = default);
+        /// <summary>Cancel the shipment for an order (status-based). Tells the order layer whether a refund is safe.</summary>
+        Task<Result<DispatchCancellationResultDto>> TryCancelForOrderAsync(Guid orderId, ZansiDispatchActor actor, Guid? actorUserId, string? reason, CancellationToken ct = default);
+        /// <summary>Seller/admin pickup reschedule (provider call if supported, else ops task — never faked).</summary>
+        Task<Result<ShipmentDto>> ReschedulePickupAsync(Guid actorUserId, ZansiDispatchActor actor, Guid shipmentId, ReschedulePickupRequestDto request, CancellationToken ct = default);
+        /// <summary>Customer delivery-date-change REQUEST (provider call if supported, else ops task).</summary>
+        Task<Result<ShipmentDto>> RequestDeliveryChangeAsync(Guid customerUserId, Guid shipmentId, RequestDeliveryChangeRequestDto request, CancellationToken ct = default);
+        /// <summary>The shipment "Activity / Actions" audit timeline.</summary>
+        Task<Result<List<ShipmentActionDto>>> GetShipmentActionsAsync(Guid shipmentId, CancellationToken ct = default);
+        /// <summary>Order-scoped pickup reschedule (seller, resolves the shipment from the order).</summary>
+        Task<Result<ShipmentDto>> ReschedulePickupForOrderAsync(Guid actorUserId, ZansiDispatchActor actor, Guid orderId, ReschedulePickupRequestDto request, CancellationToken ct = default);
+        /// <summary>Order-scoped customer delivery-change request (resolves the shipment from the order).</summary>
+        Task<Result<ShipmentDto>> RequestDeliveryChangeForOrderAsync(Guid customerUserId, Guid orderId, RequestDeliveryChangeRequestDto request, CancellationToken ct = default);
         /// <summary>Processes an inbound courier webhook payload — matches a shipment and records events.</summary>
         Task<Result<WebhookAckDto>> HandleCourierWebhookAsync(string rawBody, string? authHeader, CancellationToken ct = default);
 

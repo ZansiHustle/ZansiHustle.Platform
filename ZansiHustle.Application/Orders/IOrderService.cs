@@ -43,6 +43,20 @@ namespace ZansiHustle.Application.Orders
         /// </summary>
         Task<Result<OrderDto>> RejectAsync(Guid userId, Guid orderId, RejectOrderRequestDto request);
 
+        /// <summary>
+        /// Seller cancels fulfilment AFTER acceptance (Confirmed/InProgress). The
+        /// decision is status-based via ZansiDispatch: internal/uncollected →
+        /// cancel + refund; already collected/in transit → blocked + ops escalation;
+        /// provider cancel failed → shipment NeedsAttention (order unchanged).
+        /// </summary>
+        Task<Result<OrderDto>> CancelFulfilmentAsync(Guid userId, Guid orderId, RejectOrderRequestDto? request);
+
+        /// <summary>Seller requests a pickup reschedule for an accepted order's shipment.</summary>
+        Task<Result<ZansiHustle.Application.ZansiDispatch.Dtos.ShipmentDto>> ReschedulePickupAsync(Guid userId, Guid orderId, ZansiHustle.Application.ZansiDispatch.Dtos.ReschedulePickupRequestDto request);
+
+        /// <summary>Customer requests a delivery-date change for their order's shipment.</summary>
+        Task<Result<ZansiHustle.Application.ZansiDispatch.Dtos.ShipmentDto>> RequestDeliveryChangeAsync(Guid userId, Guid orderId, ZansiHustle.Application.ZansiDispatch.Dtos.RequestDeliveryChangeRequestDto request);
+
         Task<Result<OrderDto>> UpdateStatusAsync(Guid userId, Guid orderId, UpdateOrderStatusRequestDto request);
     }
 }

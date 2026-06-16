@@ -597,6 +597,9 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 };
                 _db.ZansiDispatchShipments.Add(shipment);
                 _db.ZansiDispatchLedgerEntries.Add(QuoteChargedLedger(shipment.Id, input.OrderId, input.QuotedDeliveryFee, input.UserId, now));
+                // Dispatch is created on seller acceptance — open the audit trail.
+                LogAction(shipment, ZansiDispatchActionType.SellerAccepted, ZansiDispatchActor.Seller, null,
+                    null, ZansiDispatchShipmentStatus.PendingDispatch, null, null, null, "Seller accepted the order; dispatch prepared.", null, null);
 
                 var quote = await _db.ZansiDispatchQuotes.FirstOrDefaultAsync(q => q.Id == input.QuoteId, ct);
                 if (quote is not null)
@@ -666,7 +669,135 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
         // Shipment lifecycle (provider-backed)
         // ════════════════════════════════════════════════════════════════════
 
-        public async Task<Result<ShipmentDto>> CreateShipmentFromQuoteAsync(Guid adminUserId, CreateShipmentFromQuoteRequestDto request, CancellationToken ct = default)
+        public Task<Result<ShipmentDto>> CreateShipmentFromQuoteAsync(Guid adminUserId, CreateShipmentFromQuoteRequestDto request, CancellationToken ct = default)
+            => BookShipmentCoreAsync(request, "admin", ct);
+
+        /// <summary>
+        /// Retry a courier booking for a shipment that previously failed / needs
+        /// attention. Admin-only. All details are taken from the STORED
+        /// quote/order/merchant/customer data (no manual payload) — ops never
+        /// retypes addresses or parcel. Obeys every create-from-quote guard +
+        /// the kill switch, and is idempotent (a shipment already booked with a
+        /// provider returns a safe no-op).
+        /// </summary>
+        public async Task<Result<ShipmentDto>> RetryBookingAsync(Guid adminUserId, Guid shipmentId, CancellationToken ct = default)
+        {
+            try
+            {
+                var shipment = await _db.ZansiDispatchShipments.AsNoTracking()
+                    .FirstOrDefaultAsync(s => s.Id == shipmentId, ct);
+                if (shipment is null)
+                    return Result<ShipmentDto>.Failure(ErrorCodes.NotFound, "Shipment not found.");
+                if (!string.IsNullOrWhiteSpace(shipment.ProviderShipmentId))
+                    return Result<ShipmentDto>.Success(MapShipment(shipment), "Shipment already booked.");
+
+                var request = await BuildStoredBookingRequestAsync(shipment.OrderId, ct);
+                if (request is null)
+                    return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, "This order has no selected delivery option to book.");
+
+                return await BookShipmentCoreAsync(request, "retry", ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ZansiDispatch RetryBooking failed. ShipmentId={ShipmentId}", shipmentId);
+                return Result<ShipmentDto>.Failure(ErrorCodes.Exception, "Could not retry the shipment booking.");
+            }
+        }
+
+        /// <summary>
+        /// Automatically book the courier for an order the seller just accepted,
+        /// IF <c>AutoBookAfterSellerAcceptance</c> is enabled. Best-effort: any
+        /// failure is recorded on the shipment (NeedsAttention) and never thrown
+        /// back to the caller — seller acceptance must always succeed. Never
+        /// bypasses the kill switch or any booking guard. Skips when auto-book is
+        /// off (the PendingDispatch shipment simply waits for a manual booking).
+        /// </summary>
+        public async Task AutoBookForAcceptedOrderAsync(Guid orderId, CancellationToken ct = default)
+        {
+            try
+            {
+                if (!_opts.CourierGuy.AutoBookAfterSellerAcceptance)
+                    return; // Feature off → leave the shipment PendingDispatch for manual/ops booking.
+
+                var request = await BuildStoredBookingRequestAsync(orderId, ct);
+                if (request is null) return; // No selected delivery option → nothing to auto-book.
+
+                var result = await BookShipmentCoreAsync(request, "auto", ct);
+                if (!result.IsSuccess)
+                {
+                    // Failure is already persisted as NeedsAttention by the core;
+                    // just log for ops visibility. Do NOT rethrow.
+                    _logger.LogWarning(
+                        "ZansiDispatch auto-book did not complete for order {OrderId}: {Message}",
+                        orderId, result.Message);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Never let an auto-book problem fail the seller-accept flow.
+                _logger.LogError(ex, "ZansiDispatch AutoBookForAcceptedOrder failed. OrderId={OrderId}", orderId);
+            }
+        }
+
+        /// <summary>
+        /// Build a <see cref="CreateShipmentFromQuoteRequestDto"/> entirely from
+        /// STORED data for auto-book / retry: the order's selected delivery
+        /// option, the seller (merchant) collection contact, and the buyer
+        /// delivery contact. Returns null when the order has no selected option.
+        /// </summary>
+        private async Task<CreateShipmentFromQuoteRequestDto?> BuildStoredBookingRequestAsync(Guid orderId, CancellationToken ct)
+        {
+            var order = await _db.Orders.AsNoTracking()
+                .Where(o => o.Id == orderId)
+                .Select(o => new { o.Id, o.Code, o.BuyerUserId, o.BuyerName, o.BuyerPhone, o.MerchantId, o.DeliveryQuoteOptionId })
+                .FirstOrDefaultAsync(ct);
+            if (order is null || order.DeliveryQuoteOptionId is not Guid optionId)
+                return null;
+
+            var merchant = await _db.Merchants.AsNoTracking()
+                .Where(m => m.Id == order.MerchantId)
+                .Select(m => new { m.Name, m.ContactPhoneNumber, m.ContactEmail })
+                .FirstOrDefaultAsync(ct);
+
+            var buyerEmail = await _db.Users.AsNoTracking()
+                .Where(u => u.Id == order.BuyerUserId)
+                .Select(u => u.Email)
+                .FirstOrDefaultAsync(ct);
+
+            return new CreateShipmentFromQuoteRequestDto
+            {
+                OrderId = order.Id,
+                QuoteOptionId = optionId,
+                CollectionContact = new DispatchContactDto
+                {
+                    Name = merchant?.Name,
+                    MobileNumber = merchant?.ContactPhoneNumber,
+                    Email = merchant?.ContactEmail,
+                },
+                DeliveryContact = new DispatchContactDto
+                {
+                    Name = order.BuyerName,
+                    MobileNumber = order.BuyerPhone,
+                    Email = buyerEmail,
+                },
+                CustomerReference = order.Code,
+                CustomerReferenceName = "Order no.",
+                MuteNotifications = false,
+            };
+        }
+
+        /// <summary>
+        /// Shared, guarded courier-booking core used by the admin
+        /// create-from-quote endpoint, auto-book (post seller acceptance) and
+        /// the retry endpoint. <paramref name="origin"/> is a short label for
+        /// logs (admin / auto / retry). Correctness guards (paid / accepted /
+        /// option-belongs) return a plain failure. Recoverable booking problems
+        /// (kill switch off, missing address/parcel, provider error) record the
+        /// shipment as <c>NeedsAttention</c> with a failure reason + event so the
+        /// ops queue surfaces them, then return a failure. A successful booking
+        /// clears the failure state.
+        /// </summary>
+        private async Task<Result<ShipmentDto>> BookShipmentCoreAsync(CreateShipmentFromQuoteRequestDto request, string origin, CancellationToken ct)
         {
             try
             {
@@ -693,17 +824,11 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 if (shipment is not null && !string.IsNullOrWhiteSpace(shipment.ProviderShipmentId))
                     return Result<ShipmentDto>.Success(MapShipment(shipment), "Shipment already booked.");
 
-                // ── SAFETY GATE ───────────────────────────────────────────────
-                // Never place a billable courier booking before the order is paid
-                // + seller-accepted, the option matches the order/customer, and
-                // (for a courier booking) booking is enabled and the addresses +
-                // parcel are complete. Validation runs BEFORE we create a shipment
-                // row or call the provider — a failed check creates nothing and
-                // never reaches the courier.
                 var shipmentProvider = ResolveShipmentProvider(option.ProviderType);
                 var willCallProvider = shipmentProvider is not null && shipmentProvider.IsEnabled
                     && option.ServiceLevel != ZansiDispatchServiceLevel.Collection;
 
+                // ── Correctness guards (NOT a recoverable "needs attention") ──
                 if (option.ServiceLevel == ZansiDispatchServiceLevel.Collection)
                     return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, "Collection options cannot be booked with courier.");
 
@@ -721,20 +846,8 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 if (quote.UserId != order.BuyerUserId || !optionMatchesOrder)
                     return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, "This delivery option does not belong to the order/customer.");
 
-                if (willCallProvider)
-                {
-                    // Kill switch — refuse to call the provider booking endpoint
-                    // unless explicitly enabled for this environment.
-                    if (!_opts.CourierGuy.AllowShipmentBooking)
-                        return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, "Courier booking is disabled in this environment.");
-
-                    // Hard-require complete pickup/delivery contact + address
-                    // (incl. postal codes) and valid parcel before any /shipments call.
-                    var gate = ValidateCourierBookingReadiness(quote, request);
-                    if (gate is not null)
-                        return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, gate);
-                }
-
+                // Ensure a shipment row exists (PendingDispatch) so any booking
+                // failure below is visible in the ops queue against a real row.
                 if (shipment is null)
                 {
                     shipment = new ZansiDispatchShipment
@@ -762,15 +875,47 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     _db.ZansiDispatchLedgerEntries.Add(QuoteChargedLedger(shipment.Id, order.Id, option.QuotedAmount, order.BuyerUserId, now));
                 }
 
-                // Book with Courier Guy only when the option is a courier option,
-                // the provider is enabled, AND booking passed the gate above.
-                // Otherwise the shipment stays PendingDispatch (no courier booking).
+                // Book with the courier only when the option is a courier option
+                // and the provider is enabled. Otherwise the shipment stays
+                // PendingDispatch (InternalEstimate / manual / provider disabled)
+                // — no failure, just awaiting a real booking.
                 if (willCallProvider)
                 {
+                    shipment.BookingAttemptCount += 1;
+                    shipment.LastBookingAttemptAtUtc = now;
+                    // Auto-book runs as System; admin/retry as Admin.
+                    var bookActor = origin == "auto" ? ZansiDispatchActor.System : ZansiDispatchActor.Admin;
+                    LogAction(shipment, ZansiDispatchActionType.AutoBookingAttempted, bookActor, null,
+                        shipment.Status, shipment.Status, null, null, null, $"Booking attempt #{shipment.BookingAttemptCount} ({origin}).", null, null);
+
+                    // Kill switch — refuse to call the provider booking endpoint
+                    // unless explicitly enabled for this environment.
+                    if (!_opts.CourierGuy.AllowShipmentBooking)
+                    {
+                        RecordBookingFailure(shipment, "Courier booking is disabled in this environment.", now);
+                        LogAction(shipment, ZansiDispatchActionType.BookingFailed, bookActor, null,
+                            ZansiDispatchShipmentStatus.PendingDispatch, shipment.Status, null, null, null, "Courier booking is disabled in this environment.", null, null);
+                        await _db.SaveChangesAsync(ct);
+                        _logger.LogWarning("ZansiDispatch booking blocked (kill switch) origin={Origin} orderId={OrderId}", origin, order.Id);
+                        return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, "Courier booking is disabled in this environment.");
+                    }
+
+                    // Hard-require complete pickup/delivery contact + address
+                    // (incl. postal codes) and valid parcel before any /shipments call.
+                    var gate = ValidateCourierBookingReadiness(quote, request);
+                    if (gate is not null)
+                    {
+                        RecordBookingFailure(shipment, gate, now);
+                        LogAction(shipment, ZansiDispatchActionType.BookingFailed, bookActor, null,
+                            ZansiDispatchShipmentStatus.PendingDispatch, shipment.Status, null, null, null, gate, null, null);
+                        await _db.SaveChangesAsync(ct);
+                        return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, gate);
+                    }
+
                     var providerReq = BuildShipmentRequest(shipment, quote, option, order.Code, request);
                     var sw = Stopwatch.StartNew();
                     Result<ProviderShipmentResult> pr;
-                    try { pr = await shipmentProvider.CreateShipmentAsync(providerReq, ct); }
+                    try { pr = await shipmentProvider!.CreateShipmentAsync(providerReq, ct); }
                     catch (Exception ex) { pr = Result<ProviderShipmentResult>.Failure(ErrorCodes.Exception, ex.Message); }
                     sw.Stop();
 
@@ -782,10 +927,14 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
 
                     if (data is null || !data.Ok)
                     {
-                        // Do NOT fake a booked shipment — surface the provider error.
+                        // Do NOT fake a booked shipment — record the provider error
+                        // as a NeedsAttention so the ops queue can retry.
+                        var reason = data?.ErrorMessage ?? pr.Message ?? "Could not book the shipment with the courier.";
+                        RecordBookingFailure(shipment, reason, now, data?.RawResponseJson);
+                        LogAction(shipment, ZansiDispatchActionType.BookingFailed, bookActor, null,
+                            ZansiDispatchShipmentStatus.PendingDispatch, shipment.Status, null, null, null, reason, data?.RawResponseJson, null);
                         await _db.SaveChangesAsync(ct);
-                        return Result<ShipmentDto>.Failure(ErrorCodes.Exception,
-                            data?.ErrorMessage ?? pr.Message ?? "Could not book the shipment with the courier.");
+                        return Result<ShipmentDto>.Failure(ErrorCodes.Exception, reason);
                     }
 
                     shipment.ProviderShipmentId = data.ProviderShipmentId;
@@ -796,6 +945,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     shipment.ServiceLevelName = data.ServiceLevelName ?? shipment.ServiceLevelName;
                     shipment.RawProviderResponseJson = data.RawResponseJson;
                     shipment.Status = data.InitialStatus ?? ZansiDispatchShipmentStatus.BookedWithCourier;
+                    shipment.FailureReason = null; // success clears any prior failure
                     shipment.UpdatedAt = now;
 
                     _db.ZansiDispatchShipmentEvents.Add(new ZansiDispatchShipmentEvent
@@ -809,6 +959,9 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                         EventTime = now,
                         CreatedAt = now,
                     });
+                    LogAction(shipment, ZansiDispatchActionType.BookingSucceeded, bookActor, null,
+                        ZansiDispatchShipmentStatus.PendingDispatch, shipment.Status, null, data.InitialProviderStatus ?? "submitted",
+                        null, "Shipment booked with courier.", data.RawResponseJson, null);
                 }
 
                 await _db.SaveChangesAsync(ct);
@@ -816,9 +969,34 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "ZansiDispatch CreateShipmentFromQuote failed. OrderId={OrderId}", request?.OrderId);
+                _logger.LogError(ex, "ZansiDispatch BookShipmentCore failed. origin={Origin} OrderId={OrderId}", origin, request?.OrderId);
                 return Result<ShipmentDto>.Failure(ErrorCodes.Exception, "Could not create the shipment.");
             }
+        }
+
+        /// <summary>
+        /// Mark a shipment as NeedsAttention with a provider-safe failure reason
+        /// and append a failure event. Does NOT save — the caller saves.
+        /// </summary>
+        private void RecordBookingFailure(ZansiDispatchShipment shipment, string reason, DateTime now, string? rawResponseJson = null)
+        {
+            var safeReason = reason.Length > 1000 ? reason.Substring(0, 1000) : reason;
+            shipment.Status = ZansiDispatchShipmentStatus.NeedsAttention;
+            shipment.FailureReason = safeReason;
+            shipment.UpdatedAt = now;
+            if (rawResponseJson is not null) shipment.RawProviderResponseJson = rawResponseJson;
+
+            _db.ZansiDispatchShipmentEvents.Add(new ZansiDispatchShipmentEvent
+            {
+                Id = Guid.NewGuid(),
+                ShipmentId = shipment.Id,
+                ProviderType = shipment.ProviderType,
+                ProviderStatus = "booking_failed",
+                InternalStatus = ZansiDispatchShipmentStatus.NeedsAttention,
+                Message = $"Courier booking failed: {safeReason}",
+                EventTime = now,
+                CreatedAt = now,
+            });
         }
 
         public async Task<Result<TrackingResultDto>> TrackShipmentAsync(Guid shipmentId, CancellationToken ct = default)
@@ -889,12 +1067,33 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     .OrderBy(e => e.EventTime)
                     .ToListAsync(ct);
 
+                // Customer-safe lifecycle updates from the action log — only the
+                // whitelisted action types map to a friendly label; everything else
+                // (booking attempts, failures, refreshes, raw reasons) is hidden.
+                var actions = await _db.ZansiDispatchShipmentActions.AsNoTracking()
+                    .Where(a => a.ShipmentId == s.Id)
+                    .OrderBy(a => a.CreatedAtUtc)
+                    .Select(a => new { a.ActionType, a.CreatedAtUtc })
+                    .ToListAsync(ct);
+
+                var updates = new List<OrderDispatchCustomerUpdateDto>();
+                foreach (var a in actions)
+                {
+                    var label = CustomerUpdateLabel(a.ActionType);
+                    if (label is null) continue;
+                    updates.Add(new OrderDispatchCustomerUpdateDto { Label = label, OccurredAtUtc = a.CreatedAtUtc });
+                }
+
                 return Result<OrderDispatchSnapshotDto>.Success(new OrderDispatchSnapshotDto
                 {
                     HasShipment = true,
                     Status = s.Status,
                     TrackingProvider = s.ProviderType.ToString(),
                     TrackingNumber = s.TrackingNumber,
+                    // Fall back to the courier short reference so the customer
+                    // sees a usable tracking ref (e.g. 7D67MD) when the provider
+                    // returns only a short ref and no full tracking number.
+                    TrackingReference = !string.IsNullOrWhiteSpace(s.TrackingNumber) ? s.TrackingNumber : s.ShortTrackingReference,
                     DeliveredAt = s.DeliveredAt,
                     Events = events.Select(e => new OrderDispatchEventDto
                     {
@@ -902,6 +1101,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                         Message = e.Message,
                         EventTime = e.EventTime,
                     }).ToList(),
+                    Updates = updates,
                 });
             }
             catch (Exception ex)
@@ -925,7 +1125,12 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 var provider = ResolveShipmentProvider(s.ProviderType);
                 var trackingRef = s.TrackingNumber ?? s.ShortTrackingReference;
 
-                if (provider is not null && provider.IsEnabled && !string.IsNullOrWhiteSpace(trackingRef))
+                // Cancelling a live courier booking requires provider cancellation to
+                // be allowed (independent of the AllowShipmentBooking kill switch).
+                if (!string.IsNullOrWhiteSpace(s.ProviderShipmentId) && !_opts.CourierGuy.AllowProviderCancellation)
+                    return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, "Provider cancellation is disabled in this environment.");
+
+                if (provider is not null && provider.IsEnabled && _opts.CourierGuy.AllowProviderCancellation && !string.IsNullOrWhiteSpace(trackingRef))
                 {
                     var sw = Stopwatch.StartNew();
                     Result<ProviderCancelResult> cr;
@@ -968,6 +1173,518 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 return Result<ShipmentDto>.Failure(ErrorCodes.Exception, "Could not cancel the shipment.");
             }
         }
+
+        // ════════════════════════════════════════════════════════════════════
+        // Post-acceptance lifecycle: status refresh, status-based cancel,
+        // pickup/delivery reschedule, and the action audit log.
+        // ════════════════════════════════════════════════════════════════════
+
+        private static readonly ZansiDispatchShipmentStatus[] BookedNotCollected =
+        {
+            ZansiDispatchShipmentStatus.BookedWithCourier,
+            ZansiDispatchShipmentStatus.PreparingPickup,
+        };
+
+        private static readonly ZansiDispatchShipmentStatus[] CollectedOrLater =
+        {
+            ZansiDispatchShipmentStatus.PickedUp,
+            ZansiDispatchShipmentStatus.InTransit,
+            ZansiDispatchShipmentStatus.OutForDelivery,
+            ZansiDispatchShipmentStatus.Delivered,
+        };
+
+        private static bool IsInternalCancellable(ZansiDispatchShipment s) =>
+            string.IsNullOrWhiteSpace(s.ProviderShipmentId)
+            && s.Status is ZansiDispatchShipmentStatus.PendingDispatch
+                or ZansiDispatchShipmentStatus.NeedsAttention
+                or ZansiDispatchShipmentStatus.Failed;
+
+        public async Task<Result<List<ShipmentActionDto>>> GetShipmentActionsAsync(Guid shipmentId, CancellationToken ct = default)
+        {
+            try
+            {
+                var rows = await _db.ZansiDispatchShipmentActions.AsNoTracking()
+                    .Where(a => a.ShipmentId == shipmentId)
+                    .OrderByDescending(a => a.CreatedAtUtc)
+                    .ToListAsync(ct);
+                return Result<List<ShipmentActionDto>>.Success(rows.Select(MapAction).ToList());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ZansiDispatch GetShipmentActions failed. Id={Id}", shipmentId);
+                return Result<List<ShipmentActionDto>>.Failure(ErrorCodes.Exception, "Could not load shipment activity.");
+            }
+        }
+
+        /// <summary>Refresh live courier status from the provider, persist events, log the action.</summary>
+        public async Task<Result<ShipmentDto>> RefreshStatusAsync(Guid adminUserId, Guid shipmentId, CancellationToken ct = default)
+        {
+            try
+            {
+                var s = await _db.ZansiDispatchShipments.FirstOrDefaultAsync(x => x.Id == shipmentId, ct);
+                if (s is null) return Result<ShipmentDto>.Failure(ErrorCodes.NotFound, "Shipment not found.");
+
+                var (before, after) = await PollProviderStatusAsync(s, ct);
+                LogAction(s, ZansiDispatchActionType.ProviderStatusRefreshed, ZansiDispatchActor.Admin, adminUserId,
+                    null, s.Status, before, after, null, "Provider status refreshed.", null, null);
+                await _db.SaveChangesAsync(ct);
+                return Result<ShipmentDto>.Success(MapShipment(s), "Status refreshed.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ZansiDispatch RefreshStatus failed. Id={Id}", shipmentId);
+                return Result<ShipmentDto>.Failure(ErrorCodes.Exception, "Could not refresh the status.");
+            }
+        }
+
+        /// <summary>Admin status-based provider cancellation (uses the shared decision engine).</summary>
+        public async Task<Result<ShipmentDto>> CancelProviderAsync(Guid adminUserId, Guid shipmentId, CancelShipmentRequestDto? request, CancellationToken ct = default)
+        {
+            try
+            {
+                var s = await _db.ZansiDispatchShipments.FirstOrDefaultAsync(x => x.Id == shipmentId, ct);
+                if (s is null) return Result<ShipmentDto>.Failure(ErrorCodes.NotFound, "Shipment not found.");
+
+                var result = await CancelShipmentDecisionAsync(s, ZansiDispatchActor.Admin, adminUserId, request?.Reason, null, ct);
+                await _db.SaveChangesAsync(ct);
+
+                return result.Outcome is ZansiDispatchCancellationOutcome.CancelledInternal or ZansiDispatchCancellationOutcome.CancelledWithProvider
+                    ? Result<ShipmentDto>.Success(MapShipment(s), result.Message)
+                    : Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, result.Message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ZansiDispatch CancelProvider failed. Id={Id}", shipmentId);
+                return Result<ShipmentDto>.Failure(ErrorCodes.Exception, "Could not cancel the shipment.");
+            }
+        }
+
+        /// <summary>
+        /// Cancel the shipment tied to an order, status-based. Used by the seller
+        /// "cancel fulfilment" flow — returns whether the order layer may refund.
+        /// </summary>
+        public async Task<Result<DispatchCancellationResultDto>> TryCancelForOrderAsync(
+            Guid orderId, ZansiDispatchActor actor, Guid? actorUserId, string? reason, CancellationToken ct = default)
+        {
+            try
+            {
+                var s = await _db.ZansiDispatchShipments.FirstOrDefaultAsync(x => x.OrderId == orderId, ct);
+                if (s is null)
+                {
+                    // No shipment (e.g. collection / no delivery) → nothing to cancel; refund is safe.
+                    return Result<DispatchCancellationResultDto>.Success(new DispatchCancellationResultDto
+                    {
+                        Outcome = ZansiDispatchCancellationOutcome.CancelledInternal,
+                        CanRefund = true,
+                        Message = "No dispatch to cancel.",
+                    });
+                }
+
+                var result = await CancelShipmentDecisionAsync(s, actor, actorUserId, reason, null, ct);
+                await _db.SaveChangesAsync(ct);
+                return Result<DispatchCancellationResultDto>.Success(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ZansiDispatch TryCancelForOrder failed. OrderId={OrderId}", orderId);
+                return Result<DispatchCancellationResultDto>.Failure(ErrorCodes.Exception, "Could not cancel the dispatch.");
+            }
+        }
+
+        /// <summary>
+        /// Shared status-based cancellation. Mutates the shipment + logs actions
+        /// but does NOT SaveChanges (the caller saves). Decision is driven by the
+        /// real provider/shipment status, never a time window.
+        /// </summary>
+        private async Task<DispatchCancellationResultDto> CancelShipmentDecisionAsync(
+            ZansiDispatchShipment s, ZansiDispatchActor actor, Guid? actorUserId, string? reason, string? correlationId, CancellationToken ct)
+        {
+            var now = DateTime.UtcNow;
+            var oldStatus = s.Status;
+
+            LogAction(s, ZansiDispatchActionType.SellerCancellationRequested, actor, actorUserId,
+                oldStatus, oldStatus, null, null, reason, "Cancellation requested.", null, correlationId);
+
+            // Already terminal → idempotent no-op (don't double-refund).
+            if (s.Status is ZansiDispatchShipmentStatus.Cancelled or ZansiDispatchShipmentStatus.Returned or ZansiDispatchShipmentStatus.Delivered)
+            {
+                return new DispatchCancellationResultDto
+                {
+                    Outcome = s.Status == ZansiDispatchShipmentStatus.Cancelled ? ZansiDispatchCancellationOutcome.CancelledInternal : ZansiDispatchCancellationOutcome.BlockedAlreadyCollected,
+                    CanRefund = false,
+                    Message = $"This shipment is already {s.Status}.",
+                    ShipmentStatus = s.Status,
+                };
+            }
+
+            // 1) Internal, never provider-booked → safe to cancel outright.
+            if (IsInternalCancellable(s))
+            {
+                MarkCancelled(s, reason, now);
+                return new DispatchCancellationResultDto
+                {
+                    Outcome = ZansiDispatchCancellationOutcome.CancelledInternal,
+                    CanRefund = true,
+                    Message = "Cancelled. The customer will be refunded.",
+                    ShipmentStatus = s.Status,
+                };
+            }
+
+            // 2) Booked but maybe not collected → refresh status first (source of
+            //    truth). NOTE: this whole branch is INDEPENDENT of the
+            //    AllowShipmentBooking kill switch — cancelling an existing booking
+            //    is risk-reducing and must work even when new bookings are frozen.
+            if (BookedNotCollected.Contains(s.Status))
+            {
+                await PollProviderStatusAsync(s, ct);
+
+                // If it advanced past pickup while we checked, it's too late to self-cancel.
+                if (CollectedOrLater.Contains(s.Status))
+                    return BlockCollected(s, actor, actorUserId, now);
+
+                var provider = ResolveShipmentProvider(s.ProviderType);
+                var trackingRef = s.TrackingNumber ?? s.ShortTrackingReference;
+
+                // A REAL courier shipment exists → cancellation MUST go through the
+                // provider. Never silently internal-cancel a booked parcel.
+                if (!string.IsNullOrWhiteSpace(s.ProviderShipmentId))
+                {
+                    var providerCanCancel = provider is not null && provider.IsEnabled
+                        && provider.SupportsCancelShipment && !string.IsNullOrWhiteSpace(trackingRef);
+
+                    if (!_opts.CourierGuy.AllowProviderCancellation || !providerCanCancel)
+                    {
+                        // Park as NeedsAttention rather than faking an internal cancel
+                        // (the courier still holds a live booking).
+                        var why = !_opts.CourierGuy.AllowProviderCancellation
+                            ? "Provider cancellation is disabled in this environment."
+                            : "Courier cancellation isn't available right now.";
+                        s.Status = ZansiDispatchShipmentStatus.NeedsAttention;
+                        s.FailureReason = why;
+                        s.UpdatedAt = now;
+                        LogAction(s, ZansiDispatchActionType.ProviderCancellationFailed, actor, actorUserId, oldStatus, s.Status, null, null, reason, why, null, correlationId);
+                        return new DispatchCancellationResultDto
+                        {
+                            Outcome = ZansiDispatchCancellationOutcome.NeedsAttention,
+                            CanRefund = false,
+                            Message = "We couldn't cancel with the courier automatically. Our team has been alerted and will sort it out.",
+                            ShipmentStatus = s.Status,
+                        };
+                    }
+
+                    LogAction(s, ZansiDispatchActionType.ProviderCancellationAttempted, actor, actorUserId, s.Status, s.Status, null, null, reason, null, null, correlationId);
+
+                    var sw = Stopwatch.StartNew();
+                    Result<ProviderCancelResult> cr;
+                    try { cr = await provider!.CancelShipmentAsync(trackingRef!, ct); }
+                    catch (Exception ex) { cr = Result<ProviderCancelResult>.Failure(ErrorCodes.Exception, ex.Message); }
+                    sw.Stop();
+
+                    var data = cr.IsSuccess ? cr.Data : null;
+                    AddProviderLog(s.ProviderType, ZansiDispatchProviderOperation.CancelShipment, null, data?.RawResponseJson,
+                        data?.Ok ?? false, data?.Ok == false ? data.ErrorMessage : (cr.IsSuccess ? null : cr.Message),
+                        data?.StatusCode, (int)sw.ElapsedMilliseconds);
+
+                    if (data is { Ok: true })
+                    {
+                        MarkCancelled(s, reason, now);
+                        LogAction(s, ZansiDispatchActionType.ProviderCancellationSucceeded, actor, actorUserId, oldStatus, s.Status, null, "cancelled", reason, null, data.RawResponseJson, correlationId);
+                        return new DispatchCancellationResultDto
+                        {
+                            Outcome = ZansiDispatchCancellationOutcome.CancelledWithProvider,
+                            CanRefund = true,
+                            Message = "Courier booking cancelled. The customer will be refunded.",
+                            ShipmentStatus = s.Status,
+                        };
+                    }
+
+                    // Provider cancel failed → NeedsAttention for ops (customer-safe message).
+                    var rawReason = data?.ErrorMessage ?? cr.Message ?? "Courier cancellation failed.";
+                    s.Status = ZansiDispatchShipmentStatus.NeedsAttention;
+                    s.FailureReason = rawReason.Length > 1000 ? rawReason.Substring(0, 1000) : rawReason;
+                    s.UpdatedAt = now;
+                    LogAction(s, ZansiDispatchActionType.ProviderCancellationFailed, actor, actorUserId, oldStatus, s.Status, null, null, reason, rawReason, data?.RawResponseJson, correlationId);
+                    return new DispatchCancellationResultDto
+                    {
+                        Outcome = ZansiDispatchCancellationOutcome.NeedsAttention,
+                        CanRefund = false,
+                        Message = "We couldn't cancel with the courier automatically. Our team has been alerted and will sort it out.",
+                        ShipmentStatus = s.Status,
+                    };
+                }
+
+                // Booked status but NO provider shipment id (e.g. internal-only) →
+                // nothing is really booked, safe to cancel internally.
+                MarkCancelled(s, reason, now);
+                return new DispatchCancellationResultDto
+                {
+                    Outcome = ZansiDispatchCancellationOutcome.CancelledInternal,
+                    CanRefund = true,
+                    Message = "Cancelled. The customer will be refunded.",
+                    ShipmentStatus = s.Status,
+                };
+            }
+
+            // 3) Collected / in transit / out for delivery → cannot self-cancel.
+            return BlockCollected(s, actor, actorUserId, now);
+        }
+
+        private DispatchCancellationResultDto BlockCollected(ZansiDispatchShipment s, ZansiDispatchActor actor, Guid? actorUserId, DateTime now)
+        {
+            LogAction(s, ZansiDispatchActionType.CancellationBlocked, actor, actorUserId, s.Status, s.Status, null, null,
+                "Parcel already collected / in transit.", "Escalated to ops/support.", null, null);
+            return new DispatchCancellationResultDto
+            {
+                Outcome = ZansiDispatchCancellationOutcome.BlockedAlreadyCollected,
+                CanRefund = false,
+                Message = "This order is already with the courier. Please contact support to arrange a return or refund.",
+                ShipmentStatus = s.Status,
+            };
+        }
+
+        private void MarkCancelled(ZansiDispatchShipment s, string? reason, DateTime now)
+        {
+            s.Status = ZansiDispatchShipmentStatus.Cancelled;
+            if (!string.IsNullOrWhiteSpace(reason)) s.Notes = reason.Trim();
+            s.FailureReason = null;
+            s.UpdatedAt = now;
+            _db.ZansiDispatchShipmentEvents.Add(new ZansiDispatchShipmentEvent
+            {
+                Id = Guid.NewGuid(),
+                ShipmentId = s.Id,
+                ProviderType = s.ProviderType,
+                ProviderStatus = "cancelled",
+                InternalStatus = ZansiDispatchShipmentStatus.Cancelled,
+                Message = reason ?? "Shipment cancelled.",
+                EventTime = now,
+                CreatedAt = now,
+            });
+        }
+
+        /// <summary>
+        /// Seller/admin pickup reschedule. Calls the provider when it supports it;
+        /// otherwise records a request + ops task (NEVER fakes success).
+        /// </summary>
+        public async Task<Result<ShipmentDto>> ReschedulePickupAsync(Guid actorUserId, ZansiDispatchActor actor, Guid shipmentId, ReschedulePickupRequestDto request, CancellationToken ct = default)
+        {
+            try
+            {
+                if (request is null || request.NewPickupDateUtc == default)
+                    return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, "A new pickup date is required.");
+
+                var s = await _db.ZansiDispatchShipments.FirstOrDefaultAsync(x => x.Id == shipmentId, ct);
+                if (s is null) return Result<ShipmentDto>.Failure(ErrorCodes.NotFound, "Shipment not found.");
+
+                // Only meaningful while booked + not yet collected.
+                if (CollectedOrLater.Contains(s.Status) || s.Status is ZansiDispatchShipmentStatus.Delivered or ZansiDispatchShipmentStatus.Cancelled or ZansiDispatchShipmentStatus.Returned)
+                    return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, "Pickup can only be rescheduled before the parcel is collected.");
+
+                var note = $"Requested pickup {request.NewPickupDateUtc:yyyy-MM-dd}.{(string.IsNullOrWhiteSpace(request.Reason) ? "" : $" {request.Reason!.Trim()}")}";
+                LogAction(s, ZansiDispatchActionType.PickupRescheduleRequested, actor, actorUserId, s.Status, s.Status, null, null, request.Reason, note, null, null);
+
+                var provider = ResolveShipmentProvider(s.ProviderType);
+                var trackingRef = s.TrackingNumber ?? s.ShortTrackingReference;
+                if (provider is not null && provider.IsEnabled && provider.SupportsPickupReschedule && !string.IsNullOrWhiteSpace(trackingRef))
+                {
+                    var rr = await provider.ReschedulePickupAsync(trackingRef!, request.NewPickupDateUtc, ct);
+                    var data = rr.IsSuccess ? rr.Data : null;
+                    if (data is { Ok: true })
+                    {
+                        s.PickupScheduledAt = request.NewPickupDateUtc;
+                        s.UpdatedAt = DateTime.UtcNow;
+                        LogAction(s, ZansiDispatchActionType.PickupRescheduleSucceeded, actor, actorUserId, s.Status, s.Status, null, null, request.Reason, note, data.RawResponseJson, null);
+                        await _db.SaveChangesAsync(ct);
+                        return Result<ShipmentDto>.Success(MapShipment(s), "Pickup rescheduled.");
+                    }
+                    LogAction(s, ZansiDispatchActionType.PickupRescheduleFailed, actor, actorUserId, s.Status, s.Status, null, null, request.Reason, data?.ErrorMessage, data?.RawResponseJson, null);
+                    await _db.SaveChangesAsync(ct);
+                    return Result<ShipmentDto>.Failure(ErrorCodes.Exception, "The courier couldn't reschedule pickup automatically. Our team has been alerted.");
+                }
+
+                // Provider can't reschedule → leave an ops task (request is logged above).
+                await _db.SaveChangesAsync(ct);
+                return Result<ShipmentDto>.Success(MapShipment(s), "Pickup reschedule requested. Pending courier/ops confirmation.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ZansiDispatch ReschedulePickup failed. Id={Id}", shipmentId);
+                return Result<ShipmentDto>.Failure(ErrorCodes.Exception, "Could not request the pickup reschedule.");
+            }
+        }
+
+        /// <summary>
+        /// Customer delivery-date-change REQUEST (not a guaranteed change). Calls
+        /// the provider when supported; otherwise records an ops task.
+        /// </summary>
+        public async Task<Result<ShipmentDto>> RequestDeliveryChangeAsync(Guid customerUserId, Guid shipmentId, RequestDeliveryChangeRequestDto request, CancellationToken ct = default)
+        {
+            try
+            {
+                if (request is null || request.NewDeliveryDateUtc == default)
+                    return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, "A new delivery date is required.");
+
+                var s = await _db.ZansiDispatchShipments.FirstOrDefaultAsync(x => x.Id == shipmentId, ct);
+                if (s is null) return Result<ShipmentDto>.Failure(ErrorCodes.NotFound, "Shipment not found.");
+
+                if (s.UserId != customerUserId)
+                    return Result<ShipmentDto>.Failure(ErrorCodes.Forbidden, "You can only request changes for your own delivery.");
+
+                // Only after the courier is booked/in transit and before delivered.
+                var changeable = s.Status is ZansiDispatchShipmentStatus.BookedWithCourier
+                    or ZansiDispatchShipmentStatus.PreparingPickup
+                    or ZansiDispatchShipmentStatus.PickedUp
+                    or ZansiDispatchShipmentStatus.InTransit
+                    or ZansiDispatchShipmentStatus.OutForDelivery;
+                if (!changeable)
+                    return Result<ShipmentDto>.Failure(ErrorCodes.BadRequest, "A delivery date change can only be requested once the courier has the parcel and before it's delivered.");
+
+                var note = $"Requested delivery {request.NewDeliveryDateUtc:yyyy-MM-dd}.{(string.IsNullOrWhiteSpace(request.Reason) ? "" : $" {request.Reason!.Trim()}")}";
+                LogAction(s, ZansiDispatchActionType.CustomerDeliveryChangeRequested, ZansiDispatchActor.Customer, customerUserId, s.Status, s.Status, null, null, request.Reason, note, null, null);
+
+                var provider = ResolveShipmentProvider(s.ProviderType);
+                var trackingRef = s.TrackingNumber ?? s.ShortTrackingReference;
+                if (provider is not null && provider.IsEnabled && provider.SupportsDeliveryReschedule && !string.IsNullOrWhiteSpace(trackingRef))
+                {
+                    var rr = await provider.RescheduleDeliveryAsync(trackingRef!, request.NewDeliveryDateUtc, ct);
+                    var data = rr.IsSuccess ? rr.Data : null;
+                    if (data is { Ok: true })
+                    {
+                        s.UpdatedAt = DateTime.UtcNow;
+                        LogAction(s, ZansiDispatchActionType.DeliveryRescheduleSucceeded, ZansiDispatchActor.Customer, customerUserId, s.Status, s.Status, null, null, request.Reason, note, data.RawResponseJson, null);
+                        await _db.SaveChangesAsync(ct);
+                        return Result<ShipmentDto>.Success(MapShipment(s), "Delivery date changed.");
+                    }
+                    LogAction(s, ZansiDispatchActionType.DeliveryRescheduleFailed, ZansiDispatchActor.Customer, customerUserId, s.Status, s.Status, null, null, request.Reason, data?.ErrorMessage, data?.RawResponseJson, null);
+                    await _db.SaveChangesAsync(ct);
+                    // Customer-safe — never the raw provider error.
+                    return Result<ShipmentDto>.Success(MapShipment(s), "Request submitted — pending courier confirmation.");
+                }
+
+                // Not supported → ops task (logged above).
+                await _db.SaveChangesAsync(ct);
+                return Result<ShipmentDto>.Success(MapShipment(s), "Request submitted — pending courier confirmation.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ZansiDispatch RequestDeliveryChange failed. Id={Id}", shipmentId);
+                return Result<ShipmentDto>.Failure(ErrorCodes.Exception, "Could not submit your delivery change request.");
+            }
+        }
+
+        /// <summary>Order-scoped pickup reschedule (resolves the shipment from the order).</summary>
+        public async Task<Result<ShipmentDto>> ReschedulePickupForOrderAsync(Guid actorUserId, ZansiDispatchActor actor, Guid orderId, ReschedulePickupRequestDto request, CancellationToken ct = default)
+        {
+            var id = await _db.ZansiDispatchShipments.AsNoTracking().Where(x => x.OrderId == orderId).Select(x => (Guid?)x.Id).FirstOrDefaultAsync(ct);
+            if (id is null) return Result<ShipmentDto>.Failure(ErrorCodes.NotFound, "No dispatch found for this order yet.");
+            return await ReschedulePickupAsync(actorUserId, actor, id.Value, request, ct);
+        }
+
+        /// <summary>Order-scoped customer delivery-change request (resolves the shipment from the order).</summary>
+        public async Task<Result<ShipmentDto>> RequestDeliveryChangeForOrderAsync(Guid customerUserId, Guid orderId, RequestDeliveryChangeRequestDto request, CancellationToken ct = default)
+        {
+            var id = await _db.ZansiDispatchShipments.AsNoTracking().Where(x => x.OrderId == orderId).Select(x => (Guid?)x.Id).FirstOrDefaultAsync(ct);
+            if (id is null) return Result<ShipmentDto>.Failure(ErrorCodes.NotFound, "No dispatch found for this order yet.");
+            return await RequestDeliveryChangeAsync(customerUserId, id.Value, request, ct);
+        }
+
+        /// <summary>
+        /// Poll the provider for live status + persist events. Returns the
+        /// provider status strings before/after for the action log. No-op (returns
+        /// nulls) when the provider can't be polled. Does NOT SaveChanges.
+        /// </summary>
+        private async Task<(string? before, string? after)> PollProviderStatusAsync(ZansiDispatchShipment s, CancellationToken ct)
+        {
+            var before = s.Status.ToString();
+            // Status/tracking refresh is non-billable and independent of the
+            // AllowShipmentBooking kill switch; it only needs AllowProviderStatusRefresh.
+            if (!_opts.CourierGuy.AllowProviderStatusRefresh)
+                return (before, before);
+            var provider = ResolveShipmentProvider(s.ProviderType);
+            var trackingRef = s.TrackingNumber ?? s.ShortTrackingReference;
+            if (provider is null || !provider.IsEnabled || !provider.SupportsStatusRefresh || string.IsNullOrWhiteSpace(trackingRef))
+                return (before, s.Status.ToString());
+
+            var sw = Stopwatch.StartNew();
+            Result<ProviderTrackingResult> tr;
+            try { tr = await provider.GetShipmentStatusAsync(trackingRef!, ct); }
+            catch (Exception ex) { tr = Result<ProviderTrackingResult>.Failure(ErrorCodes.Exception, ex.Message); }
+            sw.Stop();
+
+            var data = tr.IsSuccess ? tr.Data : null;
+            AddProviderLog(s.ProviderType, ZansiDispatchProviderOperation.GetStatus, null, data?.RawResponseJson,
+                data?.Ok ?? false, data?.Ok == false ? data.ErrorMessage : (tr.IsSuccess ? null : tr.Message),
+                data?.StatusCode, (int)sw.ElapsedMilliseconds);
+
+            if (data is { Ok: true })
+                await PersistTrackingEventsAsync(s, data, ct);
+
+            return (before, s.Status.ToString());
+        }
+
+        private void LogAction(ZansiDispatchShipment s, ZansiDispatchActionType type, ZansiDispatchActor actor, Guid? actorUserId,
+            ZansiDispatchShipmentStatus? oldStatus, ZansiDispatchShipmentStatus? newStatus,
+            string? providerBefore, string? providerAfter, string? reason, string? notes, string? rawJson, string? correlationId)
+        {
+            try
+            {
+                _db.ZansiDispatchShipmentActions.Add(new ZansiDispatchShipmentAction
+                {
+                    Id = Guid.NewGuid(),
+                    ShipmentId = s.Id,
+                    OrderId = s.OrderId,
+                    ActorUserId = actorUserId,
+                    Actor = actor,
+                    ActionType = type,
+                    OldShipmentStatus = oldStatus,
+                    NewShipmentStatus = newStatus,
+                    ProviderStatusBefore = TruncStr(providerBefore, 80),
+                    ProviderStatusAfter = TruncStr(providerAfter, 80),
+                    Reason = TruncStr(reason, 1000),
+                    Notes = TruncStr(notes, 1000),
+                    SafeProviderResponseJson = rawJson,
+                    CorrelationId = TruncStr(correlationId, 100),
+                    CreatedAtUtc = DateTime.UtcNow,
+                });
+            }
+            catch (Exception ex) { _logger.LogWarning(ex, "ZansiDispatch: action-log write skipped."); }
+        }
+
+        private static string? TruncStr(string? v, int max) =>
+            string.IsNullOrEmpty(v) ? v : (v.Length > max ? v.Substring(0, max) : v);
+
+        /// <summary>
+        /// Map an action type to a CUSTOMER-SAFE update label, or null to hide it.
+        /// Only request/confirmation milestones the buyer should see — never
+        /// booking attempts, failures, refreshes, provider errors, or admin notes.
+        /// </summary>
+        private static string? CustomerUpdateLabel(ZansiDispatchActionType type) => type switch
+        {
+            ZansiDispatchActionType.PickupRescheduleRequested => "Pickup reschedule requested — pending courier confirmation",
+            ZansiDispatchActionType.PickupRescheduleSucceeded => "Pickup rescheduled",
+            ZansiDispatchActionType.CustomerDeliveryChangeRequested => "Delivery date change requested — pending courier confirmation",
+            ZansiDispatchActionType.DeliveryRescheduleSucceeded => "Delivery date change confirmed",
+            ZansiDispatchActionType.ProviderCancellationAttempted => "Cancellation pending with the courier",
+            ZansiDispatchActionType.ProviderCancellationSucceeded => "Courier booking cancelled — refund started",
+            _ => null,
+        };
+
+        private static ShipmentActionDto MapAction(ZansiDispatchShipmentAction a) => new()
+        {
+            Id = a.Id,
+            ShipmentId = a.ShipmentId,
+            OrderId = a.OrderId,
+            ActorUserId = a.ActorUserId,
+            Actor = a.Actor,
+            ActionType = a.ActionType,
+            OldShipmentStatus = a.OldShipmentStatus,
+            NewShipmentStatus = a.NewShipmentStatus,
+            ProviderStatusBefore = a.ProviderStatusBefore,
+            ProviderStatusAfter = a.ProviderStatusAfter,
+            Reason = a.Reason,
+            Notes = a.Notes,
+            CorrelationId = a.CorrelationId,
+            CreatedAtUtc = a.CreatedAtUtc,
+        };
 
         public async Task<Result<ShipmentLabelDto>> GetShipmentLabelAsync(Guid shipmentId, CancellationToken ct = default)
         {
@@ -1116,7 +1833,8 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     ShipmentsBookedWithCourier = await q.CountAsync(s => s.Status == ZansiDispatchShipmentStatus.BookedWithCourier, ct),
                     ShipmentsInTransit = await q.CountAsync(s => s.Status == ZansiDispatchShipmentStatus.InTransit || s.Status == ZansiDispatchShipmentStatus.OutForDelivery, ct),
                     ShipmentsDelivered = await q.CountAsync(s => s.Status == ZansiDispatchShipmentStatus.Delivered, ct),
-                    ShipmentsExceptions = await q.CountAsync(s => s.Status == ZansiDispatchShipmentStatus.Failed || s.Status == ZansiDispatchShipmentStatus.Exception, ct),
+                    ShipmentsExceptions = await q.CountAsync(s => s.Status == ZansiDispatchShipmentStatus.Failed || s.Status == ZansiDispatchShipmentStatus.Exception || s.Status == ZansiDispatchShipmentStatus.NeedsAttention, ct),
+                    ShipmentsNeedingAttention = await q.CountAsync(s => s.Status == ZansiDispatchShipmentStatus.NeedsAttention, ct),
                     ShipmentsPendingReconciliation = await q.CountAsync(s => s.ReconciliationStatus == ZansiDispatchReconciliationStatus.Pending, ct),
                     ShipmentsTotal = await q.CountAsync(ct),
                     ProviderFailureCount = await logs.CountAsync(l => !l.IsSuccess, ct),
@@ -1514,6 +2232,9 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             ProviderShipmentId = s.ProviderShipmentId,
             TrackingNumber = s.TrackingNumber,
             ShortTrackingReference = s.ShortTrackingReference,
+            // Display fallback: show the short ref when no full tracking number
+            // exists (provider may only return one of them).
+            TrackingReference = !string.IsNullOrWhiteSpace(s.TrackingNumber) ? s.TrackingNumber : s.ShortTrackingReference,
             ProviderShipmentReference = s.ProviderShipmentReference,
             CourierReference = s.CourierReference,
             PickupAddressSummary = s.PickupAddressSummary,
@@ -1523,6 +2244,9 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             LabelUrl = s.LabelUrl,
             LabelUrlExpiresAt = s.LabelUrlExpiresAt,
             Notes = s.Notes,
+            FailureReason = s.FailureReason,
+            LastBookingAttemptAtUtc = s.LastBookingAttemptAtUtc,
+            BookingAttemptCount = s.BookingAttemptCount,
             CreatedAt = s.CreatedAt,
             UpdatedAt = s.UpdatedAt,
         };
@@ -1544,6 +2268,10 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             NetAmount = s.NetAmount,
             TrackingNumber = s.TrackingNumber,
             ShortTrackingReference = s.ShortTrackingReference,
+            TrackingReference = !string.IsNullOrWhiteSpace(s.TrackingNumber) ? s.TrackingNumber : s.ShortTrackingReference,
+            FailureReason = s.FailureReason,
+            LastBookingAttemptAtUtc = s.LastBookingAttemptAtUtc,
+            BookingAttemptCount = s.BookingAttemptCount,
             CreatedAt = s.CreatedAt,
         };
 
