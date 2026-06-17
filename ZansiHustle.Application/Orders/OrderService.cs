@@ -519,6 +519,10 @@ namespace ZansiHustle.Application.Orders
                     TrackingUrl = null, // not surfaced to customers yet
                     EstimatedDeliveryUtc = null, // provider ETA not stored yet
                     DeliveredAtUtc = snap?.DeliveredAt,
+                    // Courier date promises (customer-safe; null until the provider returns them).
+                    ExpectedCollectionDate = snap?.HasShipment == true ? snap.ExpectedCollectionDate : null,
+                    ExpectedDeliveryFrom = snap?.HasShipment == true ? snap.ExpectedDeliveryFrom : null,
+                    ExpectedDeliveryTo = snap?.HasShipment == true ? snap.ExpectedDeliveryTo : null,
                     // Shop display name ONLY — never seller phone/address.
                     SellerDisplayName = order.Merchant?.Name,
                     // Buyer's delivery destination. The BUYER sees their own full

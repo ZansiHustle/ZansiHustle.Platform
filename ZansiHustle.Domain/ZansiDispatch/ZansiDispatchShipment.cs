@@ -56,6 +56,37 @@ namespace ZansiHustle.Domain.ZansiDispatch
         public DateTime? PickupScheduledAt { get; set; }
         public DateTime? DeliveredAt { get; set; }
 
+        // ── Courier date promises + parcel facts (from provider) ────────────
+        // Captured from the booking/tracking response when the provider returns
+        // them; NEVER faked. Date-only promises stored at UTC midnight; display
+        // in Africa/Johannesburg. Delivery is often a RANGE (from–to).
+        /// <summary>Courier's expected collection date (date-only; UTC midnight).</summary>
+        public DateTime? ExpectedCollectionDate { get; set; }
+        /// <summary>Start of the courier's expected delivery window (date-only).</summary>
+        public DateTime? ExpectedDeliveryFrom { get; set; }
+        /// <summary>End of the courier's expected delivery window (date-only). Equals
+        /// <see cref="ExpectedDeliveryFrom"/> when the provider gives a single date.</summary>
+        public DateTime? ExpectedDeliveryTo { get; set; }
+
+        /// <summary>Provider's charged (billable) weight in kg, if returned.</summary>
+        public decimal? ChargedWeightKg { get; set; }
+        /// <summary>Provider's measured actual weight in kg, if returned.</summary>
+        public decimal? ActualWeightKg { get; set; }
+        /// <summary>Provider's volumetric weight in kg, if returned.</summary>
+        public decimal? VolumetricWeightKg { get; set; }
+        /// <summary>Provider's base rate (before adjustments), if returned.</summary>
+        public decimal? BaseRate { get; set; }
+
+        /// <summary>Latest human-readable provider status message
+        /// (e.g. "A driver has been allocated to collect the shipment.").</summary>
+        public string? ProviderStatusMessage { get; set; }
+        /// <summary>Provider package/waybill tracking reference (e.g. FP9GWK/1), if distinct.</summary>
+        public string? PackageTrackingReference { get; set; }
+
+        /// <summary>Set once the "shipment booked" customer+seller emails have been
+        /// sent — idempotency guard so an idempotent retry never re-sends them.</summary>
+        public DateTime? ShipmentBookedEmailSentAtUtc { get; set; }
+
         /// <summary>Signed label/waybill PDF URL (expires ~24h — see <see cref="LabelUrlExpiresAt"/>).</summary>
         public string? LabelUrl { get; set; }
         public DateTime? LabelUrlExpiresAt { get; set; }

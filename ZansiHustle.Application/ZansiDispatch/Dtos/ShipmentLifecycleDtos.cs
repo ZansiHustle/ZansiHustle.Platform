@@ -89,6 +89,14 @@ namespace ZansiHustle.Application.ZansiDispatch.Dtos
         /// present, else the courier short reference (e.g. <c>7D67MD</c>).</summary>
         public string? TrackingReference { get; set; }
         public DateTime? DeliveredAt { get; set; }
+
+        // ── Courier date promises (customer-safe; null until provider returns them) ──
+        public DateTime? ExpectedCollectionDate { get; set; }
+        public DateTime? ExpectedDeliveryFrom { get; set; }
+        public DateTime? ExpectedDeliveryTo { get; set; }
+        /// <summary>Latest human-readable provider status message (customer-safe).</summary>
+        public string? ProviderStatusMessage { get; set; }
+
         public List<OrderDispatchEventDto> Events { get; set; } = new();
         /// <summary>
         /// Customer-safe lifecycle updates derived from the shipment action log

@@ -100,6 +100,14 @@ namespace ZansiHustle.Infrastructure.Persistence.ZansiDispatch
             builder.Property(x => x.DeficitAmount).HasPrecision(18, 2);
             builder.Property(x => x.NetAmount).HasPrecision(18, 2);
 
+            // Courier date promises + parcel facts (from provider).
+            builder.Property(x => x.BaseRate).HasPrecision(18, 2);
+            builder.Property(x => x.ChargedWeightKg).HasPrecision(18, 3);
+            builder.Property(x => x.ActualWeightKg).HasPrecision(18, 3);
+            builder.Property(x => x.VolumetricWeightKg).HasPrecision(18, 3);
+            builder.Property(x => x.ProviderStatusMessage).HasMaxLength(500);
+            builder.Property(x => x.PackageTrackingReference).HasMaxLength(120);
+
             builder.Property(x => x.ServiceLevelCode).HasMaxLength(60);
             builder.Property(x => x.ServiceLevelName).HasMaxLength(120);
             builder.Property(x => x.ProviderShipmentId).HasMaxLength(120);

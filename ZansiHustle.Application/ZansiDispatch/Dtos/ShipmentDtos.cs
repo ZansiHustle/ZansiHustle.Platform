@@ -64,6 +64,18 @@ namespace ZansiHustle.Application.ZansiDispatch.Dtos
         public string? DropoffAddressSummary { get; set; }
         public DateTime? PickupScheduledAt { get; set; }
         public DateTime? DeliveredAt { get; set; }
+
+        // ── Courier date promises + parcel facts (from provider; null until returned) ──
+        public DateTime? ExpectedCollectionDate { get; set; }
+        public DateTime? ExpectedDeliveryFrom { get; set; }
+        public DateTime? ExpectedDeliveryTo { get; set; }
+        public decimal? ChargedWeightKg { get; set; }
+        public decimal? ActualWeightKg { get; set; }
+        public decimal? VolumetricWeightKg { get; set; }
+        public decimal? BaseRate { get; set; }
+        public string? ProviderStatusMessage { get; set; }
+        public string? PackageTrackingReference { get; set; }
+
         public string? LabelUrl { get; set; }
         public DateTime? LabelUrlExpiresAt { get; set; }
         public string? Notes { get; set; }

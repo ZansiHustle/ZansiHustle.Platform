@@ -38,6 +38,15 @@ namespace ZansiHustle.Application.Orders.Dtos
         public DateTime? EstimatedDeliveryUtc { get; set; }
         public DateTime? DeliveredAtUtc { get; set; }
 
+        // ── Courier date promises (null until the provider returns them) ────
+        /// <summary>Courier's expected collection date (date-only).</summary>
+        public DateTime? ExpectedCollectionDate { get; set; }
+        /// <summary>Start of the expected delivery window (date-only).</summary>
+        public DateTime? ExpectedDeliveryFrom { get; set; }
+        /// <summary>End of the expected delivery window (date-only). May equal
+        /// <see cref="ExpectedDeliveryFrom"/> for a single-date promise.</summary>
+        public DateTime? ExpectedDeliveryTo { get; set; }
+
         /// <summary>Shop/seller display name only — never seller phone/address.</summary>
         public string? SellerDisplayName { get; set; }
 

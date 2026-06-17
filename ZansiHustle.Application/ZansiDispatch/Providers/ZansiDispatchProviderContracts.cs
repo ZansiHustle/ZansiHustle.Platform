@@ -155,8 +155,21 @@ namespace ZansiHustle.Application.ZansiDispatch.Providers
         public string? ServiceLevelCode { get; set; }
         public string? ServiceLevelName { get; set; }
         public decimal? BookedCost { get; set; }
+        /// <summary>Provider base rate (before adjustments), if returned.</summary>
+        public decimal? BaseRate { get; set; }
         public string? InitialProviderStatus { get; set; }
         public ZansiDispatchShipmentStatus? InitialStatus { get; set; }
+
+        // ── Courier date promises + parcel facts (only set when returned) ───
+        public DateTime? ExpectedCollectionDate { get; set; }
+        public DateTime? ExpectedDeliveryFrom { get; set; }
+        public DateTime? ExpectedDeliveryTo { get; set; }
+        public decimal? ChargedWeightKg { get; set; }
+        public decimal? ActualWeightKg { get; set; }
+        public decimal? VolumetricWeightKg { get; set; }
+        public string? ProviderStatusMessage { get; set; }
+        public string? PackageTrackingReference { get; set; }
+
         public string? RawRequestJson { get; set; }
         public string? RawResponseJson { get; set; }
         public int? StatusCode { get; set; }
@@ -180,7 +193,15 @@ namespace ZansiHustle.Application.ZansiDispatch.Providers
         public string? ErrorMessage { get; set; }
         public ZansiDispatchShipmentStatus? CurrentStatus { get; set; }
         public string? CurrentProviderStatus { get; set; }
+        /// <summary>Latest human-readable status message (e.g. "A driver has been allocated…").</summary>
+        public string? CurrentStatusMessage { get; set; }
         public List<ProviderTrackingEvent> Events { get; set; } = new();
+
+        // ── Updated courier date promises from the tracking poll (when present) ──
+        public DateTime? ExpectedCollectionDate { get; set; }
+        public DateTime? ExpectedDeliveryFrom { get; set; }
+        public DateTime? ExpectedDeliveryTo { get; set; }
+
         public string? RawResponseJson { get; set; }
         public int? StatusCode { get; set; }
     }

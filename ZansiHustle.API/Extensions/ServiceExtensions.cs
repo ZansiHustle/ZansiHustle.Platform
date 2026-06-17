@@ -341,11 +341,22 @@ public static class ServiceExtensions
     {
         services.Configure<EmailSenderSettings>(configuration.GetSection(EmailSenderSettings.SectionName));
 
+        // Central communication test-mode + recipient resolver (email/SMS/WhatsApp).
+        // The legacy EmailTestMode section is bound ONLY for deprecated fallback.
+        services.Configure<ZansiHustle.Application.Communications.TestMode.CommunicationTestModeSettings>(
+            configuration.GetSection(ZansiHustle.Application.Communications.TestMode.CommunicationTestModeSettings.SectionName));
+        services.Configure<ZansiHustle.Application.Communications.Email.Models.EmailTestModeSettings>(
+            configuration.GetSection(ZansiHustle.Application.Communications.Email.Models.EmailTestModeSettings.SectionName));
+        services.AddScoped<ZansiHustle.Application.Communications.TestMode.ICommunicationRecipientResolver,
+                           ZansiHustle.Application.Communications.TestMode.CommunicationRecipientResolver>();
+
         services.AddScoped<IEmailProvider, SmtpEmailProvider>();
         services.AddScoped<IEmailService, EmailService>();
         services.AddScoped<IEmailSenderMapper, EmailSenderMapper>();
         services.AddScoped<ISupportEmailService, SupportEmailService>();
         services.AddScoped<IMerchantEmailService, MerchantEmailService>();
+        services.AddScoped<ZansiHustle.Application.Communications.Email.Interfaces.IShipmentEmailService,
+                           ZansiHustle.Application.Communications.Email.Services.ShipmentEmailService>();
 
         // Boot-time diagnostic — logs per-sender readiness once at
         // startup so a misconfigured UAT/live environment is obvious

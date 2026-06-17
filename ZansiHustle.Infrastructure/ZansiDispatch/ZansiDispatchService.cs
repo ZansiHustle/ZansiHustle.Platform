@@ -39,6 +39,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
         private readonly IEnumerable<IZansiDispatchShipmentProvider> _shipmentProviders;
         private readonly ZansiDispatchOptions _opts;
         private readonly DispatchDebugOptions _debug;
+        private readonly ZansiHustle.Application.Communications.Email.Interfaces.IShipmentEmailService _shipmentEmail;
         private readonly ILogger<ZansiDispatchService> _logger;
 
         public ZansiDispatchService(
@@ -47,6 +48,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             IEnumerable<IZansiDispatchShipmentProvider> shipmentProviders,
             IOptions<ZansiDispatchOptions> opts,
             IOptions<DispatchDebugOptions> debug,
+            ZansiHustle.Application.Communications.Email.Interfaces.IShipmentEmailService shipmentEmail,
             ILogger<ZansiDispatchService> logger)
         {
             _db = db;
@@ -54,6 +56,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             _shipmentProviders = shipmentProviders;
             _opts = opts.Value;
             _debug = debug.Value;
+            _shipmentEmail = shipmentEmail;
             _logger = logger;
         }
 
@@ -1005,6 +1008,18 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     shipment.FailureReason = null; // success clears any prior failure
                     shipment.UpdatedAt = now;
 
+                    // Courier date promises + parcel facts (only when the provider
+                    // returned them — never faked).
+                    if (data.ExpectedCollectionDate is DateTime ecd) shipment.ExpectedCollectionDate = ecd;
+                    if (data.ExpectedDeliveryFrom is DateTime edf) shipment.ExpectedDeliveryFrom = edf;
+                    if (data.ExpectedDeliveryTo is DateTime edt) shipment.ExpectedDeliveryTo = edt;
+                    if (data.ChargedWeightKg is decimal cw) shipment.ChargedWeightKg = cw;
+                    if (data.ActualWeightKg is decimal aw) shipment.ActualWeightKg = aw;
+                    if (data.VolumetricWeightKg is decimal vw) shipment.VolumetricWeightKg = vw;
+                    if (data.BaseRate is decimal br) shipment.BaseRate = br;
+                    if (!string.IsNullOrWhiteSpace(data.ProviderStatusMessage)) shipment.ProviderStatusMessage = data.ProviderStatusMessage;
+                    if (!string.IsNullOrWhiteSpace(data.PackageTrackingReference)) shipment.PackageTrackingReference = data.PackageTrackingReference;
+
                     // Record the courier's booking cost as the actual cost when the
                     // provider returns one — so booked shipments don't show R0 in the
                     // Logistics Bank. This is the provider's booked rate; ops can still
@@ -1053,6 +1068,16 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 }
 
                 await _db.SaveChangesAsync(ct);
+
+                // Shipment-booked emails (customer + seller). Only when the courier
+                // booking actually succeeded (ProviderShipmentId set) AND not already
+                // sent — idempotent so a duplicate/retry never re-sends. Best-effort.
+                if (!string.IsNullOrWhiteSpace(shipment.ProviderShipmentId)
+                    && shipment.ShipmentBookedEmailSentAtUtc is null)
+                {
+                    await SendShipmentBookedEmailsBestEffortAsync(shipment, quote, order.Code, order.BuyerUserId, order.MerchantId, ct);
+                }
+
                 return Result<ShipmentDto>.Success(MapShipment(shipment), "Shipment created.");
             }
             catch (Exception ex)
@@ -1060,6 +1085,84 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 _logger.LogError(ex, "ZansiDispatch BookShipmentCore failed. origin={Origin} OrderId={OrderId}", origin, request?.OrderId);
                 return Result<ShipmentDto>.Failure(ErrorCodes.Exception, "Could not create the shipment.");
             }
+        }
+
+        /// <summary>
+        /// Build + send the customer and seller "shipment booked" emails after a
+        /// successful courier booking, then stamp <c>ShipmentBookedEmailSentAtUtc</c>
+        /// so a retry never re-sends. Best-effort: any failure is logged and never
+        /// propagated (it must not fail the booking). The seller context carries
+        /// buyer NAME + broad delivery AREA only — never buyer email/phone/full address.
+        /// </summary>
+        private async Task SendShipmentBookedEmailsBestEffortAsync(
+            ZansiDispatchShipment shipment, ZansiDispatchQuote quote, string? orderCode,
+            Guid buyerUserId, Guid? merchantId, CancellationToken ct)
+        {
+            try
+            {
+                var buyer = await _db.Users.AsNoTracking()
+                    .Where(u => u.Id == buyerUserId)
+                    .Select(u => new { u.Email, u.FirstName, u.LastName })
+                    .FirstOrDefaultAsync(ct);
+
+                var merchant = merchantId is Guid mid
+                    ? await _db.Merchants.AsNoTracking()
+                        .Where(m => m.Id == mid)
+                        .Select(m => new { m.Name, m.ContactEmail })
+                        .FirstOrDefaultAsync(ct)
+                    : null;
+
+                var buyerName = string.Join(" ",
+                    new[] { buyer?.FirstName, buyer?.LastName }.Where(p => !string.IsNullOrWhiteSpace(p)));
+
+                var ctx = new ZansiHustle.Application.Communications.Email.Models.ShipmentEmailContext
+                {
+                    OrderCode = orderCode ?? string.Empty,
+                    CustomerEmail = buyer?.Email,
+                    CustomerName = string.IsNullOrWhiteSpace(buyerName) ? null : buyerName,
+                    SellerEmail = merchant?.ContactEmail,
+                    SellerName = merchant?.Name,
+                    TrackingReference = !string.IsNullOrWhiteSpace(shipment.TrackingNumber) ? shipment.TrackingNumber : shipment.ShortTrackingReference,
+                    Courier = shipment.ProviderType.ToString(),
+                    ServiceLevel = shipment.ServiceLevelName ?? shipment.ServiceLevel.ToString(),
+                    Status = "Courier booked — preparing pickup",
+                    ExpectedCollectionDate = shipment.ExpectedCollectionDate,
+                    ExpectedDeliveryFrom = shipment.ExpectedDeliveryFrom,
+                    ExpectedDeliveryTo = shipment.ExpectedDeliveryTo,
+                    DeliveryAddressFull = quote.BuyerAddressSummary,
+                    DeliveryArea = DeriveBroadArea(quote.BuyerCity, quote.BuyerLocalArea, quote.BuyerAddressSummary),
+                    PickupAddress = quote.SellerAddressSummary,
+                };
+
+                await _shipmentEmail.SendShipmentBookedEmailsAsync(ctx, ct);
+
+                shipment.ShipmentBookedEmailSentAtUtc = DateTime.UtcNow;
+                await _db.SaveChangesAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ZansiDispatch shipment-booked emails failed (order {OrderCode}). Booking unaffected.", orderCode);
+            }
+        }
+
+        /// <summary>Broad delivery area ("Suburb, City") for the SELLER — never the
+        /// full street/postal. Prefers structured suburb+city; falls back to the
+        /// middle of the address summary.</summary>
+        private static string? DeriveBroadArea(string? city, string? localArea, string? summary)
+        {
+            var suburb = string.IsNullOrWhiteSpace(localArea) ? null : localArea!.Trim();
+            var cityName = string.IsNullOrWhiteSpace(city) ? null : city!.Trim();
+            if (suburb is not null && cityName is not null) return $"{suburb}, {cityName}";
+            if (cityName is not null) return cityName;
+            if (suburb is not null) return suburb;
+            // Fallback: take the 2nd/3rd comma segment of the summary if present.
+            if (!string.IsNullOrWhiteSpace(summary))
+            {
+                var parts = summary.Split(',');
+                if (parts.Length >= 3) return $"{parts[1].Trim()}, {parts[2].Trim()}";
+                if (parts.Length == 2) return parts[1].Trim();
+            }
+            return null;
         }
 
         /// <summary>
@@ -1183,6 +1286,10 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     // returns only a short ref and no full tracking number.
                     TrackingReference = !string.IsNullOrWhiteSpace(s.TrackingNumber) ? s.TrackingNumber : s.ShortTrackingReference,
                     DeliveredAt = s.DeliveredAt,
+                    ExpectedCollectionDate = s.ExpectedCollectionDate,
+                    ExpectedDeliveryFrom = s.ExpectedDeliveryFrom,
+                    ExpectedDeliveryTo = s.ExpectedDeliveryTo,
+                    ProviderStatusMessage = s.ProviderStatusMessage,
                     Events = events.Select(e => new OrderDispatchEventDto
                     {
                         InternalStatus = e.InternalStatus,
@@ -1822,13 +1929,25 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
 
         public async Task<Result<WebhookAckDto>> HandleCourierWebhookAsync(string rawBody, string? authHeader, CancellationToken ct = default)
         {
-            // Verify optional shared secret. When configured and mismatched, reject.
+            // Verify the shared secret (the "Auth key" set in the Shiplogic /
+            // Courier Guy portal). When the secret is configured and the inbound
+            // key is missing or mismatched, reject with 401. When the secret is
+            // NOT configured the endpoint is OPEN — so the secret MUST be set in
+            // UAT/production (env: ZansiDispatch__CourierGuy__WebhookSecret).
             var secret = _opts.CourierGuy.WebhookSecret;
             if (!string.IsNullOrWhiteSpace(secret))
             {
                 var provided = (authHeader ?? string.Empty).Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase).Trim();
                 if (!string.Equals(provided, secret, StringComparison.Ordinal))
+                {
+                    // Safe log only — never the secret or the body. Records that a
+                    // rejected webhook arrived, whether any auth header was present,
+                    // and the provided value's length (for triage).
+                    _logger.LogWarning(
+                        "ZansiDispatch CourierGuy webhook REJECTED (401): invalid/missing auth key (header present: {HasHeader}, provided length: {Len}).",
+                        !string.IsNullOrWhiteSpace(authHeader), provided.Length);
                     return Result<WebhookAckDto>.Failure(ErrorCodes.Unauthorized, "Invalid webhook signature.");
+                }
             }
 
             var ack = new WebhookAckDto { Received = true };
@@ -2225,6 +2344,34 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 if (cur == ZansiDispatchShipmentStatus.Delivered && s.DeliveredAt is null) s.DeliveredAt = now;
                 s.UpdatedAt = now;
             }
+
+            // Refresh provider status message + newer courier date promises when
+            // the tracking poll returns them. Note material date changes on the
+            // TrackingRefreshed action so ops/customer updates have an audit trail.
+            if (!string.IsNullOrWhiteSpace(data.CurrentStatusMessage))
+                s.ProviderStatusMessage = data.CurrentStatusMessage;
+
+            var dateNotes = new List<string>();
+            if (data.ExpectedCollectionDate is DateTime ecd && ecd != s.ExpectedCollectionDate)
+            {
+                s.ExpectedCollectionDate = ecd;
+                dateNotes.Add($"Expected collection updated to {ecd:yyyy-MM-dd}.");
+            }
+            if (data.ExpectedDeliveryFrom is DateTime edf && edf != s.ExpectedDeliveryFrom)
+            {
+                s.ExpectedDeliveryFrom = edf;
+                dateNotes.Add($"Expected delivery updated from {edf:yyyy-MM-dd}.");
+            }
+            if (data.ExpectedDeliveryTo is DateTime edt && edt != s.ExpectedDeliveryTo)
+                s.ExpectedDeliveryTo = edt;
+
+            if (dateNotes.Count > 0)
+            {
+                s.UpdatedAt = now;
+                LogAction(s, ZansiDispatchActionType.TrackingRefreshed, ZansiDispatchActor.System, null,
+                    s.Status, s.Status, null, data.CurrentProviderStatus, null,
+                    string.Join(" ", dateNotes), null, null);
+            }
         }
 
         private async Task<ZansiDispatchShipment?> ResolveWebhookShipmentAsync(string? trackingRef, string? providerShipmentId, string? customerRef, CancellationToken ct)
@@ -2377,6 +2524,15 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             DropoffAddressSummary = s.DropoffAddressSummary,
             PickupScheduledAt = s.PickupScheduledAt,
             DeliveredAt = s.DeliveredAt,
+            ExpectedCollectionDate = s.ExpectedCollectionDate,
+            ExpectedDeliveryFrom = s.ExpectedDeliveryFrom,
+            ExpectedDeliveryTo = s.ExpectedDeliveryTo,
+            ChargedWeightKg = s.ChargedWeightKg,
+            ActualWeightKg = s.ActualWeightKg,
+            VolumetricWeightKg = s.VolumetricWeightKg,
+            BaseRate = s.BaseRate,
+            ProviderStatusMessage = s.ProviderStatusMessage,
+            PackageTrackingReference = s.PackageTrackingReference,
             LabelUrl = s.LabelUrl,
             LabelUrlExpiresAt = s.LabelUrlExpiresAt,
             Notes = s.Notes,

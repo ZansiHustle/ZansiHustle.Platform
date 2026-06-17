@@ -210,6 +210,18 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch.Providers.CourierGuy
                 MuteNotifications = request.MuteNotifications,
             };
 
+            // Pre-send contact diagnostic (#1). Confirms the DELIVERY email is
+            // actually included before we hand off to the courier — emails are
+            // MASKED so production logs never leak a full address, and names are
+            // logged as presence-only. Never logs the API key.
+            _logger.LogInformation(
+                "[CourierGuy][contacts] op=shipments deliveryEmail={DEmail} deliveryPhonePresent={DPhone} deliveryNamePresent={DName} collectionEmail={CEmail} collectionPhonePresent={CPhone}",
+                MaskEmail(request.DeliveryContact?.Email),
+                !string.IsNullOrWhiteSpace(request.DeliveryContact?.MobileNumber),
+                !string.IsNullOrWhiteSpace(request.DeliveryContact?.Name),
+                MaskEmail(request.CollectionContact?.Email),
+                !string.IsNullOrWhiteSpace(request.CollectionContact?.MobileNumber));
+
             var (status, respBody, transportError) = await SendAsync(HttpMethod.Post, "/shipments", body, ct);
             LogResponseShape("shipments", status, respBody);
             var result = new ProviderShipmentResult
@@ -244,9 +256,23 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch.Providers.CourierGuy
                 result.ServiceLevelCode = GetString(root, "service_level_code");
                 result.ServiceLevelName = GetString(root, "service_level_name");
                 result.BookedCost = GetDecimal(root, "rate", "total", "charge", "total_charge");
+                result.BaseRate = GetDecimal(root, "base_rate", "base_charge", "rate_excluding_vat");
                 result.InitialProviderStatus = GetString(root, "status", "tracking_status");
                 if (!string.IsNullOrWhiteSpace(result.InitialProviderStatus))
                     result.InitialStatus = CourierGuyStatusMap.Map(result.InitialProviderStatus);
+                result.ProviderStatusMessage = GetString(root, "status_description", "status_message", "status_friendly", "tracking_status_friendly");
+
+                // Courier date promises + parcel facts — only set when the provider
+                // actually returns them (never faked).
+                var (coll, from, to) = ReadExpectedDates(root);
+                result.ExpectedCollectionDate = coll;
+                result.ExpectedDeliveryFrom = from;
+                result.ExpectedDeliveryTo = to;
+                var (charged, actual, vol) = ReadParcelWeights(root);
+                result.ChargedWeightKg = charged;
+                result.ActualWeightKg = actual;
+                result.VolumetricWeightKg = vol;
+                result.PackageTrackingReference = ReadPackageTrackingRef(root);
             }
             catch (Exception ex)
             {
@@ -287,6 +313,15 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch.Providers.CourierGuy
                     var latest = result.Events.OrderBy(e => e.EventTime).Last();
                     result.CurrentProviderStatus = latest.ProviderStatus;
                     result.CurrentStatus = latest.InternalStatus;
+                    result.CurrentStatusMessage = latest.Message;
+                }
+                // Updated courier date promises from the tracking payload, when present.
+                using (var ddoc = JsonDocument.Parse(respBody))
+                {
+                    var (coll, from, to) = ReadExpectedDates(ddoc.RootElement);
+                    result.ExpectedCollectionDate = coll;
+                    result.ExpectedDeliveryFrom = from;
+                    result.ExpectedDeliveryTo = to;
                 }
             }
             catch (Exception ex)
@@ -663,6 +698,94 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch.Providers.CourierGuy
         {
             var s = GetString(el, names);
             return DateTime.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AdjustToUniversal, out var dt) ? dt : (DateTime?)null;
+        }
+
+        /// <summary>Parse a DATE-ONLY courier promise (returns the date at midnight UTC).</summary>
+        private static DateTime? GetDate(JsonElement el, params string[] names)
+        {
+            var s = GetString(el, names);
+            if (string.IsNullOrWhiteSpace(s)) return null;
+            return DateTime.TryParse(s, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal, out var dt)
+                ? dt.Date
+                : (DateTime?)null;
+        }
+
+        /// <summary>
+        /// Best-effort read of the courier's expected collection date + delivery
+        /// window from a shipment/tracking payload. Tolerates flat fields and a
+        /// nested <c>estimated_delivery {from,to}</c> object. Returns nulls when
+        /// the provider doesn't supply them — NEVER fabricated.
+        /// </summary>
+        private static (DateTime? collection, DateTime? deliveryFrom, DateTime? deliveryTo) ReadExpectedDates(JsonElement root)
+        {
+            if (root.ValueKind != JsonValueKind.Object) return (null, null, null);
+
+            var collection = GetDate(root, "estimated_collection_date", "expected_collection_date",
+                "scheduled_collection_date", "collection_date", "estimated_collection");
+            var from = GetDate(root, "estimated_delivery_from", "expected_delivery_from",
+                "delivery_date_from", "estimated_delivery_date", "expected_delivery_date");
+            var to = GetDate(root, "estimated_delivery_to", "expected_delivery_to", "delivery_date_to");
+
+            if (root.TryGetProperty("estimated_delivery", out var ed) && ed.ValueKind == JsonValueKind.Object)
+            {
+                from ??= GetDate(ed, "from", "min", "start", "date");
+                to ??= GetDate(ed, "to", "max", "end");
+            }
+            to ??= from; // single-date promise → range collapses to one day
+            return (collection, from, to);
+        }
+
+        /// <summary>Read charged/actual/volumetric weights from root, a nested
+        /// <c>rate</c> object, or the first parcel. Only returns values the
+        /// provider supplied.</summary>
+        private static (decimal? charged, decimal? actual, decimal? volumetric) ReadParcelWeights(JsonElement root)
+        {
+            if (root.ValueKind != JsonValueKind.Object) return (null, null, null);
+
+            var charged = GetDecimal(root, "charged_weight", "chargeable_weight", "charged_weight_kg");
+            var actual = GetDecimal(root, "actual_weight", "actual_weight_kg");
+            var vol = GetDecimal(root, "volumetric_weight", "volumetric_weight_kg", "vol_weight");
+
+            if (root.TryGetProperty("rate", out var rate) && rate.ValueKind == JsonValueKind.Object)
+            {
+                charged ??= GetDecimal(rate, "charged_weight", "chargeable_weight");
+                actual ??= GetDecimal(rate, "actual_weight");
+                vol ??= GetDecimal(rate, "volumetric_weight");
+            }
+            if ((charged is null || actual is null || vol is null)
+                && root.TryGetProperty("parcels", out var ps) && ps.ValueKind == JsonValueKind.Array && ps.GetArrayLength() > 0)
+            {
+                var p0 = ps.EnumerateArray().First();
+                charged ??= GetDecimal(p0, "charged_weight", "chargeable_weight");
+                actual ??= GetDecimal(p0, "actual_weight", "submitted_weight_kg", "weight");
+                vol ??= GetDecimal(p0, "volumetric_weight");
+            }
+            return (charged, actual, vol);
+        }
+
+        /// <summary>Read the parcel/waybill tracking reference (e.g. FP9GWK/1) when present.</summary>
+        private static string? ReadPackageTrackingRef(JsonElement root)
+        {
+            if (root.ValueKind == JsonValueKind.Object
+                && root.TryGetProperty("parcels", out var ps) && ps.ValueKind == JsonValueKind.Array && ps.GetArrayLength() > 0)
+            {
+                var p0 = ps.EnumerateArray().First();
+                return GetString(p0, "tracking_reference", "alternative_tracking_reference", "waybill_number", "barcode");
+            }
+            return null;
+        }
+
+        /// <summary>Masks an email for safe logging: <c>x***@gmail.com</c>, or
+        /// <c>&lt;missing&gt;</c> when absent. Confirms presence without leaking the address.</summary>
+        private static string MaskEmail(string? email)
+        {
+            if (string.IsNullOrWhiteSpace(email)) return "<missing>";
+            var at = email.IndexOf('@');
+            if (at <= 0) return "***";
+            var first = email[0];
+            var domain = email.Substring(at);
+            return $"{first}***{domain}";
         }
     }
 }
