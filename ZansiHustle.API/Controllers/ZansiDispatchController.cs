@@ -3,10 +3,15 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using ZansiHustle.Application.Common.Interfaces.Shared;
 using ZansiHustle.Application.ZansiDispatch;
 using ZansiHustle.Application.ZansiDispatch.Dtos;
+using ZansiHustle.Infrastructure.Configuration;
 using ZansiHustle.Shared.Enums.ZansiDispatch;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
@@ -34,11 +39,22 @@ namespace ZansiHustle.API.Controllers
 
         private readonly IZansiDispatchService _dispatch;
         private readonly ICurrentUserService _currentUser;
+        private readonly IWebHostEnvironment _env;
+        private readonly ZansiDispatchOptions _dispatchOptions;
+        private readonly ILogger<ZansiDispatchController> _logger;
 
-        public ZansiDispatchController(IZansiDispatchService dispatch, ICurrentUserService currentUser)
+        public ZansiDispatchController(
+            IZansiDispatchService dispatch,
+            ICurrentUserService currentUser,
+            IWebHostEnvironment env,
+            IOptions<ZansiDispatchOptions> dispatchOptions,
+            ILogger<ZansiDispatchController> logger)
         {
             _dispatch = dispatch;
             _currentUser = currentUser;
+            _env = env;
+            _dispatchOptions = dispatchOptions?.Value ?? new ZansiDispatchOptions();
+            _logger = logger;
         }
 
         private bool TryGetUserId(out Guid userId)
@@ -244,6 +260,29 @@ namespace ZansiHustle.API.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> CourierGuyWebhook(CancellationToken ct)
         {
+            // Fail-CLOSED outside Development: a provider webhook is unauthenticated
+            // (no JWT), so its only protection is the shared secret. If the secret is
+            // not configured we must reject in UAT/Staging/Production rather than
+            // silently accept unauthenticated calls. In Development a missing secret
+            // is allowed but loudly logged (so local testing isn't blocked). The
+            // secret value is never logged.
+            var secretConfigured = !string.IsNullOrWhiteSpace(_dispatchOptions.CourierGuy.WebhookSecret);
+            if (!secretConfigured)
+            {
+                if (!_env.IsDevelopment())
+                {
+                    _logger.LogWarning(
+                        "CourierGuy webhook REJECTED (401): ZansiDispatch:CourierGuy:WebhookSecret is not configured in {Environment}. " +
+                        "Set the secret to enable provider webhooks.", _env.EnvironmentName);
+                    return ToActionResult(Result<WebhookAckDto>.Failure(
+                        ErrorCodes.Unauthorized, "Webhook authentication is not configured."));
+                }
+
+                _logger.LogWarning(
+                    "CourierGuy webhook accepted WITHOUT a configured secret because the environment is Development. " +
+                    "This is fail-open ONLY in Development; set ZansiDispatch:CourierGuy:WebhookSecret before UAT/prod.");
+            }
+
             string rawBody;
             using (var reader = new System.IO.StreamReader(Request.Body))
                 rawBody = await reader.ReadToEndAsync(ct);
@@ -252,6 +291,8 @@ namespace ZansiHustle.API.Controllers
                 ? a.ToString()
                 : (Request.Headers.TryGetValue("X-Webhook-Secret", out var x) ? x.ToString() : null);
 
+            // When a secret IS configured, the service performs the constant
+            // Authorization / X-Webhook-Secret match and returns 401 on mismatch.
             return ToActionResult(await _dispatch.HandleCourierWebhookAsync(rawBody, authHeader, ct));
         }
     }

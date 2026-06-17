@@ -14,9 +14,12 @@ using ZansiHustle.Application.Persistence.SellerLeads;
 using ZansiHustle.Domain.Merchants;
 using ZansiHustle.Domain.SellerLeads;
 using ZansiHustle.Application.Common.Geo;
+using ZansiHustle.Application.Notifications;
 using ZansiHustle.Shared.Enums.Merchants;
+using ZansiHustle.Shared.Enums.Notifications;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
+using Microsoft.Extensions.Logging;
 
 namespace ZansiHustle.Application.Merchants
 {
@@ -32,6 +35,8 @@ namespace ZansiHustle.Application.Merchants
         private readonly IUserLookupService _userLookup;
         private readonly ISellerLeadRepository _sellerLeadRepository;
         private readonly IStorageUrlResolver _storageUrlResolver;
+        private readonly INotificationService _notifications;
+        private readonly ILogger<MerchantService> _logger;
 
         public MerchantService(
             IMerchantRepository merchantRepository,
@@ -40,7 +45,9 @@ namespace ZansiHustle.Application.Merchants
             Application.Persistence.Media.IMediaAssetRepository mediaRepo,
             IUserLookupService userLookup,
             ISellerLeadRepository sellerLeadRepository,
-            IStorageUrlResolver storageUrlResolver)
+            IStorageUrlResolver storageUrlResolver,
+            INotificationService notifications,
+            ILogger<MerchantService> logger)
         {
             _merchantRepository = merchantRepository;
             _sellerCategoryRepository = sellerCategoryRepository;
@@ -49,6 +56,33 @@ namespace ZansiHustle.Application.Merchants
             _userLookup = userLookup;
             _sellerLeadRepository = sellerLeadRepository;
             _storageUrlResolver = storageUrlResolver;
+            _notifications = notifications;
+            _logger = logger;
+        }
+
+        // Best-effort applicant notification for a seller-application status change.
+        // Never throws — a notification/push failure must not fail the admin action.
+        // Body copy is customer-safe (no internal admin notes).
+        private async Task NotifySellerApplicationStatusAsync(
+            Merchant merchant, string title, string body)
+        {
+            var ownerUserId = merchant.OwnerUserId;
+            if (ownerUserId is null || ownerUserId == Guid.Empty) return;
+            try
+            {
+                await _notifications.CreateAndDispatchAsync(
+                    ownerUserId.Value,
+                    NotificationType.SellerStatusChanged,
+                    title,
+                    body,
+                    new { targetType = "SellerApplication", merchantId = merchant.Id.ToString() });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "[Notifications] Failed to notify applicant for merchant {MerchantId} status change.",
+                    merchant.Id);
+            }
         }
 
         // Required verification uploads for self-registration. Used at
@@ -455,6 +489,10 @@ namespace ZansiHustle.Application.Merchants
                 if (!saved)
                     return Result<MerchantDto>.Failure(ErrorCodes.Exception, "Failed to verify merchant KYC.");
 
+                await NotifySellerApplicationStatusAsync(merchant,
+                    "Seller application approved",
+                    "Your seller verification is complete. You can now start selling on ZansiHustle.");
+
                 return Result<MerchantDto>.Success(MapToDto(merchant), "Merchant KYC verified successfully.");
             }
             catch (Exception ex)
@@ -485,6 +523,10 @@ namespace ZansiHustle.Application.Merchants
                 if (!saved)
                     return Result<MerchantDto>.Failure(ErrorCodes.Exception, "Failed to approve merchant.");
 
+                await NotifySellerApplicationStatusAsync(merchant,
+                    "Seller application approved",
+                    "You can now start selling on ZansiHustle.");
+
                 return Result<MerchantDto>.Success(MapToDto(merchant), "Merchant approved.");
             }
             catch (Exception ex)
@@ -511,6 +553,12 @@ namespace ZansiHustle.Application.Merchants
 
                 if (!saved)
                     return Result<MerchantDto>.Failure(ErrorCodes.Exception, "Failed to reject merchant.");
+
+                // Customer-safe wording only — never surface internal admin notes /
+                // the raw rejection reason in the push body.
+                await NotifySellerApplicationStatusAsync(merchant,
+                    "Seller application update",
+                    "Your application was reviewed. Open ZansiHustle for details.");
 
                 return Result<MerchantDto>.Success(MapToDto(merchant), string.IsNullOrWhiteSpace(reason) ? "Merchant rejected." : $"Merchant rejected: {reason}");
             }

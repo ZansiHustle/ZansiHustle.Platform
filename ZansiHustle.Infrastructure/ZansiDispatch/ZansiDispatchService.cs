@@ -40,6 +40,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
         private readonly ZansiDispatchOptions _opts;
         private readonly DispatchDebugOptions _debug;
         private readonly ZansiHustle.Application.Communications.Email.Interfaces.IShipmentEmailService _shipmentEmail;
+        private readonly ZansiHustle.Application.Notifications.INotificationService _notifications;
         private readonly ILogger<ZansiDispatchService> _logger;
 
         private static readonly JsonSerializerOptions CaseInsensitiveJson = new() { PropertyNameCaseInsensitive = true };
@@ -51,6 +52,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             IOptions<ZansiDispatchOptions> opts,
             IOptions<DispatchDebugOptions> debug,
             ZansiHustle.Application.Communications.Email.Interfaces.IShipmentEmailService shipmentEmail,
+            ZansiHustle.Application.Notifications.INotificationService notifications,
             ILogger<ZansiDispatchService> logger)
         {
             _db = db;
@@ -59,6 +61,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             _opts = opts.Value;
             _debug = debug.Value;
             _shipmentEmail = shipmentEmail;
+            _notifications = notifications;
             _logger = logger;
         }
 
@@ -2639,10 +2642,111 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 EventTime = now,
                 CreatedAt = now,
             });
+
+            var previousStatus = s.Status;
             s.Status = internalStatus;
             if (internalStatus == ZansiDispatchShipmentStatus.Delivered && s.DeliveredAt is null) s.DeliveredAt = now;
+
+            // Best-effort push to buyer + seller on a genuine milestone TRANSITION.
+            // Idempotency is double-guarded: duplicate provider events return 0
+            // above (never reach here), and we only notify when the internal
+            // status actually CHANGED — repeated "in-transit" scans don't spam.
+            if (internalStatus != previousStatus && IsShipmentMilestone(internalStatus))
+                await NotifyShipmentMilestoneAsync(s, internalStatus, ct);
+
             return 1;
         }
+
+        // Customer-facing shipment milestones we push on (decision: milestones
+        // only — minor hub scans / preparing states stay silent).
+        private static bool IsShipmentMilestone(ZansiDispatchShipmentStatus status) => status switch
+        {
+            ZansiDispatchShipmentStatus.PickedUp => true,
+            ZansiDispatchShipmentStatus.InTransit => true,
+            ZansiDispatchShipmentStatus.OutForDelivery => true,
+            ZansiDispatchShipmentStatus.Delivered => true,
+            ZansiDispatchShipmentStatus.Returned => true,
+            ZansiDispatchShipmentStatus.Failed => true,
+            ZansiDispatchShipmentStatus.Exception => true,
+            ZansiDispatchShipmentStatus.OnHold => true,
+            ZansiDispatchShipmentStatus.NeedsAttention => true,
+            _ => false,
+        };
+
+        // Push the buyer (OrderTracking) and the seller (SellerDispatchTracking)
+        // when a shipment hits a milestone. Best-effort + privacy-safe: the buyer
+        // copy references only their own order; the seller copy never includes
+        // buyer contact/address (just the order code). Never throws — a push
+        // failure must not break webhook processing (which still acks).
+        private async Task NotifyShipmentMilestoneAsync(
+            ZansiDispatchShipment s, ZansiDispatchShipmentStatus status, CancellationToken ct)
+        {
+            try
+            {
+                var order = await _db.Orders.AsNoTracking()
+                    .Where(o => o.Id == s.OrderId)
+                    .Select(o => new { o.Id, o.Code, o.BuyerUserId, OwnerUserId = o.Merchant!.OwnerUserId })
+                    .FirstOrDefaultAsync(ct);
+                if (order is null) return;
+
+                var (customerTitle, customerBody, sellerTitle, sellerBody) = ShipmentMilestoneCopy(status, order.Code);
+
+                // Buyer → customer order tracking.
+                if (customerBody is not null && order.BuyerUserId != Guid.Empty)
+                {
+                    await _notifications.CreateAndDispatchAsync(
+                        order.BuyerUserId,
+                        Shared.Enums.Notifications.NotificationType.ShipmentStatusChanged,
+                        customerTitle!, customerBody,
+                        new { targetType = "OrderTracking", orderId = order.Id.ToString(), code = order.Code });
+                }
+
+                // Seller → seller dispatch tracking (only when there's a distinct copy).
+                if (sellerBody is not null && order.OwnerUserId is Guid sellerId && sellerId != Guid.Empty)
+                {
+                    await _notifications.CreateAndDispatchAsync(
+                        sellerId,
+                        Shared.Enums.Notifications.NotificationType.ShipmentStatusChanged,
+                        sellerTitle!, sellerBody,
+                        new { targetType = "SellerDispatch", orderId = order.Id.ToString(), code = order.Code });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "ZansiDispatch shipment-milestone push tolerated an error. ShipmentId={Id} Status={Status}",
+                    s.Id, status);
+            }
+        }
+
+        // Customer-safe + seller copy per milestone. A null body suppresses that
+        // side. Delay/attention states use soft, non-alarming customer wording.
+        private static (string? customerTitle, string? customerBody, string? sellerTitle, string? sellerBody)
+            ShipmentMilestoneCopy(ZansiDispatchShipmentStatus status, string code) => status switch
+        {
+            ZansiDispatchShipmentStatus.PickedUp => (
+                "Order collected", $"Your order {code} has been collected by the courier.",
+                "Parcel collected", $"The courier collected order {code}."),
+            ZansiDispatchShipmentStatus.InTransit => (
+                "Order on the way", $"Your order {code} is on the way.",
+                "Shipment in transit", $"Order {code} is in transit."),
+            ZansiDispatchShipmentStatus.OutForDelivery => (
+                "Out for delivery", $"Your order {code} is out for delivery.",
+                "Out for delivery", $"Order {code} is out for delivery."),
+            ZansiDispatchShipmentStatus.Delivered => (
+                "Order delivered", $"Your order {code} was delivered.",
+                "Parcel delivered", $"Order {code} was delivered."),
+            ZansiDispatchShipmentStatus.Returned => (
+                "Delivery update", $"There's an update on your order {code}. Open ZansiHustle for details.",
+                "Shipment needs attention", $"Order {code} was returned — please review."),
+            ZansiDispatchShipmentStatus.OnHold => (
+                "Delivery update", $"There's a short delay with your order {code}. We're on it.",
+                "Shipment on hold", $"Order {code} is on hold — please review."),
+            // Failed / Exception / NeedsAttention — soft customer wording, seller flagged.
+            _ => (
+                "Delivery update", $"There's a delay with your order {code}. We're sorting it out.",
+                "Shipment needs attention", $"Order {code} needs attention."),
+        };
 
         private static ZansiDispatchLedgerEntry QuoteChargedLedger(Guid shipmentId, Guid orderId, decimal fee, Guid userId, DateTime now)
             => Ledger(shipmentId, orderId, ZansiDispatchLedgerEntryType.QuoteCharged, fee, ZansiDispatchLedgerDirection.Credit, fee, "Delivery fee charged to buyer at checkout.", null, userId, now);

@@ -51,6 +51,10 @@ public enum NotificationType
     /// <summary>Seller rejected the product order (refund issued) — sent to the buyer.</summary>
     OrderRejectedBySeller = 14,
 
+    /// <summary>Courier/dispatch shipment reached a milestone (collected, in transit,
+    /// out for delivery, delivered, needs-attention) — sent to the buyer and/or seller.</summary>
+    ShipmentStatusChanged = 15,
+
     /// <summary>Anything without a specific actionable target.</summary>
     Generic = 100
 }

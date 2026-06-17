@@ -811,7 +811,10 @@ public static class ServiceExtensions
     /// </summary>
     public static WebApplication ConfigureMiddleware(this WebApplication app)
     {
-        if (true)//app.Environment.IsDevelopment())
+        // Swagger is exposed only in Development, or when explicitly enabled via
+        // Swagger:Enabled=true. In UAT/Production it defaults OFF (no API-surface
+        // disclosure) unless that flag is deliberately set.
+        if (app.Environment.IsDevelopment() || app.Configuration.GetValue<bool>("Swagger:Enabled"))
         {
             app.UseSwagger();
             app.UseSwaggerUI();
