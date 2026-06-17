@@ -47,6 +47,11 @@ namespace ZansiHustle.Application.Orders.Dtos
         /// <see cref="ExpectedDeliveryFrom"/> for a single-date promise.</summary>
         public DateTime? ExpectedDeliveryTo { get; set; }
 
+        /// <summary>Seller's REQUESTED pickup date — populated ONLY for the seller's
+        /// view (so they can compare with the provider's expected collection).
+        /// Always null for the customer (they don't need the seller's pickup pref).</summary>
+        public DateTime? SellerRequestedPickupDate { get; set; }
+
         /// <summary>Shop/seller display name only — never seller phone/address.</summary>
         public string? SellerDisplayName { get; set; }
 

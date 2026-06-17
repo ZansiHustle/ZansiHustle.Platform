@@ -47,6 +47,17 @@ namespace ZansiHustle.Domain.ZansiDispatch
 
         public bool IsSelected { get; set; }
 
+        // ── Checkout curation (marketplace-clean choices) ───────────────────
+        /// <summary>True when this option may be shown to the CUSTOMER at checkout
+        /// (and selected). Raw provider options that are filtered out by policy
+        /// (disallowed code / too expensive / express outlier) are kept in the DB
+        /// for ops + diagnostics but have this set false. Defaults true (non-courier
+        /// + uncurated options).</summary>
+        public bool IsCheckoutVisible { get; set; } = true;
+        /// <summary>True for the single "Recommended delivery" option (preferred code,
+        /// else cheapest visible). Drives the default selection at checkout.</summary>
+        public bool IsRecommended { get; set; }
+
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     }

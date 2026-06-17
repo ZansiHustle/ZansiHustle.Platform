@@ -77,6 +77,8 @@ namespace ZansiHustle.Infrastructure.Persistence.ZansiDispatch
             builder.Property(x => x.ServiceLevelName).HasMaxLength(120);
             builder.Property(x => x.Label).HasMaxLength(120).IsRequired();
             builder.Property(x => x.Description).HasMaxLength(500);
+            // Curation: default visible so any pre-curation/legacy row still shows.
+            builder.Property(x => x.IsCheckoutVisible).HasDefaultValue(true);
             builder.Property(x => x.QuotedAmount).HasPrecision(18, 2);
             builder.Property(x => x.VatAmount).HasPrecision(18, 2);
             builder.Property(x => x.TotalAmount).HasPrecision(18, 2);
@@ -107,6 +109,9 @@ namespace ZansiHustle.Infrastructure.Persistence.ZansiDispatch
             builder.Property(x => x.VolumetricWeightKg).HasPrecision(18, 3);
             builder.Property(x => x.ProviderStatusMessage).HasMaxLength(500);
             builder.Property(x => x.PackageTrackingReference).HasMaxLength(120);
+            builder.Property(x => x.SellerPickupPreference).HasMaxLength(20);
+            builder.Property(x => x.SellerPickupNote).HasMaxLength(500);
+            builder.Property(x => x.ConfirmedPickupAddressJson).HasMaxLength(2000);
 
             builder.Property(x => x.ServiceLevelCode).HasMaxLength(60);
             builder.Property(x => x.ServiceLevelName).HasMaxLength(120);

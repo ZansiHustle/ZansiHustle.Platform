@@ -96,6 +96,12 @@ namespace ZansiHustle.Infrastructure.Configuration
         /// </summary>
         public bool AutoBookAfterSellerAcceptance { get; set; }
 
+        // NOTE: checkout quote CURATION (allowed codes / preferred / outlier /
+        // advanced / high-fee warning) is OPERATIONAL POLICY, not a secret — it
+        // lives in DB-managed ZansiDispatchSettings (ops-editable from the
+        // ZansiDispatch portal), NOT here. Env/appsettings keeps only credentials,
+        // base URL, and hard safety switches.
+
         /// <summary>True only when the minimum credentials to call the API are present.</summary>
         public bool IsConfigured =>
             !string.IsNullOrWhiteSpace(BaseUrl) && !string.IsNullOrWhiteSpace(ApiKey);

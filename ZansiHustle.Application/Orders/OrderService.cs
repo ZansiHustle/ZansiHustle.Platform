@@ -523,6 +523,9 @@ namespace ZansiHustle.Application.Orders
                     ExpectedCollectionDate = snap?.HasShipment == true ? snap.ExpectedCollectionDate : null,
                     ExpectedDeliveryFrom = snap?.HasShipment == true ? snap.ExpectedDeliveryFrom : null,
                     ExpectedDeliveryTo = snap?.HasShipment == true ? snap.ExpectedDeliveryTo : null,
+                    // Seller's requested pickup — SELLER view only (customer gets null).
+                    SellerRequestedPickupDate = (snap?.HasShipment == true && order.BuyerUserId != userId)
+                        ? snap.SellerRequestedPickupDate : null,
                     // Shop display name ONLY — never seller phone/address.
                     SellerDisplayName = order.Merchant?.Name,
                     // Buyer's delivery destination. The BUYER sees their own full
@@ -746,8 +749,46 @@ namespace ZansiHustle.Application.Orders
             return timeline;
         }
 
+        /// <summary>
+        /// Resolve the seller's pickup preference + a concrete requested date from
+        /// the (optional) accept body. Defaults to "AnyDay" (null date = earliest).
+        /// Today→today, Tomorrow→+1, Custom→the supplied date. The date is clamped
+        /// to [today, today+5] so a stray/old value can never request a pickup in
+        /// the past or far future. Returns date-only (UTC).
+        /// </summary>
+        private static (string Preference, DateTime? Date) ResolvePickupPreference(AcceptOrderRequestDto? request, DateTime nowUtc)
+        {
+            var today = nowUtc.Date;
+            var maxDate = today.AddDays(5);
+            var pref = (request?.PickupPreference ?? "").Trim();
+
+            DateTime? date = pref.ToLowerInvariant() switch
+            {
+                "today" => today,
+                "tomorrow" => today.AddDays(1),
+                "custom" => request?.RequestedPickupDate?.Date,
+                _ => null, // AnyDay / unspecified → earliest available
+            };
+
+            // Normalise the preference label; clamp a custom/explicit date to range.
+            var normalised = pref.ToLowerInvariant() switch
+            {
+                "today" => "Today",
+                "tomorrow" => "Tomorrow",
+                "custom" => "Custom",
+                _ => "AnyDay",
+            };
+            if (date is DateTime d)
+            {
+                if (d < today) d = today;
+                if (d > maxDate) d = maxDate;
+                date = d;
+            }
+            return (normalised, date);
+        }
+
         /// <inheritdoc />
-        public async Task<Result<OrderDto>> AcceptAsync(Guid userId, Guid orderId)
+        public async Task<Result<OrderDto>> AcceptAsync(Guid userId, Guid orderId, AcceptOrderRequestDto? request = null)
         {
             try
             {
@@ -786,6 +827,24 @@ namespace ZansiHustle.Application.Orders
                     await _dispatch.CreateShipmentForPaidOrderAsync(
                         order.Id, order.BuyerUserId, order.MerchantId, deliveryOptionId,
                         order.DeliveryFee ?? 0m, order.DeliveryAddress);
+
+                    // Record the seller's pickup preference (optional). Defaults to
+                    // AnyDay/earliest when no body is sent (older apps). Stored BEFORE
+                    // auto-book so the requested date + confirmed pickup address can be
+                    // passed to the courier.
+                    var (pickupPref, pickupDate) = ResolvePickupPreference(request, now);
+                    string? addrJson = null, addrSummary = null;
+                    if (request?.CollectionAddress is ConfirmCollectionAddressDto addr)
+                    {
+                        addrJson = System.Text.Json.JsonSerializer.Serialize(addr);
+                        addrSummary = string.IsNullOrWhiteSpace(addr.Summary)
+                            ? string.Join(", ", new[] { addr.StreetAddress, addr.LocalArea, addr.City, addr.Province, addr.PostalCode }
+                                .Where(p => !string.IsNullOrWhiteSpace(p)))
+                            : addr.Summary!.Trim();
+                    }
+                    await _dispatch.RecordSellerPickupPreferenceAsync(
+                        order.Id, pickupDate, pickupPref, request?.SellerPickupNote,
+                        addrJson, addrSummary, request?.UpdateListingPickupAddress ?? false);
 
                     // Optionally auto-book the courier now that the seller has
                     // accepted (gated behind AutoBookAfterSellerAcceptance AND the

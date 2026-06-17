@@ -34,7 +34,7 @@ namespace ZansiHustle.Application.Orders
         /// shipment NOW (not at payment) and notifies the customer. Seller/merchant
         /// owner only; idempotent-guarded against double accept.
         /// </summary>
-        Task<Result<OrderDto>> AcceptAsync(Guid userId, Guid orderId);
+        Task<Result<OrderDto>> AcceptAsync(Guid userId, Guid orderId, AcceptOrderRequestDto? request = null);
 
         /// <summary>
         /// Seller rejects a paid PRODUCT order awaiting acceptance

@@ -32,6 +32,14 @@ namespace ZansiHustle.Application.ZansiDispatch
         public const string QuoteExpiryMinutesKey = "Dispatch.QuoteExpiryMinutes";
         public const string CollectionEnabledKey = "Dispatch.CollectionEnabled";
 
+        // Checkout quote curation (DB-managed, ops-editable from the portal).
+        public const string CheckoutAllowedServiceCodesKey = "Dispatch.Checkout.AllowedServiceCodes";
+        public const string CheckoutPreferredServiceCodeKey = "Dispatch.Checkout.PreferredServiceCode";
+        public const string CheckoutHideExpressOutliersKey = "Dispatch.Checkout.HideExpressOutliers";
+        public const string CheckoutOutlierMultiplierKey = "Dispatch.Checkout.OutlierMultiplier";
+        public const string CheckoutShowAdvancedOptionsKey = "Dispatch.Checkout.ShowAdvancedOptions";
+        public const string CheckoutHighFeeWarningThresholdKey = "Dispatch.Checkout.HighFeeWarningThreshold";
+
         /// <summary>
         /// (Key, default value as string, description) tuples — the seed set and
         /// the source of truth for fallbacks. Values are invariant-culture.
@@ -59,6 +67,13 @@ namespace ZansiHustle.Application.ZansiDispatch
                 (MaximumNormalFeeKey, "350", "Maximum normal delivery fee — quotes are clamped down to this."),
                 (QuoteExpiryMinutesKey, "5", "How long a presented quote stays valid (minutes). Courier Guy rates expire after ~5 min."),
                 (CollectionEnabledKey, "true", "Offer the free 'Arrange Collection' option."),
+                // ── Checkout curation (ops-editable; NOT env vars) ──────────
+                (CheckoutAllowedServiceCodesKey, "ECO", "CSV allowlist of Courier Guy checkout service codes (e.g. 'ECO,LOF'). Empty = allow all (then outlier filter). Raw options always kept for ops."),
+                (CheckoutPreferredServiceCodeKey, "ECO", "Service code shown as 'Recommended' + default-selected at checkout."),
+                (CheckoutHideExpressOutliersKey, "true", "Hide options far above the cheapest valid one (e.g. LSX R560 vs R86)."),
+                (CheckoutOutlierMultiplierKey, "3", "An option is an outlier when its fee > cheapest valid × this multiplier."),
+                (CheckoutShowAdvancedOptionsKey, "false", "Show ALL raw provider options (no curation). Keep false for normal checkout."),
+                (CheckoutHighFeeWarningThresholdKey, "0", "SOFT admin-only warning threshold (ZAR) for high checkout fees. 0 = off. NEVER blocks a quote."),
             };
 
         /// <summary>
@@ -89,6 +104,12 @@ namespace ZansiHustle.Application.ZansiDispatch
                 MaximumNormalFee = GetDecimal(settings, MaximumNormalFeeKey, 350m),
                 QuoteExpiryMinutes = (int)GetDecimal(settings, QuoteExpiryMinutesKey, 5m),
                 CollectionEnabled = GetBool(settings, CollectionEnabledKey, true),
+                CheckoutAllowedServiceCodes = Get(settings, CheckoutAllowedServiceCodesKey) ?? "ECO",
+                CheckoutPreferredServiceCode = Get(settings, CheckoutPreferredServiceCodeKey) ?? "ECO",
+                CheckoutHideExpressOutliers = GetBool(settings, CheckoutHideExpressOutliersKey, true),
+                CheckoutOutlierMultiplier = GetDecimal(settings, CheckoutOutlierMultiplierKey, 3m),
+                CheckoutShowAdvancedOptions = GetBool(settings, CheckoutShowAdvancedOptionsKey, false),
+                CheckoutHighFeeWarningThreshold = GetDecimal(settings, CheckoutHighFeeWarningThresholdKey, 0m),
             };
             return s;
         }

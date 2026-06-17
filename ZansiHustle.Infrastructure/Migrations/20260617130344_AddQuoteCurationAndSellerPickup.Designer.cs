@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using ZansiHustle.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using ZansiHustle.Infrastructure.Data;
 namespace ZansiHustle.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260617130344_AddQuoteCurationAndSellerPickup")]
+    partial class AddQuoteCurationAndSellerPickup
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -3983,10 +3986,6 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.Property<decimal?>("ChargedWeightKg")
                         .HasPrecision(18, 3)
                         .HasColumnType("decimal(18,3)");
-
-                    b.Property<string>("ConfirmedPickupAddressJson")
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)");
 
                     b.Property<string>("CourierReference")
                         .HasMaxLength(200)

@@ -64,6 +64,25 @@ namespace ZansiHustle.Application.ZansiDispatch
         /// kill switch or any booking guard, and never runs in the payment webhook.
         /// </summary>
         Task AutoBookForAcceptedOrderAsync(Guid orderId, CancellationToken ct = default);
+
+        /// <summary>
+        /// Store the seller's REQUESTED pickup date/preference on the order's
+        /// shipment (set on accept) + log a "Seller requested pickup" action. The
+        /// requested date is passed to the courier when booking; the provider's
+        /// confirmed ExpectedCollectionDate remains the truth. Best-effort + safe
+        /// when no shipment exists yet. Does NOT book.
+        /// </summary>
+        Task RecordSellerPickupPreferenceAsync(
+            Guid orderId, DateTime? requestedPickupDate, string? preference, string? note,
+            string? confirmedPickupAddressJson = null, string? confirmedPickupSummary = null,
+            bool updateMerchantPickupAddress = false, CancellationToken ct = default);
+
+        /// <summary>Current DB-managed checkout quote-curation policy (for the ops portal).</summary>
+        Task<Result<CheckoutCurationSettingsDto>> GetCheckoutCurationSettingsAsync(CancellationToken ct = default);
+
+        /// <summary>Upsert the checkout quote-curation policy rows (ops portal edit). Admin-gated at the controller.</summary>
+        Task<Result<CheckoutCurationSettingsDto>> UpdateCheckoutCurationSettingsAsync(CheckoutCurationSettingsDto dto, CancellationToken ct = default);
+
         /// <summary>Polls the provider, records events, and returns the current tracking timeline.</summary>
         Task<Result<TrackingResultDto>> TrackShipmentAsync(Guid shipmentId, CancellationToken ct = default);
         /// <summary>

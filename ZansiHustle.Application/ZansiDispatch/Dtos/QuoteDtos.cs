@@ -82,6 +82,9 @@ namespace ZansiHustle.Application.ZansiDispatch.Dtos
         /// <summary>Raw JSON breakdown of the estimate (how the amount was computed).</summary>
         public string? EstimateBreakdown { get; set; }
         public bool IsSelected { get; set; }
+        /// <summary>True for the single curated "Recommended delivery" option —
+        /// the checkout default-selects this.</summary>
+        public bool IsRecommended { get; set; }
     }
 
     public sealed class QuoteDto

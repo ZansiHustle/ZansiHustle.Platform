@@ -172,4 +172,6 @@ public enum ZansiDispatchActionType
     TrackingRefreshed = 18,
     /// <summary>Seller self-cancel blocked because the parcel is already collected/in transit.</summary>
     CancellationBlocked = 19,
+    /// <summary>Seller chose a pickup date/preference on accept (Today/Tomorrow/AnyDay/Custom).</summary>
+    SellerRequestedPickup = 20,
 }

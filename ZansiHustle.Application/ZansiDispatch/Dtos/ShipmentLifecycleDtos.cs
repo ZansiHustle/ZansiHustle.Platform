@@ -96,6 +96,9 @@ namespace ZansiHustle.Application.ZansiDispatch.Dtos
         public DateTime? ExpectedDeliveryTo { get; set; }
         /// <summary>Latest human-readable provider status message (customer-safe).</summary>
         public string? ProviderStatusMessage { get; set; }
+        /// <summary>Seller's REQUESTED pickup date (seller/admin context only — the
+        /// caller-side decides whether to surface it; customers don't need it).</summary>
+        public DateTime? SellerRequestedPickupDate { get; set; }
 
         public List<OrderDispatchEventDto> Events { get; set; } = new();
         /// <summary>

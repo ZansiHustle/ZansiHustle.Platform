@@ -134,14 +134,16 @@ namespace ZansiHustle.API.Controllers
         /// </summary>
         [HttpPost("{id:guid}/accept")]
         [ProducesResponseType(typeof(Result<OrderDto>), StatusCodes.Status200OK)]
-        public async Task<IActionResult> Accept(Guid id)
+        public async Task<IActionResult> Accept(Guid id, [FromBody] AcceptOrderRequestDto? request = null)
         {
             var userId = _currentUserService.UserId;
 
             if (!userId.HasValue)
                 return ToActionResult(Result<OrderDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
 
-            var result = await _orderService.AcceptAsync(userId.Value, id);
+            // Body is OPTIONAL — older app versions POST nothing and the service
+            // defaults to "AnyDay / earliest available" pickup.
+            var result = await _orderService.AcceptAsync(userId.Value, id, request);
             return ToActionResult(result);
         }
 

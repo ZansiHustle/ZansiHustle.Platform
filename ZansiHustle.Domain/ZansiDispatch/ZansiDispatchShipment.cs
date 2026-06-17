@@ -56,6 +56,23 @@ namespace ZansiHustle.Domain.ZansiDispatch
         public DateTime? PickupScheduledAt { get; set; }
         public DateTime? DeliveredAt { get; set; }
 
+        // ── Seller pickup preference (chosen on accept) ─────────────────────
+        // The seller's REQUESTED pickup — distinct from the provider's confirmed
+        // ExpectedCollectionDate. We pass the requested date to the courier when
+        // booking; if the provider returns a different date, the provider date is
+        // the truth and BOTH are shown (never fake that the request was accepted).
+        /// <summary>Seller's requested pickup date (date-only). Null = earliest/any day.</summary>
+        public DateTime? SellerRequestedPickupDate { get; set; }
+        /// <summary>"Today" | "Tomorrow" | "AnyDay" | "Custom". Null/AnyDay = earliest.</summary>
+        public string? SellerPickupPreference { get; set; }
+        /// <summary>Optional seller note about collection.</summary>
+        public string? SellerPickupNote { get; set; }
+        /// <summary>JSON snapshot of the seller-confirmed collection address for THIS
+        /// shipment (from the accept modal). When set, it overrides the quote's
+        /// seller address for the courier booking + the pickup summary. Never the
+        /// buyer address.</summary>
+        public string? ConfirmedPickupAddressJson { get; set; }
+
         // ── Courier date promises + parcel facts (from provider) ────────────
         // Captured from the booking/tracking response when the provider returns
         // them; NEVER faked. Date-only promises stored at UTC midnight; display

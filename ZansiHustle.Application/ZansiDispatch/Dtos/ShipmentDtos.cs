@@ -65,6 +65,11 @@ namespace ZansiHustle.Application.ZansiDispatch.Dtos
         public DateTime? PickupScheduledAt { get; set; }
         public DateTime? DeliveredAt { get; set; }
 
+        // ── Seller pickup preference (requested on accept) vs provider truth ──
+        public DateTime? SellerRequestedPickupDate { get; set; }
+        public string? SellerPickupPreference { get; set; }
+        public string? SellerPickupNote { get; set; }
+
         // ── Courier date promises + parcel facts (from provider; null until returned) ──
         public DateTime? ExpectedCollectionDate { get; set; }
         public DateTime? ExpectedDeliveryFrom { get; set; }

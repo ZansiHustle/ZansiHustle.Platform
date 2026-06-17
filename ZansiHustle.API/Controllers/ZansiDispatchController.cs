@@ -84,6 +84,21 @@ namespace ZansiHustle.API.Controllers
         public async Task<IActionResult> Overview([FromQuery] DateTime? from, [FromQuery] DateTime? to, CancellationToken ct)
             => ToActionResult(await _dispatch.GetOverviewAsync(from, to, ct));
 
+        // ── Checkout curation policy (DB-managed; ops-editable) ─────────────
+
+        /// <summary>Returns the current checkout quote-curation policy for ops editing.</summary>
+        [HttpGet("settings/curation")]
+        [Authorize(Roles = CommandCentreReadRoles)]
+        public async Task<IActionResult> GetCurationSettings(CancellationToken ct)
+            => ToActionResult(await _dispatch.GetCheckoutCurationSettingsAsync(ct));
+
+        /// <summary>Updates the checkout quote-curation policy (ops). No hard fee block here —
+        /// only allowlist + outlier filtering + a soft high-fee warning threshold.</summary>
+        [HttpPut("settings/curation")]
+        [Authorize(Roles = CommandCentreWriteRoles)]
+        public async Task<IActionResult> UpdateCurationSettings([FromBody] CheckoutCurationSettingsDto dto, CancellationToken ct)
+            => ToActionResult(await _dispatch.UpdateCheckoutCurationSettingsAsync(dto ?? new CheckoutCurationSettingsDto(), ct));
+
         /// <summary>
         /// Lists shipments with SERVER-SIDE paging / sorting / filtering. Returns a
         /// paged envelope (items + total + page + pageSize). Defaults: createdAt desc

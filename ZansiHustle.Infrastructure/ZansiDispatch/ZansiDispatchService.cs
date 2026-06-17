@@ -42,6 +42,8 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
         private readonly ZansiHustle.Application.Communications.Email.Interfaces.IShipmentEmailService _shipmentEmail;
         private readonly ILogger<ZansiDispatchService> _logger;
 
+        private static readonly JsonSerializerOptions CaseInsensitiveJson = new() { PropertyNameCaseInsensitive = true };
+
         public ZansiDispatchService(
             AppDbContext db,
             IEnumerable<IZansiDispatchQuoteProvider> quoteProviders,
@@ -236,6 +238,12 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
 
                 if (quote.Options.Count == 0)
                     return Result<QuoteDto>.Failure(ErrorCodes.Exception, "No delivery options could be generated. Please try again or choose collection.");
+
+                // Curate the CourierGuy options into clean marketplace choices
+                // (allowlist + max-fee + outlier filtering, clean labels, one
+                // recommended). Raw options stay persisted for ops/booking; only
+                // IsCheckoutVisible/IsRecommended + the customer Label are set.
+                CurateCheckoutOptions(quote.Options, settings, cid);
 
                 _db.ZansiDispatchQuotes.Add(quote);
                 await _db.SaveChangesAsync(ct);
@@ -547,6 +555,12 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 if (quote.ExpiresAt is DateTime exp && exp < DateTime.UtcNow)
                     return Result<SelectableQuoteOptionDto>.Failure(ErrorCodes.BadRequest, "Your delivery quote expired. Please request delivery options again.");
 
+                // Server-side curation enforcement: a customer may only select a
+                // checkout-visible option. Filtered/raw provider options (hidden by
+                // policy) are rejected here even if the client somehow sends the id.
+                if (!option.IsCheckoutVisible)
+                    return Result<SelectableQuoteOptionDto>.Failure(ErrorCodes.BadRequest, "This delivery option is not available. Please choose one of the offered options.");
+
                 return Result<SelectableQuoteOptionDto>.Success(new SelectableQuoteOptionDto
                 {
                     QuoteId = quote.Id,
@@ -797,6 +811,105 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 // Never let an auto-book problem fail the seller-accept flow.
                 _logger.LogError(ex, "ZansiDispatch AutoBookForAcceptedOrder failed. OrderId={OrderId}", orderId);
             }
+        }
+
+        /// <inheritdoc />
+        public async Task RecordSellerPickupPreferenceAsync(
+            Guid orderId, DateTime? requestedPickupDate, string? preference, string? note,
+            string? confirmedPickupAddressJson = null, string? confirmedPickupSummary = null,
+            bool updateMerchantPickupAddress = false, CancellationToken ct = default)
+        {
+            try
+            {
+                var shipment = await _db.ZansiDispatchShipments.FirstOrDefaultAsync(s => s.OrderId == orderId, ct);
+                if (shipment is null) return; // no shipment yet (e.g. collection order) — nothing to store
+
+                var pref = string.IsNullOrWhiteSpace(preference) ? "AnyDay" : preference!.Trim();
+                shipment.SellerPickupPreference = pref;
+                shipment.SellerRequestedPickupDate = requestedPickupDate?.Date;
+                if (!string.IsNullOrWhiteSpace(note)) shipment.SellerPickupNote = note!.Trim();
+
+                // Seller-confirmed collection address (this shipment). Snapshot is
+                // used to override the courier CollectionAddress + the pickup summary.
+                if (!string.IsNullOrWhiteSpace(confirmedPickupAddressJson))
+                {
+                    shipment.ConfirmedPickupAddressJson = confirmedPickupAddressJson;
+                    if (!string.IsNullOrWhiteSpace(confirmedPickupSummary))
+                        shipment.PickupAddressSummary = confirmedPickupSummary!.Trim();
+                }
+                shipment.UpdatedAt = DateTime.UtcNow;
+
+                var label = requestedPickupDate is DateTime d
+                    ? $"Seller requested pickup: {pref} ({d:yyyy-MM-dd})"
+                    : $"Seller requested pickup: {pref}";
+                if (!string.IsNullOrWhiteSpace(confirmedPickupSummary))
+                    label += $" · pickup address confirmed";
+                LogAction(shipment, ZansiDispatchActionType.SellerRequestedPickup, ZansiDispatchActor.Seller, null,
+                    shipment.Status, shipment.Status, null, null, null, label, null, null);
+
+                // OPTIONAL: persist the confirmed address as the merchant's pickup
+                // origin for FUTURE orders. Best-effort + audited. Only the merchant
+                // owner reaches here (enforced in OrderService.AcceptAsync).
+                if (updateMerchantPickupAddress
+                    && !string.IsNullOrWhiteSpace(confirmedPickupAddressJson)
+                    && shipment.MerchantId is Guid mid)
+                {
+                    await ApplyMerchantPickupAddressAsync(mid, confirmedPickupAddressJson, ct);
+                    LogAction(shipment, ZansiDispatchActionType.SellerRequestedPickup, ZansiDispatchActor.Seller, null,
+                        shipment.Status, shipment.Status, null, null, null,
+                        "Seller saved this pickup address for future orders (merchant collection address updated).", null, null);
+                    _logger.LogInformation("ZansiDispatch merchant {MerchantId} pickup address updated from order {OrderId} accept.", mid, orderId);
+                }
+
+                await _db.SaveChangesAsync(ct);
+                _logger.LogInformation("ZansiDispatch seller pickup preference recorded for order {OrderId}: {Label}", orderId, label);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ZansiDispatch RecordSellerPickupPreference failed. OrderId={OrderId}", orderId);
+            }
+        }
+
+        /// <summary>Apply a confirmed pickup-address snapshot to the merchant's stored
+        /// collection address (future orders). Best-effort; only sets supplied fields.</summary>
+        private async Task ApplyMerchantPickupAddressAsync(Guid merchantId, string json, CancellationToken ct)
+        {
+            try
+            {
+                var addr = JsonSerializer.Deserialize<ConfirmedPickupAddressSnapshot>(json, CaseInsensitiveJson);
+                if (addr is null) return;
+                var m = await _db.Merchants.FirstOrDefaultAsync(x => x.Id == merchantId, ct);
+                if (m is null) return;
+                if (!string.IsNullOrWhiteSpace(addr.StreetAddress)) m.AddressLine1 = addr.StreetAddress;
+                if (!string.IsNullOrWhiteSpace(addr.LocalArea)) m.Suburb = addr.LocalArea;
+                if (!string.IsNullOrWhiteSpace(addr.City)) m.City = addr.City;
+                if (!string.IsNullOrWhiteSpace(addr.Province)) m.Province = addr.Province;
+                if (!string.IsNullOrWhiteSpace(addr.PostalCode)) m.PostalCode = addr.PostalCode;
+                if (!string.IsNullOrWhiteSpace(addr.Country)) m.CountryCode = addr.Country;
+                if (!string.IsNullOrWhiteSpace(addr.Summary)) m.FormattedAddress = addr.Summary;
+                if (addr.Lat is decimal la) m.Latitude = la;
+                if (addr.Lng is decimal ln) m.Longitude = ln;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "ZansiDispatch ApplyMerchantPickupAddress failed for merchant {MerchantId}.", merchantId);
+            }
+        }
+
+        /// <summary>Deserialisation shape for the confirmed pickup-address snapshot
+        /// (mirrors the mobile ConfirmCollectionAddressDto; tolerant of nulls).</summary>
+        private sealed class ConfirmedPickupAddressSnapshot
+        {
+            public string? Company { get; set; }
+            public string? StreetAddress { get; set; }
+            public string? LocalArea { get; set; }
+            public string? City { get; set; }
+            public string? Province { get; set; }
+            public string? PostalCode { get; set; }
+            public string? Country { get; set; }
+            public decimal? Lat { get; set; }
+            public decimal? Lng { get; set; }
+            public string? Summary { get; set; }
         }
 
         /// <summary>
@@ -1292,6 +1405,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     ExpectedDeliveryFrom = s.ExpectedDeliveryFrom,
                     ExpectedDeliveryTo = s.ExpectedDeliveryTo,
                     ProviderStatusMessage = s.ProviderStatusMessage,
+                    SellerRequestedPickupDate = s.SellerRequestedPickupDate,
                     Events = events.Select(e => new OrderDispatchEventDto
                     {
                         InternalStatus = e.InternalStatus,
@@ -2239,6 +2353,80 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
         private async Task<Dictionary<string, string>> LoadSettingsAsync(CancellationToken ct)
             => await _db.ZansiDispatchSettings.AsNoTracking().Where(s => s.IsActive).ToDictionaryAsync(s => s.Key, s => s.Value, ct);
 
+        // ── Checkout curation policy (DB-managed; ops portal) ───────────────
+
+        public async Task<Result<CheckoutCurationSettingsDto>> GetCheckoutCurationSettingsAsync(CancellationToken ct = default)
+        {
+            try
+            {
+                var s = ZansiDispatchDefaults.Resolve(await LoadSettingsAsync(ct));
+                return Result<CheckoutCurationSettingsDto>.Success(new CheckoutCurationSettingsDto
+                {
+                    AllowedServiceCodes = s.CheckoutAllowedServiceCodes,
+                    PreferredServiceCode = s.CheckoutPreferredServiceCode,
+                    HideExpressOutliers = s.CheckoutHideExpressOutliers,
+                    OutlierMultiplier = s.CheckoutOutlierMultiplier,
+                    ShowAdvancedOptions = s.CheckoutShowAdvancedOptions,
+                    HighFeeWarningThreshold = s.CheckoutHighFeeWarningThreshold,
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ZansiDispatch GetCheckoutCurationSettings failed.");
+                return Result<CheckoutCurationSettingsDto>.Failure(ErrorCodes.Exception, "Could not load curation settings.");
+            }
+        }
+
+        public async Task<Result<CheckoutCurationSettingsDto>> UpdateCheckoutCurationSettingsAsync(CheckoutCurationSettingsDto dto, CancellationToken ct = default)
+        {
+            try
+            {
+                if (dto is null) return Result<CheckoutCurationSettingsDto>.Failure(ErrorCodes.BadRequest, "Settings are required.");
+                if (dto.OutlierMultiplier <= 0m) dto.OutlierMultiplier = 3m;
+                if (dto.HighFeeWarningThreshold < 0m) dto.HighFeeWarningThreshold = 0m;
+
+                var inv = System.Globalization.CultureInfo.InvariantCulture;
+                await UpsertSettingAsync(ZansiDispatchDefaults.CheckoutAllowedServiceCodesKey, (dto.AllowedServiceCodes ?? "").Trim(), ct);
+                await UpsertSettingAsync(ZansiDispatchDefaults.CheckoutPreferredServiceCodeKey, (dto.PreferredServiceCode ?? "").Trim(), ct);
+                await UpsertSettingAsync(ZansiDispatchDefaults.CheckoutHideExpressOutliersKey, dto.HideExpressOutliers ? "true" : "false", ct);
+                await UpsertSettingAsync(ZansiDispatchDefaults.CheckoutOutlierMultiplierKey, dto.OutlierMultiplier.ToString(inv), ct);
+                await UpsertSettingAsync(ZansiDispatchDefaults.CheckoutShowAdvancedOptionsKey, dto.ShowAdvancedOptions ? "true" : "false", ct);
+                await UpsertSettingAsync(ZansiDispatchDefaults.CheckoutHighFeeWarningThresholdKey, dto.HighFeeWarningThreshold.ToString(inv), ct);
+                await _db.SaveChangesAsync(ct);
+
+                _logger.LogInformation(
+                    "ZansiDispatch curation settings updated: allowed={Allowed} preferred={Preferred} hideOutliers={Hide} mult={Mult} advanced={Adv} highFeeWarn={Warn}",
+                    dto.AllowedServiceCodes, dto.PreferredServiceCode, dto.HideExpressOutliers, dto.OutlierMultiplier, dto.ShowAdvancedOptions, dto.HighFeeWarningThreshold);
+
+                return await GetCheckoutCurationSettingsAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ZansiDispatch UpdateCheckoutCurationSettings failed.");
+                return Result<CheckoutCurationSettingsDto>.Failure(ErrorCodes.Exception, "Could not update curation settings.");
+            }
+        }
+
+        /// <summary>Insert or update a single active ZansiDispatchSetting row (no SaveChanges — caller saves).</summary>
+        private async Task UpsertSettingAsync(string key, string value, CancellationToken ct)
+        {
+            var row = await _db.ZansiDispatchSettings.FirstOrDefaultAsync(s => s.Key == key, ct);
+            var now = DateTime.UtcNow;
+            if (row is null)
+            {
+                _db.ZansiDispatchSettings.Add(new ZansiDispatchSetting
+                {
+                    Id = Guid.NewGuid(), Key = key, Value = value, IsActive = true, CreatedAt = now, UpdatedAt = now,
+                });
+            }
+            else
+            {
+                row.Value = value;
+                row.IsActive = true;
+                row.UpdatedAt = now;
+            }
+        }
+
         private void AddProviderLog(ZansiDispatchProviderType providerType, ZansiDispatchProviderOperation op,
             string? requestJson, string? responseJson, bool ok, string? error, int? statusCode, int? durationMs)
         {
@@ -2266,18 +2454,9 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             {
                 ShipmentId = shipment.Id,
                 OrderId = shipment.OrderId,
-                CollectionAddress = new ProviderAddress
-                {
-                    Type = quote.SellerAddressType ?? ZansiDispatchAddressType.Business,
-                    StreetAddress = quote.SellerStreetAddress,
-                    LocalArea = quote.SellerLocalArea,
-                    City = quote.SellerCity,
-                    Zone = quote.SellerProvince,
-                    Country = quote.SellerCountry ?? "ZA",
-                    Code = quote.SellerPostalCode,
-                    Lat = quote.SellerLat,
-                    Lng = quote.SellerLng,
-                },
+                // Seller-confirmed collection address (accept modal) overrides the
+                // quote's seller address for this shipment when present.
+                CollectionAddress = BuildCollectionAddress(shipment, quote),
                 CollectionContact = new ProviderContact { Name = req.CollectionContact?.Name, MobileNumber = req.CollectionContact?.MobileNumber, Email = req.CollectionContact?.Email },
                 DeliveryAddress = new ProviderAddress
                 {
@@ -2311,7 +2490,51 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 MuteNotifications = req.MuteNotifications,
                 ServiceLevelCode = option.ServiceLevelCode,
                 ServiceLevelId = option.ProviderServiceLevelId,
+                // Pass the seller's requested pickup date to the courier as the
+                // collection min-date. The provider may honour, shift, or ignore it;
+                // the provider's returned ExpectedCollectionDate is the truth.
+                CollectionMinDate = shipment.SellerRequestedPickupDate,
             };
+
+        /// <summary>Collection address for booking — the seller-confirmed snapshot
+        /// (accept modal) when present, else the quote's resolved seller address.</summary>
+        private static ProviderAddress BuildCollectionAddress(ZansiDispatchShipment shipment, ZansiDispatchQuote quote)
+        {
+            if (!string.IsNullOrWhiteSpace(shipment.ConfirmedPickupAddressJson))
+            {
+                try
+                {
+                    var a = JsonSerializer.Deserialize<ConfirmedPickupAddressSnapshot>(shipment.ConfirmedPickupAddressJson!, CaseInsensitiveJson);
+                    if (a is not null && !string.IsNullOrWhiteSpace(a.StreetAddress))
+                        return new ProviderAddress
+                        {
+                            Type = quote.SellerAddressType ?? ZansiDispatchAddressType.Business,
+                            Company = a.Company,
+                            StreetAddress = a.StreetAddress,
+                            LocalArea = a.LocalArea,
+                            City = a.City,
+                            Zone = a.Province,
+                            Country = string.IsNullOrWhiteSpace(a.Country) ? "ZA" : a.Country,
+                            Code = a.PostalCode,
+                            Lat = a.Lat,
+                            Lng = a.Lng,
+                        };
+                }
+                catch { /* fall through to the quote address */ }
+            }
+            return new ProviderAddress
+            {
+                Type = quote.SellerAddressType ?? ZansiDispatchAddressType.Business,
+                StreetAddress = quote.SellerStreetAddress,
+                LocalArea = quote.SellerLocalArea,
+                City = quote.SellerCity,
+                Zone = quote.SellerProvince,
+                Country = quote.SellerCountry ?? "ZA",
+                Code = quote.SellerPostalCode,
+                Lat = quote.SellerLat,
+                Lng = quote.SellerLng,
+            };
+        }
 
         private async Task PersistTrackingEventsAsync(ZansiDispatchShipment s, ProviderTrackingResult data, CancellationToken ct)
         {
@@ -2440,6 +2663,147 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 CreatedAt = now,
             };
 
+        /// <summary>
+        /// Curate the CourierGuy options on a quote into clean marketplace choices.
+        /// Sets <c>IsCheckoutVisible</c>/<c>IsRecommended</c> + a clean customer
+        /// <c>Label</c> on each option (raw <c>ServiceLevelName</c>/<c>Code</c> kept
+        /// for ops). NON-courier options (Collection, InternalEstimate) are left
+        /// fully visible. When <c>ShowAdvancedDeliveryOptions</c> is on, nothing is
+        /// hidden. Policy: allowlist of service codes → max fee → express-outlier
+        /// (fee &gt; cheapest × multiplier) → one recommended (preferred code, else
+        /// cheapest). Drops duplicate same-label/same-price rows.
+        /// </summary>
+        private void CurateCheckoutOptions(ICollection<ZansiDispatchQuoteOption> options, ZansiDispatchSettings settings, string cid)
+        {
+            var courier = options.Where(o => o.ProviderType == ZansiDispatchProviderType.CourierGuy).ToList();
+            if (courier.Count == 0) return;
+
+            // Clean customer label for every courier option (keeps raw name/code).
+            foreach (var o in courier)
+                o.Label = CleanCheckoutLabel(o.ServiceLevelCode, o.ServiceLevelName, o.ServiceLevel);
+
+            if (settings.CheckoutShowAdvancedOptions)
+            {
+                // Advanced: show everything, recommend the preferred (or cheapest).
+                foreach (var o in courier) o.IsCheckoutVisible = true;
+                MarkRecommended(courier, settings.CheckoutPreferredServiceCode);
+                return;
+            }
+
+            var allowed = settings.CheckoutAllowedCodeSet();
+
+            // Step 1: allowlist (when configured). NOTE: NO hard max-fee block —
+            // heavier/regional economy quotes may legitimately exceed any single
+            // rand cap. The allowlist + outlier multiplier hide crazy express rates.
+            List<ZansiDispatchQuoteOption> candidates;
+            if (allowed.Count > 0)
+            {
+                candidates = courier.Where(o => o.ServiceLevelCode != null && allowed.Contains(o.ServiceLevelCode)).ToList();
+                if (candidates.Count == 0)
+                {
+                    // No ALLOWED code came back. Don't blindly show raw rates and
+                    // don't show express/same-day. Conservative fallback: cheapest
+                    // Economy/Standard option only. If none qualify, hide all (the
+                    // customer sees the InternalEstimate fallback / "unavailable").
+                    candidates = courier.Where(IsConservativeParcelOption).ToList();
+                    _logger.LogWarning(
+                        "ZansiDispatch curation: no allowed code returned (correlationId={Cid}, allowed={Allowed}). Conservative fallback candidates={N}.",
+                        cid, settings.CheckoutAllowedServiceCodes, candidates.Count);
+                }
+            }
+            else
+            {
+                candidates = courier.ToList(); // no allowlist → all, then outlier filter
+            }
+
+            // Step 2: express-outlier filter (fee >> cheapest valid).
+            if (settings.CheckoutHideExpressOutliers && candidates.Count > 1)
+            {
+                var cheapest = candidates.Min(o => o.QuotedAmount);
+                var ceiling = cheapest * (settings.CheckoutOutlierMultiplier <= 0 ? 3m : settings.CheckoutOutlierMultiplier);
+                candidates = candidates.Where(o => o.QuotedAmount <= ceiling).ToList();
+            }
+
+            // Step 3: drop duplicate (label, price) rows.
+            var deduped = candidates
+                .GroupBy(o => $"{o.Label}|{o.QuotedAmount}")
+                .Select(g => g.OrderBy(o => o.EstimatedDeliveryDaysMin ?? int.MaxValue).First())
+                .ToList();
+
+            // Step 4: hide all, then reveal the curated set (cheapest + preferred +
+            // fastest), capped at 3 sensible choices.
+            foreach (var o in courier) { o.IsCheckoutVisible = false; o.IsRecommended = false; }
+            if (deduped.Count == 0)
+            {
+                _logger.LogWarning(
+                    "ZansiDispatch curation hid ALL courier options (correlationId={Cid}). Check Dispatch.Checkout.AllowedServiceCodes against provider codes.", cid);
+                return;
+            }
+
+            var keep = new List<ZansiDispatchQuoteOption>();
+            void Add(ZansiDispatchQuoteOption? o) { if (o != null && !keep.Contains(o)) keep.Add(o); }
+            Add(deduped.OrderBy(o => o.QuotedAmount).First()); // cheapest valid
+            if (!string.IsNullOrWhiteSpace(settings.CheckoutPreferredServiceCode))
+                Add(deduped.FirstOrDefault(o => string.Equals(o.ServiceLevelCode, settings.CheckoutPreferredServiceCode, StringComparison.OrdinalIgnoreCase)));
+            Add(deduped.OrderBy(o => o.EstimatedDeliveryDaysMin ?? int.MaxValue).ThenBy(o => o.QuotedAmount).First()); // fastest valid
+            keep = keep.Take(3).ToList();
+
+            foreach (var o in keep) o.IsCheckoutVisible = true;
+            MarkRecommended(keep, settings.CheckoutPreferredServiceCode);
+
+            // SOFT high-fee awareness only (admin/ops) — never blocks the quote.
+            if (settings.CheckoutHighFeeWarningThreshold > 0m)
+            {
+                foreach (var o in keep.Where(o => o.QuotedAmount > settings.CheckoutHighFeeWarningThreshold))
+                    _logger.LogInformation(
+                        "ZansiDispatch high-fee notice (correlationId={Cid}): {Label} R{Amount} exceeds warning threshold R{Threshold}.",
+                        cid, o.Label, o.QuotedAmount, settings.CheckoutHighFeeWarningThreshold);
+            }
+
+            _logger.LogInformation(
+                "ZansiDispatch curation correlationId={Cid} courierOptions={Total} visible={Visible} hidden={Hidden}",
+                cid, courier.Count, keep.Count, courier.Count - keep.Count);
+        }
+
+        /// <summary>Conservative fallback predicate: a normal parcel economy/standard
+        /// option — never express/same-day/flyer (those are filtered by name too).</summary>
+        private static bool IsConservativeParcelOption(ZansiDispatchQuoteOption o)
+        {
+            if (o.ServiceLevel != ZansiDispatchServiceLevel.Economy && o.ServiceLevel != ZansiDispatchServiceLevel.Standard)
+                return false;
+            var v = $"{o.ServiceLevelCode} {o.ServiceLevelName}".ToLowerInvariant();
+            return !(v.Contains("sameday") || v.Contains("same day") || v.Contains("express")
+                     || v.Contains("lsx") || v.Contains("flyer"));
+        }
+
+        /// <summary>Mark exactly one option Recommended: the preferred code if present, else the cheapest.</summary>
+        private static void MarkRecommended(List<ZansiDispatchQuoteOption> visible, string? preferredCode)
+        {
+            if (visible.Count == 0) return;
+            var rec = (!string.IsNullOrWhiteSpace(preferredCode)
+                          ? visible.FirstOrDefault(o => string.Equals(o.ServiceLevelCode, preferredCode, StringComparison.OrdinalIgnoreCase))
+                          : null)
+                      ?? visible.OrderBy(o => o.QuotedAmount).First();
+            foreach (var o in visible) o.IsRecommended = false;
+            rec.IsRecommended = true;
+        }
+
+        /// <summary>Clean, customer-facing delivery label from the raw courier
+        /// code/name — never the confusing raw "Local Sameday Flyer" string.</summary>
+        private static string CleanCheckoutLabel(string? code, string? name, ZansiDispatchServiceLevel level)
+        {
+            var v = $"{code} {name}".ToLowerInvariant();
+            if (v.Contains("eco") || v.Contains("economy")) return "Economy delivery";
+            if (v.Contains("ovn") || v.Contains("overnight") || v.Contains("lof")) return "Overnight delivery";
+            if (v.Contains("sameday") || v.Contains("same day") || v.Contains("express") || v.Contains("lsx")) return "Express delivery";
+            return level switch
+            {
+                ZansiDispatchServiceLevel.Economy => "Economy delivery",
+                ZansiDispatchServiceLevel.Express => "Express delivery",
+                _ => "Standard delivery",
+            };
+        }
+
         private static ZansiDispatchQuoteOption MapProviderOption(Guid quoteId, ProviderQuoteOption po, DateTime now) => new()
         {
             Id = Guid.NewGuid(),
@@ -2469,8 +2833,13 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             QuoteId = q.Id,
             ExpiresAt = q.ExpiresAt,
             Status = q.Status,
+            // CUSTOMER-facing: only curated (checkout-visible) options. Recommended
+            // first, then collection last, then by price. Raw/hidden options remain
+            // in the DB for ops + selection enforcement but are never returned here.
             Options = q.Options
-                .OrderBy(o => o.ServiceLevel == ZansiDispatchServiceLevel.Collection ? 1 : 0)
+                .Where(o => o.IsCheckoutVisible)
+                .OrderByDescending(o => o.IsRecommended)
+                .ThenBy(o => o.ServiceLevel == ZansiDispatchServiceLevel.Collection ? 1 : 0)
                 .ThenBy(o => o.QuotedAmount)
                 .Select(o => new QuoteOptionDto
                 {
@@ -2491,6 +2860,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     EstimatedDeliveryDaysMax = o.EstimatedDeliveryDaysMax,
                     EstimateBreakdown = o.EstimateBreakdownJson,
                     IsSelected = o.IsSelected,
+                    IsRecommended = o.IsRecommended,
                 }).ToList(),
         };
 
@@ -2526,6 +2896,9 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             DropoffAddressSummary = s.DropoffAddressSummary,
             PickupScheduledAt = s.PickupScheduledAt,
             DeliveredAt = s.DeliveredAt,
+            SellerRequestedPickupDate = s.SellerRequestedPickupDate,
+            SellerPickupPreference = s.SellerPickupPreference,
+            SellerPickupNote = s.SellerPickupNote,
             ExpectedCollectionDate = s.ExpectedCollectionDate,
             ExpectedDeliveryFrom = s.ExpectedDeliveryFrom,
             ExpectedDeliveryTo = s.ExpectedDeliveryTo,
