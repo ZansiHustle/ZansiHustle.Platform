@@ -765,6 +765,17 @@ namespace ZansiHustle.Application.Orders
                     // the acceptance. NEVER runs in the payment webhook.
                     await _dispatch.AutoBookForAcceptedOrderAsync(order.Id);
                 }
+                else
+                {
+                    // No ZansiDispatch delivery option on the order → there is nothing
+                    // to dispatch (collection / in-store, or the buyer's checkout never
+                    // completed a delivery quote). This is NOT a failure, but we log it
+                    // so "accepted but no shipment in ZansiDispatch" is diagnosable
+                    // instead of silent.
+                    _logger.LogInformation(
+                        "Order {OrderId} accepted (Confirmed) with NO DeliveryQuoteOptionId — no ZansiDispatch shipment created (no delivery option selected at checkout).",
+                        order.Id);
+                }
 
                 await _notifications.NotifyCustomerOrderAcceptedAsync(order);
 

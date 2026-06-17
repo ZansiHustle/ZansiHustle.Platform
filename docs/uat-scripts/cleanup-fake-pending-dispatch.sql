@@ -23,6 +23,10 @@
 
 -- Status ints (ZansiDispatchShipmentStatus): PendingDispatch = 1.
 -- The known-good shipment id is excluded explicitly as a belt-and-braces guard.
+-- AGE CUTOFF: a FRESH PendingDispatch shipment from a real seller acceptance has
+-- the same NULL signature as an old fake, so we only delete rows OLDER than
+-- @OlderThanUtc (default 24h ago). Never deletes a just-accepted shipment.
+DECLARE @OlderThanUtc datetime2 = DATEADD(HOUR, -24, SYSUTCDATETIME());
 
 /* ---------------------------------------------------------------------------
    STEP 1 — PREVIEW: exactly what STEP 2 would delete. Read-only.
@@ -44,6 +48,7 @@ WHERE s.Status = 1                                   -- PendingDispatch only
   AND s.ShortTrackingReference  IS NULL
   AND s.LabelUrl                IS NULL
   AND s.DeliveredAt             IS NULL
+  AND s.CreatedAt               < @OlderThanUtc       -- protect fresh accepted-order shipments
   AND s.Id <> 'EDBCC5AE-2699-4481-B5E1-F8F944236ED2' -- preserve the known-good shipment
 ORDER BY s.CreatedAt;
 
@@ -68,6 +73,7 @@ BEGIN TRAN;
       AND s.ShortTrackingReference  IS NULL
       AND s.LabelUrl                IS NULL
       AND s.DeliveredAt             IS NULL
+      AND s.CreatedAt               < @OlderThanUtc       -- protect fresh accepted-order shipments
       AND s.Id <> 'EDBCC5AE-2699-4481-B5E1-F8F944236ED2';
 
     DELETE e

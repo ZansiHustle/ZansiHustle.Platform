@@ -718,11 +718,26 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             try
             {
                 if (!_opts.CourierGuy.AutoBookAfterSellerAcceptance)
-                    return; // Feature off → leave the shipment PendingDispatch for manual/ops booking.
+                {
+                    // Feature off → leave the shipment PendingDispatch for manual/ops
+                    // booking. Logged so "accepted but not auto-booked" is diagnosable
+                    // (the #1 reason a seller has to click Retry Booking manually).
+                    _logger.LogInformation(
+                        "ZansiDispatch auto-book SKIPPED for order {OrderId} — AutoBookAfterSellerAcceptance=false. Shipment left PendingDispatch (set ZansiDispatch__CourierGuy__AutoBookAfterSellerAcceptance=true to auto-book).",
+                        orderId);
+                    return;
+                }
 
                 var request = await BuildStoredBookingRequestAsync(orderId, ct);
-                if (request is null) return; // No selected delivery option → nothing to auto-book.
+                if (request is null)
+                {
+                    _logger.LogInformation(
+                        "ZansiDispatch auto-book SKIPPED for order {OrderId} — no selected delivery quote option on the order.",
+                        orderId);
+                    return; // No selected delivery option → nothing to auto-book.
+                }
 
+                _logger.LogInformation("ZansiDispatch auto-book ATTEMPT for order {OrderId} (AutoBook on).", orderId);
                 var result = await BookShipmentCoreAsync(request, "auto", ct);
                 if (!result.IsSuccess)
                 {
@@ -731,6 +746,10 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     _logger.LogWarning(
                         "ZansiDispatch auto-book did not complete for order {OrderId}: {Message}",
                         orderId, result.Message);
+                }
+                else
+                {
+                    _logger.LogInformation("ZansiDispatch auto-book SUCCEEDED for order {OrderId}.", orderId);
                 }
             }
             catch (Exception ex)
@@ -949,6 +968,37 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     shipment.FailureReason = null; // success clears any prior failure
                     shipment.UpdatedAt = now;
 
+                    // Record the courier's booking cost as the actual cost when the
+                    // provider returns one — so booked shipments don't show R0 in the
+                    // Logistics Bank. This is the provider's booked rate; ops can still
+                    // re-capture a final invoiced cost later (→ Adjusted). NEVER faked:
+                    // only set when the provider actually returned a positive amount.
+                    var costNote = "Shipment booked with courier.";
+                    if (data.BookedCost is decimal bookedCost && bookedCost > 0m)
+                    {
+                        shipment.ActualCourierCost = bookedCost;
+                        var netAmt = shipment.QuotedDeliveryFee - bookedCost;
+                        shipment.NetAmount = netAmt;
+                        shipment.SurplusAmount = netAmt > 0m ? netAmt : 0m;
+                        shipment.DeficitAmount = netAmt < 0m ? -netAmt : 0m;
+                        shipment.ReconciliationStatus = ZansiDispatchReconciliationStatus.ActualCostCaptured;
+                        _db.ZansiDispatchLedgerEntries.Add(Ledger(shipment.Id, shipment.OrderId,
+                            ZansiDispatchLedgerEntryType.ActualCourierCost, bookedCost,
+                            ZansiDispatchLedgerDirection.Debit, -bookedCost,
+                            "Provider booking cost recorded at booking.", null, null, now));
+                        if (shipment.SurplusAmount > 0m)
+                            _db.ZansiDispatchLedgerEntries.Add(Ledger(shipment.Id, shipment.OrderId,
+                                ZansiDispatchLedgerEntryType.SurplusRecognised, shipment.SurplusAmount,
+                                ZansiDispatchLedgerDirection.Credit, shipment.SurplusAmount,
+                                "Surplus recognised (quoted fee exceeded provider booking cost).", null, null, now));
+                        else if (shipment.DeficitAmount > 0m)
+                            _db.ZansiDispatchLedgerEntries.Add(Ledger(shipment.Id, shipment.OrderId,
+                                ZansiDispatchLedgerEntryType.DeficitRecognised, shipment.DeficitAmount,
+                                ZansiDispatchLedgerDirection.Debit, -shipment.DeficitAmount,
+                                "Deficit recognised (provider booking cost exceeded quoted fee).", null, null, now));
+                        costNote = $"Shipment booked with courier. Provider cost R{bookedCost:0.00} recorded.";
+                    }
+
                     _db.ZansiDispatchShipmentEvents.Add(new ZansiDispatchShipmentEvent
                     {
                         Id = Guid.NewGuid(),
@@ -962,7 +1012,7 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     });
                     LogAction(shipment, ZansiDispatchActionType.BookingSucceeded, bookActor, null,
                         ZansiDispatchShipmentStatus.PendingDispatch, shipment.Status, null, data.InitialProviderStatus ?? "submitted",
-                        null, "Shipment booked with courier.", data.RawResponseJson, null);
+                        null, costNote, data.RawResponseJson, null);
                 }
 
                 await _db.SaveChangesAsync(ct);

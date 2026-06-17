@@ -13,8 +13,11 @@
    zero. We ONLY delete shipments that were never booked with a courier:
      Status = PendingDispatch(1) AND ProviderShipmentId/TrackingNumber/
      ShortTrackingReference/LabelUrl/DeliveredAt all NULL,
-   and we ALWAYS preserve the known-good shipment:
-     edbcc5ae-2699-4481-b5e1-f8f944236ed2 (provider 117442505, ref 7D67MD).
+   AND are OLDER than @OlderThanUtc (default = 24h ago) — so a FRESH, legitimate
+   PendingDispatch shipment created by a real seller acceptance is NEVER deleted
+   (a just-accepted shipment has the same NULL signature; the age cutoff is what
+   distinguishes old fakes from new real rows). We ALWAYS preserve the known-good
+   shipment: edbcc5ae-2699-4481-b5e1-f8f944236ed2 (provider 117442505, ref 7D67MD).
 
    HOW TO USE
    ----------
@@ -22,12 +25,19 @@
    2. Run STEP 1 with @Commit = 0 (default) → dry run, rolls back, prints counts.
    3. Only when satisfied, set @Commit = 1 and re-run STEP 1 to apply.
    4. Run STEP 2 (sanity) — confirm everything reads zero (or only real rows).
+
+   Adjust @OlderThanUtc below if you need a wider/narrower window (e.g. a fixed
+   pre-test-window cutoff like '2026-06-16T00:00:00').
    ============================================================================ */
+
+-- Age cutoff: only rows created BEFORE this are eligible for deletion.
+-- Default = 24h ago, so fresh accepted-order shipments are protected.
+DECLARE @OlderThanUtc datetime2 = DATEADD(HOUR, -24, SYSUTCDATETIME());
 
 ------------------------------------------------------------------------------
 -- STEP 0 — PREVIEW (read-only): the fake pending shipments + current totals.
 ------------------------------------------------------------------------------
-SELECT 'fake_pending_shipments_to_delete' AS preview;
+SELECT 'fake_pending_shipments_to_delete' AS preview, @OlderThanUtc AS older_than_cutoff_utc;
 SELECT s.Id, s.OrderId, s.Status, s.QuotedDeliveryFee, s.ReconciliationStatus,
        s.ProviderShipmentId, s.TrackingNumber, s.ShortTrackingReference, s.LabelUrl, s.DeliveredAt, s.CreatedAt
 FROM dbo.ZansiDispatchShipments AS s
@@ -37,6 +47,7 @@ WHERE s.Status = 1
   AND s.ShortTrackingReference IS NULL
   AND s.LabelUrl               IS NULL
   AND s.DeliveredAt            IS NULL
+  AND s.CreatedAt              < @OlderThanUtc       -- protect fresh accepted-order shipments
   AND s.Id <> 'EDBCC5AE-2699-4481-B5E1-F8F944236ED2'
 ORDER BY s.CreatedAt;
 
@@ -64,6 +75,7 @@ BEGIN TRAN;
       AND s.ShortTrackingReference IS NULL
       AND s.LabelUrl               IS NULL
       AND s.DeliveredAt            IS NULL
+      AND s.CreatedAt              < @OlderThanUtc       -- protect fresh accepted-order shipments
       AND s.Id <> 'EDBCC5AE-2699-4481-B5E1-F8F944236ED2';
 
     /* 1a. Dependents of the fake shipments (loose, un-FK'd ShipmentId refs). */

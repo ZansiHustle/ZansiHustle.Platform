@@ -22,6 +22,21 @@ namespace ZansiHustle.Application.Payments
         Task<Result<PaymentDto>> GetByIdAsync(Guid userId, Guid paymentId);
 
         /// <summary>
+        /// DEV/UAT-ONLY: simulate a successful gateway payment for an order the
+        /// caller owns, WITHOUT contacting Ozow. Settles the order through the
+        /// SAME internal paid-transition path as a real provider success
+        /// (PaymentStatus → Paid, product order → AwaitingSellerAcceptance,
+        /// seller notified, wallet split honoured) — and, critically, does NOT
+        /// book dispatch (dispatch still waits for explicit seller acceptance).
+        /// Refuses with NOT_FOUND when <c>Payments:MockCheckoutEnabled</c> is
+        /// false. Idempotent: a second call on an already-paid order is a no-op.
+        /// </summary>
+        Task<Result<PaymentDto>> MockOrderSuccessAsync(
+            Guid userId,
+            MockOrderSuccessRequestDto request,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Server-side verification against the provider by reference. Useful when the
         /// webhook is delayed or the mobile client returns to the app and wants a
         /// synchronous confirmation. Routes to the right provider based on the

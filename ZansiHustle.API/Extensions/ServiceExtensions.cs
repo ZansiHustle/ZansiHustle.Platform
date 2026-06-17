@@ -415,6 +415,13 @@ public static class ServiceExtensions
     {
         services.Configure<OzowSettings>(configuration.GetSection(OzowSettings.SectionName));
 
+        // Dev/UAT-only mock checkout switch (Payments:MockCheckoutEnabled).
+        // Lets POST /api/payments/mock/order-success settle an order WITHOUT
+        // Ozow, through the same paid-transition path. Default false; the
+        // controller also hard-blocks it in Production.
+        services.Configure<ZansiHustle.Application.Payments.MockCheckoutSettings>(
+            configuration.GetSection(ZansiHustle.Application.Payments.MockCheckoutSettings.SectionName));
+
         services.AddScoped<IOzowHashService, OzowHashService>();
 
         services.AddHttpClient<IOzowClient, OzowClient>((sp, client) =>

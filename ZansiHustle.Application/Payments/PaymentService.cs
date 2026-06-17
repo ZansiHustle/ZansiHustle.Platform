@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using ZansiHustle.Application.Notifications;
 using ZansiHustle.Application.Payments.Dtos;
 using ZansiHustle.Application.Payments.Providers;
@@ -39,6 +40,7 @@ namespace ZansiHustle.Application.Payments
         private readonly IYocoClient _yocoClient;
         private readonly IYocoSignatureService _yocoSignatureService;
         private readonly UserManager<User> _userManager;
+        private readonly MockCheckoutSettings _mockSettings;
         private readonly ILogger<PaymentService> _logger;
 
         public PaymentService(
@@ -54,6 +56,7 @@ namespace ZansiHustle.Application.Payments
             IYocoClient yocoClient,
             IYocoSignatureService yocoSignatureService,
             UserManager<User> userManager,
+            IOptions<MockCheckoutSettings> mockSettings,
             ILogger<PaymentService> logger)
         {
             _paymentRepository = paymentRepository;
@@ -68,6 +71,7 @@ namespace ZansiHustle.Application.Payments
             _yocoClient = yocoClient;
             _yocoSignatureService = yocoSignatureService;
             _userManager = userManager;
+            _mockSettings = mockSettings?.Value ?? new MockCheckoutSettings();
             _logger = logger;
         }
 
@@ -688,6 +692,159 @@ namespace ZansiHustle.Application.Payments
             {
                 _logger.LogError(ex, "GetByIdAsync failed for payment {PaymentId}.", paymentId);
                 return Result<PaymentDto>.Failure(ErrorCodes.Exception, $"Failed to retrieve payment. {ex.Message}");
+            }
+        }
+
+        // ─── Mock checkout (DEV/UAT only) ────────────────────────────────────
+
+        /// <inheritdoc />
+        public async Task<Result<PaymentDto>> MockOrderSuccessAsync(
+            Guid userId,
+            MockOrderSuccessRequestDto request,
+            CancellationToken cancellationToken = default)
+        {
+            // ── Gate #1: config is the real gatekeeper ───────────────────────
+            // Defence in depth — the controller already 404s when disabled, but
+            // the service NEVER applies a mock payment unless explicitly enabled.
+            // NotFound (not Forbidden) so a disabled endpoint is indistinguishable
+            // from one that doesn't exist.
+            if (!_mockSettings.MockCheckoutEnabled)
+            {
+                _logger.LogWarning(
+                    "[Payments][Mock] Rejected — MockCheckoutEnabled=false. userId={UserId} orderId={OrderId}",
+                    userId, request?.OrderId);
+                return Result<PaymentDto>.Failure(ErrorCodes.NotFound, "Not found.");
+            }
+
+            if (request is null || request.OrderId == Guid.Empty)
+                return Result<PaymentDto>.Failure(ErrorCodes.BadRequest, "OrderId is required.");
+
+            try
+            {
+                var order = await _orderRepository.GetByIdAsync(request.OrderId);
+                if (order is null)
+                    return Result<PaymentDto>.Failure(ErrorCodes.NotFound, "Order not found.");
+
+                // ── Gate #2: caller must own the order ───────────────────────
+                if (order.BuyerUserId != userId)
+                    return Result<PaymentDto>.Failure(ErrorCodes.Forbidden, "You do not have permission to pay for this order.");
+
+                // ── Idempotency: already paid → no-op ────────────────────────
+                // Return the existing succeeded payment (no new row, no duplicate
+                // seller notification, no wallet re-debit). A second mock call is
+                // safe to fire.
+                if (order.PaymentStatus == PaymentStatus.Paid)
+                {
+                    var existing = (await _paymentRepository.GetByOrderAsync(order.Id))
+                        .Find(p => p.Status == PaymentTransactionStatus.Succeeded);
+                    _logger.LogInformation(
+                        "[Payments][Mock] Order {OrderCode} already Paid — idempotent no-op (no duplicate payment/notification).",
+                        order.Code);
+                    return existing is not null
+                        ? Result<PaymentDto>.Success(MapDto(existing), "Order already paid.")
+                        : Result<PaymentDto>.Success(
+                            new PaymentDto { OrderId = order.Id, Status = PaymentTransactionStatus.Succeeded, Amount = order.Total, Currency = order.Currency },
+                            "Order already paid.");
+                }
+
+                // ── Gate #3: order must be in a payable state ────────────────
+                var guard = EnsureOrderIsPayable(order);
+                if (!guard.IsSuccess)
+                    return Result<PaymentDto>.Failure(guard.Code, guard.Message);
+
+                var providerName = ResolveProvider(request.Provider);
+
+                // ── Wallet split — identical to the real Initialize path ─────
+                // Holds the wallet portion (idempotent per order) and tells us the
+                // remaining EXTERNAL amount the mock gateway should "charge". A
+                // split is therefore never double-charged.
+                var (walletApplied, externalDue) = await _wallet.ApplyToOrderAsync(
+                    userId, order.Id, order.Total, order.Currency,
+                    request.UseWallet, request.WalletAmountRequested);
+
+                if (order.WalletAmountApplied != walletApplied || order.ExternalAmountDue != externalDue)
+                {
+                    order.WalletAmountApplied = walletApplied;
+                    order.ExternalAmountDue = externalDue;
+                    order.UpdatedAtUtc = DateTime.UtcNow;
+                    _orderRepository.Update(order);
+                    await _orderRepository.SaveChangesAsync();
+                }
+
+                // Cancel any in-flight real attempt so a stray Ozow webhook on it
+                // can never double-apply against this now-mock-paid order. Does NOT
+                // reverse the wallet hold (it belongs to the order).
+                var activeAttempt = await _paymentRepository.GetActiveAttemptForOrderAsync(order.Id);
+                if (activeAttempt != null)
+                    await SupersedeAttemptAsync(activeAttempt, "Superseded by mock checkout success.");
+
+                // ── Build the Succeeded mock payment row ─────────────────────
+                // Full-wallet orders settle as a Wallet payment (mirrors the real
+                // MarkOrderPaidByWalletAsync); otherwise record the external leg as
+                // a clearly-marked mock provider payment. IsTest=true on both so
+                // ops/reporting can filter synthetic traffic.
+                var now = DateTime.UtcNow;
+                var fullWallet = walletApplied > 0m && externalDue <= 0m;
+                var paymentAmount = fullWallet ? walletApplied : externalDue;
+                if (paymentAmount <= 0m) paymentAmount = order.Total;
+
+                var mockReference = string.IsNullOrWhiteSpace(request.MockReference)
+                    ? $"MOCK-OZOW-{order.Code}-{now:yyyyMMddHHmmssfff}"
+                    : request.MockReference!.Trim();
+
+                var payment = new Payment
+                {
+                    Id = Guid.NewGuid(),
+                    Code = $"MOCK_{now:yyyyMMddHHmmssfff}",
+                    OrderId = order.Id,
+                    UserId = userId,
+                    Provider = fullWallet ? PaymentProvider.Wallet : providerName,
+                    ProviderReference = mockReference,
+                    Amount = paymentAmount,
+                    Currency = string.IsNullOrWhiteSpace(order.Currency) ? "ZAR" : order.Currency,
+                    Status = PaymentTransactionStatus.Succeeded,
+                    IsTest = true,
+                    PaidAtUtc = now,
+                    ChannelUsed = fullWallet ? "Wallet" : "MockCheckout",
+                    // Safe synthetic payload — NEVER a real provider body.
+                    RawProviderMetadata = JsonSerializer.Serialize(new
+                    {
+                        mock = true,
+                        provider = fullWallet ? PaymentProvider.Wallet : providerName,
+                        reference = mockReference,
+                        amount = paymentAmount,
+                        walletApplied,
+                        externalDue,
+                        orderId = order.Id,
+                        orderCode = order.Code,
+                    }),
+                    CreatedAtUtc = now,
+                    UpdatedAtUtc = now,
+                };
+
+                await _paymentRepository.AddAsync(payment);
+
+                // SAME shared paid-transition path the real Ozow webhook uses
+                // (AdvanceOrderOnPaidAsync): PaymentStatus → Paid, product order →
+                // AwaitingSellerAcceptance, seller "new request" + customer
+                // notifications fire exactly once, service bookings flip to
+                // Requested. Dispatch is NOT booked here — it waits for the seller
+                // to accept (OrderService.AcceptAsync).
+                await AdvanceOrderOnPaidAsync(payment);
+
+                await _paymentRepository.SaveChangesAsync();
+
+                _logger.LogWarning(
+                    "MOCK PAYMENT SUCCESS APPLIED orderId={OrderId} orderCode={OrderCode} userId={UserId} amount={Amount} provider={Provider} reference={Reference} walletApplied={Wallet} externalDue={External}",
+                    order.Id, order.Code, userId, payment.Amount, payment.Provider, mockReference, walletApplied, externalDue);
+
+                var refreshed = await _paymentRepository.GetByIdAsync(payment.Id);
+                return Result<PaymentDto>.Success(MapDto(refreshed ?? payment), "Mock payment applied.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Payments][Mock] MockOrderSuccessAsync threw for order {OrderId}.", request?.OrderId);
+                return Result<PaymentDto>.Failure(ErrorCodes.Exception, "Mock payment failed.");
             }
         }
 

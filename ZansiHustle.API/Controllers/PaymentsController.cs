@@ -4,6 +4,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -29,6 +30,8 @@ namespace ZansiHustle.API.Controllers
         private readonly ICurrentUserService _currentUserService;
         private readonly OzowSettings _ozowSettings;
         private readonly YocoSettings _yocoSettings;
+        private readonly MockCheckoutSettings _mockSettings;
+        private readonly IWebHostEnvironment _env;
         private readonly ILogger<PaymentsController> _logger;
 
         public PaymentsController(
@@ -36,12 +39,16 @@ namespace ZansiHustle.API.Controllers
             ICurrentUserService currentUserService,
             IOptions<OzowSettings> ozowSettings,
             IOptions<YocoSettings> yocoSettings,
+            IOptions<MockCheckoutSettings> mockSettings,
+            IWebHostEnvironment env,
             ILogger<PaymentsController> logger)
         {
             _paymentService = paymentService;
             _currentUserService = currentUserService;
             _ozowSettings = ozowSettings.Value ?? new OzowSettings();
             _yocoSettings = yocoSettings.Value ?? new YocoSettings();
+            _mockSettings = mockSettings.Value ?? new MockCheckoutSettings();
+            _env = env;
             _logger = logger;
         }
 
@@ -123,6 +130,56 @@ namespace ZansiHustle.API.Controllers
                     ErrorCodes.PaymentProviderUnavailable,
                     "Could not start payment right now. Please try again shortly."));
             }
+        }
+
+        /// <summary>
+        /// DEV/UAT-ONLY: simulate a successful Ozow payment for an order the
+        /// caller owns, without spending real money. Settles the order through
+        /// the SAME internal paid-transition path as a real Ozow webhook
+        /// (PaymentStatus → Paid, product order → AwaitingSellerAcceptance,
+        /// seller notified) and does NOT book dispatch (acceptance is still the
+        /// dispatch trigger).
+        ///
+        /// SAFETY: the backend config <c>Payments:MockCheckoutEnabled</c> is the
+        /// real gatekeeper. When it's false this endpoint returns 404 (looks like
+        /// it doesn't exist). It is additionally hard-blocked in Production
+        /// regardless of the flag. A user-controlled request body alone can never
+        /// activate it.
+        /// </summary>
+        [HttpPost("mock/order-success")]
+        [Authorize]
+        [ProducesResponseType(typeof(Result<PaymentDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> MockOrderSuccess([FromBody] MockOrderSuccessRequestDto request, CancellationToken cancellationToken)
+        {
+            // Gate #1 — config off → indistinguishable from a non-existent route.
+            if (!_mockSettings.MockCheckoutEnabled)
+            {
+                _logger.LogWarning(
+                    "[Payments][Mock] 404 — MockCheckoutEnabled=false (env={Env}, orderId={OrderId}).",
+                    _env.EnvironmentName, request?.OrderId);
+                return NotFound();
+            }
+
+            // Gate #2 — never apply a mock payment in Production, even if the flag
+            // was flipped by mistake. Loud error so a misconfigured prod is obvious.
+            if (_env.IsProduction())
+            {
+                _logger.LogError(
+                    "[Payments][Mock] BLOCKED in Production despite MockCheckoutEnabled=true. Refusing (orderId={OrderId}).",
+                    request?.OrderId);
+                return NotFound();
+            }
+
+            var userId = _currentUserService.UserId;
+            if (!userId.HasValue)
+                return ToActionResult(Result<PaymentDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            _logger.LogWarning(
+                "[Payments][Mock] Mock checkout invoked. env={Env} userId={UserId} orderId={OrderId} provider={Provider}",
+                _env.EnvironmentName, userId.Value, request?.OrderId, request?.Provider ?? "Ozow");
+
+            var result = await _paymentService.MockOrderSuccessAsync(userId.Value, request, cancellationToken);
+            return ToActionResult(result);
         }
 
         /// <summary>Returns a single payment owned by the caller.</summary>
