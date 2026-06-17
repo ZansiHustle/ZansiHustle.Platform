@@ -1102,13 +1102,13 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
             {
                 var buyer = await _db.Users.AsNoTracking()
                     .Where(u => u.Id == buyerUserId)
-                    .Select(u => new { u.Email, u.FirstName, u.LastName })
+                    .Select(u => new { u.Email, u.FirstName, u.LastName, u.PhoneNumber })
                     .FirstOrDefaultAsync(ct);
 
                 var merchant = merchantId is Guid mid
                     ? await _db.Merchants.AsNoTracking()
                         .Where(m => m.Id == mid)
-                        .Select(m => new { m.Name, m.ContactEmail })
+                        .Select(m => new { m.Name, m.ContactEmail, m.ContactPhoneNumber })
                         .FirstOrDefaultAsync(ct)
                     : null;
 
@@ -1120,8 +1120,10 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     OrderCode = orderCode ?? string.Empty,
                     CustomerEmail = buyer?.Email,
                     CustomerName = string.IsNullOrWhiteSpace(buyerName) ? null : buyerName,
+                    CustomerPhone = buyer?.PhoneNumber,
                     SellerEmail = merchant?.ContactEmail,
                     SellerName = merchant?.Name,
+                    SellerPhone = merchant?.ContactPhoneNumber,
                     TrackingReference = !string.IsNullOrWhiteSpace(shipment.TrackingNumber) ? shipment.TrackingNumber : shipment.ShortTrackingReference,
                     Courier = shipment.ProviderType.ToString(),
                     ServiceLevel = shipment.ServiceLevelName ?? shipment.ServiceLevel.ToString(),

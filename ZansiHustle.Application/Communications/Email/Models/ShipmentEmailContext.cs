@@ -14,8 +14,10 @@ public sealed class ShipmentEmailContext
     // Recipients (resolved real addresses; may be overridden in test mode).
     public string? CustomerEmail { get; set; }
     public string? CustomerName { get; set; }
+    public string? CustomerPhone { get; set; }
     public string? SellerEmail { get; set; }
     public string? SellerName { get; set; }
+    public string? SellerPhone { get; set; }
 
     // Shipment facts.
     public string? TrackingReference { get; set; }
