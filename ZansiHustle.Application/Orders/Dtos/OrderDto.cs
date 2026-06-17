@@ -36,6 +36,16 @@ namespace ZansiHustle.Application.Orders.Dtos
         public decimal? ExternalAmountDue { get; set; }
 
         public string? DeliveryAddress { get; set; }
+
+        /// <summary>
+        /// Broad delivery AREA only (e.g. "Hatfield, Pretoria") — suburb + city,
+        /// never the street line, postal code, province, or coordinates. Populated
+        /// for the SELLER's view of a product order so they have logistics context
+        /// WITHOUT the buyer's full address. Null on the buyer's own view (they see
+        /// their full <see cref="DeliveryAddress"/>).
+        /// </summary>
+        public string? BuyerDeliveryArea { get; set; }
+
         public string? Notes { get; set; }
         public string? CancellationReason { get; set; }
 

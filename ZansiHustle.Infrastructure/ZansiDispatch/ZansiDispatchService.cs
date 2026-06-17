@@ -717,6 +717,43 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
         {
             try
             {
+                // ── Consolidated diagnostic ──────────────────────────────────
+                // One line that proves EXACTLY why auto-book runs or skips: all
+                // four gating flags, the order's selected option + its provider,
+                // and the existing shipment id. Emitted BEFORE any gate so even a
+                // SKIPPED path is fully explained. Grep: "auto-book DIAGNOSTIC".
+                var diag = await _db.Orders.AsNoTracking()
+                    .Where(o => o.Id == orderId)
+                    .Select(o => new { o.DeliveryQuoteOptionId })
+                    .FirstOrDefaultAsync(ct);
+                Guid? selectedOptionId = diag?.DeliveryQuoteOptionId;
+                string optionProvider = "none";
+                ZansiDispatchServiceLevel? optionLevel = null;
+                if (selectedOptionId is Guid optId)
+                {
+                    var opt = await _db.ZansiDispatchQuoteOptions.AsNoTracking()
+                        .Where(o => o.Id == optId)
+                        .Select(o => new { o.ProviderType, o.ServiceLevel })
+                        .FirstOrDefaultAsync(ct);
+                    if (opt is not null) { optionProvider = opt.ProviderType.ToString(); optionLevel = opt.ServiceLevel; }
+                }
+                var existingShipmentId = await _db.ZansiDispatchShipments.AsNoTracking()
+                    .Where(s => s.OrderId == orderId)
+                    .Select(s => (Guid?)s.Id)
+                    .FirstOrDefaultAsync(ct);
+
+                _logger.LogInformation(
+                    "ZansiDispatch auto-book DIAGNOSTIC order={OrderId} AutoBookAfterSellerAcceptance={AutoBook} AllowShipmentBooking={AllowBooking} CourierGuy.Enabled={CgEnabled} CourierGuy.IsConfigured={CgConfigured} selectedOptionId={OptionId} optionProvider={OptionProvider} optionServiceLevel={OptionLevel} existingShipmentId={ShipmentId}",
+                    orderId,
+                    _opts.CourierGuy.AutoBookAfterSellerAcceptance,
+                    _opts.CourierGuy.AllowShipmentBooking,
+                    _opts.CourierGuy.Enabled,
+                    _opts.CourierGuy.IsConfigured,
+                    selectedOptionId,
+                    optionProvider,
+                    optionLevel,
+                    existingShipmentId);
+
                 if (!_opts.CourierGuy.AutoBookAfterSellerAcceptance)
                 {
                     // Feature off → leave the shipment PendingDispatch for manual/ops

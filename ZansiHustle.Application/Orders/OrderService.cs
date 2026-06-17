@@ -449,7 +449,26 @@ namespace ZansiHustle.Application.Orders
                 if (!IsBuyerOrSeller(order, userId))
                     return Result<OrderDto>.Failure(ErrorCodes.Forbidden, "You do not have permission to view this order.");
 
-                return Result<OrderDto>.Success(MapToDto(order), "Order retrieved successfully.");
+                var dto = MapToDto(order);
+
+                // ── Seller privacy redaction (product orders) ────────────────
+                // Product order dispatch is platform-managed: the SELLER must never
+                // see the buyer's email, phone, full street address, or buyer-contact
+                // notes — only the buyer's broad delivery AREA. The buyer's own view
+                // is unredacted (it's their data). Service bookings keep their own
+                // provider/customer contact rules and are NOT redacted here.
+                var callerIsBuyer = order.BuyerUserId == userId;
+                var isProductOrder = !order.Items.Any(i => i.ListingType == ListingType.Service);
+                if (!callerIsBuyer && isProductOrder)
+                {
+                    dto.BuyerDeliveryArea = DeriveBroadDeliveryArea(dto.DeliveryAddress);
+                    dto.BuyerEmail = null;
+                    dto.BuyerPhone = null;
+                    dto.DeliveryAddress = null;
+                    dto.Notes = null; // notes carry the buyer's "Contact: name · phone" line
+                }
+
+                return Result<OrderDto>.Success(dto, "Order retrieved successfully.");
             }
             catch (Exception ex)
             {
@@ -502,8 +521,14 @@ namespace ZansiHustle.Application.Orders
                     DeliveredAtUtc = snap?.DeliveredAt,
                     // Shop display name ONLY — never seller phone/address.
                     SellerDisplayName = order.Merchant?.Name,
-                    // Buyer's delivery destination (NOT the seller pickup address).
-                    DestinationSummary = order.DeliveryAddress,
+                    // Buyer's delivery destination. The BUYER sees their own full
+                    // address; a SELLER viewing the same tracking (e.g. "Track
+                    // dispatch") sees only the broad AREA for a product order — never
+                    // the full street/postal. Service bookings are not redacted here.
+                    DestinationSummary = (order.BuyerUserId == userId
+                                          || order.Items.Any(i => i.ListingType == ListingType.Service))
+                        ? order.DeliveryAddress
+                        : DeriveBroadDeliveryArea(order.DeliveryAddress),
                     Timeline = BuildTrackingTimeline(order, snap),
                     Updates = updates,
                 };
@@ -1090,6 +1115,50 @@ namespace ZansiHustle.Application.Orders
         private static string GenerateCode()
         {
             return $"ORD-{DateTime.UtcNow:yyyyMMddHHmmssfff}";
+        }
+
+        // South African provinces — used to strip the province token when
+        // deriving a broad delivery area for the seller view.
+        private static readonly HashSet<string> SaProvinces = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "Gauteng", "Western Cape", "Eastern Cape", "Northern Cape",
+            "KwaZulu-Natal", "KwaZulu Natal", "Free State", "Limpopo",
+            "Mpumalanga", "North West",
+        };
+
+        /// <summary>
+        /// Reduce a full comma-joined delivery address (e.g.
+        /// "12 Jacaranda Street, Hatfield, Pretoria, Gauteng, 0083") to a broad
+        /// AREA only ("Hatfield, Pretoria") for the seller view. Drops the street
+        /// line, a trailing postal code, and a recognised province; keeps at most
+        /// the last two remaining segments (suburb + city). Returns null when there
+        /// is nothing safe to show.
+        /// </summary>
+        private static string? DeriveBroadDeliveryArea(string? address)
+        {
+            if (string.IsNullOrWhiteSpace(address)) return null;
+
+            var parts = address.Split(',')
+                .Select(p => p.Trim())
+                .Where(p => p.Length > 0)
+                .ToList();
+            if (parts.Count == 0) return null;
+
+            // Drop a trailing postal code (a segment that is all digits).
+            if (parts.Count > 1 && parts[^1].All(char.IsDigit))
+                parts.RemoveAt(parts.Count - 1);
+
+            // Drop a trailing province.
+            if (parts.Count > 1 && SaProvinces.Contains(parts[^1]))
+                parts.RemoveAt(parts.Count - 1);
+
+            // Drop the street line (first segment) once a suburb/city remains.
+            if (parts.Count > 1) parts.RemoveAt(0);
+
+            // Keep at most the last two segments (suburb, city) — broad area only.
+            if (parts.Count > 2) parts = parts.Skip(parts.Count - 2).ToList();
+
+            return parts.Count > 0 ? string.Join(", ", parts) : null;
         }
 
         private static OrderDto MapToDto(Order order)
