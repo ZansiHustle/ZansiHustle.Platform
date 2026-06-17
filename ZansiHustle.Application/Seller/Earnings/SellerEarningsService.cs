@@ -148,6 +148,49 @@ namespace ZansiHustle.Application.Seller.Earnings
             return Result<SellerEarningsSummaryDto>.Success(dto, "Earnings summary computed.");
         }
 
+        public async Task<Result<SellerFinanceSummaryDto>> GetFinanceSummaryAsync(Guid sellerUserId)
+        {
+            if (sellerUserId == Guid.Empty)
+                return Result<SellerFinanceSummaryDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found.");
+
+            // ALL-TIME, PAID orders for the caller's own merchants only.
+            var allOrders = await _orders.GetBySellerUserAsync(sellerUserId);
+            var paid = allOrders.Where(o => o.PaymentStatus == PaymentStatus.Paid).ToList();
+
+            var serviceOrderIds = paid.Where(IsServiceOrder).Select(o => o.Id).ToList();
+            IReadOnlyDictionary<Guid, ServiceBookingStatus> bookingStatuses =
+                serviceOrderIds.Count > 0
+                    ? await _bookings.GetStatusesByOrderIdsAsync(serviceOrderIds)
+                    : new Dictionary<Guid, ServiceBookingStatus>();
+
+            // Total earned = completed/eligible work only (the "Available" bucket):
+            // cancelled/refunded never count; paid-but-unfulfilled is NOT yet earned.
+            // Fees = 0 (no commission model), so net == gross of eligible orders.
+            decimal totalEarned = 0m;
+            var currency = "ZAR";
+            foreach (var o in paid)
+            {
+                if (!string.IsNullOrWhiteSpace(o.Currency)) currency = o.Currency;
+                if (ClassifySettlement(o, IsServiceOrder(o), bookingStatuses) == Available)
+                    totalEarned += o.Total;
+            }
+
+            // TODO(seller-payouts): there is no seller withdrawal/payout flow yet, so
+            // nothing has actually been paid out. Honest zero (never faked). When a
+            // payout ledger exists, sum COMPLETED payouts here.
+            const decimal paidOut = 0m;
+            var pendingPayout = totalEarned - paidOut;
+            if (pendingPayout < 0m) pendingPayout = 0m;
+
+            return Result<SellerFinanceSummaryDto>.Success(new SellerFinanceSummaryDto
+            {
+                TotalEarned = totalEarned,
+                PaidOut = paidOut,
+                PendingPayout = pendingPayout,
+                Currency = currency,
+            }, "Seller finance summary computed.");
+        }
+
         // ── Helpers ──────────────────────────────────────────────────────────
 
         private static bool IsServiceOrder(Order o) =>

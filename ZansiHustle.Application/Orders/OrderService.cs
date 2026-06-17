@@ -466,6 +466,8 @@ namespace ZansiHustle.Application.Orders
                     dto.BuyerPhone = null;
                     dto.DeliveryAddress = null;
                     dto.Notes = null; // notes carry the buyer's "Contact: name · phone" line
+                    // Resolved pickup address so the accept wizard prefills reliably.
+                    dto.SellerPickupAddress = ResolveSellerPickupAddress(order);
                 }
 
                 return Result<OrderDto>.Success(dto, "Order retrieved successfully.");
@@ -1222,6 +1224,46 @@ namespace ZansiHustle.Application.Orders
             if (parts.Count > 2) parts = parts.Skip(parts.Count - 2).ToList();
 
             return parts.Count > 0 ? string.Join(", ", parts) : null;
+        }
+
+        /// <summary>
+        /// Resolve the seller's PICKUP (collection) address for the accept wizard.
+        /// Priority: (1) listing-specific pickup address, (2) shop address,
+        /// (3) merchant structured address, (4) seller profile fallback. In the
+        /// current model only the MERCHANT carries a full structured address
+        /// (listing/shop hold at most city/province), so this resolves to the
+        /// merchant address — the same origin the courier quote/booking uses.
+        /// Returns a card even when incomplete (IsComplete=false) so the wizard
+        /// can show an "add address" state.
+        /// </summary>
+        private static SellerPickupAddressDto? ResolveSellerPickupAddress(Order order)
+        {
+            var m = order.Merchant;
+            if (m is null) return null;
+
+            var street = string.IsNullOrWhiteSpace(m.AddressLine1) ? null : m.AddressLine1!.Trim();
+            var suburb = string.IsNullOrWhiteSpace(m.Suburb) ? null : m.Suburb!.Trim();
+            var city = string.IsNullOrWhiteSpace(m.City) ? null : m.City!.Trim();
+            var province = string.IsNullOrWhiteSpace(m.Province) ? null : m.Province!.Trim();
+            var postal = string.IsNullOrWhiteSpace(m.PostalCode) ? null : m.PostalCode!.Trim();
+            var country = string.IsNullOrWhiteSpace(m.CountryCode) ? "South Africa" : m.CountryCode!.Trim();
+
+            var summary = !string.IsNullOrWhiteSpace(m.FormattedAddress)
+                ? m.FormattedAddress!.Trim()
+                : string.Join(", ", new[] { street, suburb, city, province, postal }.Where(p => !string.IsNullOrWhiteSpace(p)));
+
+            return new SellerPickupAddressDto
+            {
+                Label = string.IsNullOrWhiteSpace(m.Name) ? "Pickup address" : $"{m.Name!.Trim()} pickup address",
+                StreetAddress = street,
+                LocalArea = suburb,
+                City = city,
+                Province = province,
+                PostalCode = postal,
+                Country = country,
+                Summary = string.IsNullOrWhiteSpace(summary) ? null : summary,
+                IsComplete = street is not null && city is not null && postal is not null,
+            };
         }
 
         private static OrderDto MapToDto(Order order)

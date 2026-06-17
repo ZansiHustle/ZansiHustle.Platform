@@ -14,5 +14,12 @@ namespace ZansiHustle.Application.Seller.Earnings
         /// caller only ever sees their own data (filtered by merchant ownership).
         /// </summary>
         Task<Result<SellerEarningsSummaryDto>> GetSummaryAsync(Guid sellerUserId, string? range);
+
+        /// <summary>
+        /// Clean ALL-TIME finance summary for the dashboard card: total earned
+        /// (completed/eligible, net), paid out (completed payouts only), and
+        /// pending payout (earned − paid out). Safe zeroes when nothing qualifies.
+        /// </summary>
+        Task<Result<SellerFinanceSummaryDto>> GetFinanceSummaryAsync(Guid sellerUserId);
     }
 }

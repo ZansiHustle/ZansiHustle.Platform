@@ -40,5 +40,21 @@ namespace ZansiHustle.API.Controllers
 
             return ToActionResult(await _earnings.GetSummaryAsync(userId.Value, range));
         }
+
+        /// <summary>
+        /// Clean ALL-TIME finance summary for the seller dashboard card:
+        /// total earned / paid out / pending payout. Server-authoritative.
+        /// </summary>
+        [HttpGet("finance-summary")]
+        [ProducesResponseType(typeof(Result<SellerFinanceSummaryDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetFinanceSummary()
+        {
+            var userId = _currentUserService.UserId;
+            if (!userId.HasValue)
+                return ToActionResult(Result<SellerFinanceSummaryDto>.Failure(
+                    ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            return ToActionResult(await _earnings.GetFinanceSummaryAsync(userId.Value));
+        }
     }
 }

@@ -46,6 +46,13 @@ namespace ZansiHustle.Application.Orders.Dtos
         /// </summary>
         public string? BuyerDeliveryArea { get; set; }
 
+        /// <summary>
+        /// Resolved seller PICKUP address — populated ONLY for the SELLER's view of
+        /// a product order (the accept wizard prefills from it). Null on the buyer's
+        /// view. Never contains buyer data.
+        /// </summary>
+        public SellerPickupAddressDto? SellerPickupAddress { get; set; }
+
         public string? Notes { get; set; }
         public string? CancellationReason { get; set; }
 
