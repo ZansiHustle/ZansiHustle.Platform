@@ -36,6 +36,7 @@ namespace ZansiHustle.Application.Merchants
         private readonly ISellerLeadRepository _sellerLeadRepository;
         private readonly IStorageUrlResolver _storageUrlResolver;
         private readonly INotificationService _notifications;
+        private readonly Application.Communication.Email.Interfaces.IMerchantEmailService _merchantEmail;
         private readonly ILogger<MerchantService> _logger;
 
         public MerchantService(
@@ -47,6 +48,7 @@ namespace ZansiHustle.Application.Merchants
             ISellerLeadRepository sellerLeadRepository,
             IStorageUrlResolver storageUrlResolver,
             INotificationService notifications,
+            Application.Communication.Email.Interfaces.IMerchantEmailService merchantEmail,
             ILogger<MerchantService> logger)
         {
             _merchantRepository = merchantRepository;
@@ -57,7 +59,52 @@ namespace ZansiHustle.Application.Merchants
             _sellerLeadRepository = sellerLeadRepository;
             _storageUrlResolver = storageUrlResolver;
             _notifications = notifications;
+            _merchantEmail = merchantEmail;
             _logger = logger;
+        }
+
+        // Sends the seller-approval welcome/compliance email exactly once, the
+        // first time the merchant becomes approved. The caller has already set
+        // SellerWelcomeEmailSentAtUtc + persisted it in the SAME save as the
+        // status flip, so duplicate approve-clicks / endpoint retries never
+        // resend. Best-effort: a send failure is logged, never thrown (approval
+        // must not fail because email failed). Resolves the applicant's email +
+        // name from the merchant contact, falling back to the owner user.
+        private async Task SendSellerWelcomeEmailBestEffortAsync(Merchant merchant)
+        {
+            try
+            {
+                var contact = merchant.OwnerUserId is Guid uid && uid != Guid.Empty
+                    ? await _userLookup.GetContactAsync(uid)
+                    : null;
+
+                var toEmail = !string.IsNullOrWhiteSpace(merchant.ContactEmail)
+                    ? merchant.ContactEmail
+                    : contact?.Email;
+                if (string.IsNullOrWhiteSpace(toEmail))
+                {
+                    _logger.LogWarning(
+                        "[SellerWelcome] No recipient email for merchant {MerchantId}; welcome email skipped.",
+                        merchant.Id);
+                    return;
+                }
+
+                var firstName = string.IsNullOrWhiteSpace(contact?.FirstName) ? null : contact!.FirstName;
+                var result = await _merchantEmail.SendSellerApprovalWelcomeEmailAsync(
+                    toEmail!, firstName, merchant.Name);
+                if (!result.IsSuccess)
+                {
+                    _logger.LogWarning(
+                        "[SellerWelcome] Welcome email not sent for merchant {MerchantId}: {Message}",
+                        merchant.Id, result.Message);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "[SellerWelcome] Welcome email threw for merchant {MerchantId} (approval unaffected).",
+                    merchant.Id);
+            }
         }
 
         // Best-effort applicant notification for a seller-application status change.
@@ -483,6 +530,11 @@ namespace ZansiHustle.Application.Merchants
                 merchant.Status = MerchantStatus.Active;
                 merchant.UpdatedAtUtc = DateTime.UtcNow;
 
+                // Send the welcome email once — only if it hasn't been sent
+                // already (e.g. a prior Approve). Marked atomically with this save.
+                var sendWelcome = merchant.SellerWelcomeEmailSentAtUtc is null;
+                if (sendWelcome) merchant.SellerWelcomeEmailSentAtUtc = DateTime.UtcNow;
+
                 _merchantRepository.Update(merchant);
                 var saved = await _merchantRepository.SaveChangesAsync();
 
@@ -492,6 +544,8 @@ namespace ZansiHustle.Application.Merchants
                 await NotifySellerApplicationStatusAsync(merchant,
                     "Seller application approved",
                     "Your seller verification is complete. You can now start selling on ZansiHustle.");
+
+                if (sendWelcome) await SendSellerWelcomeEmailBestEffortAsync(merchant);
 
                 return Result<MerchantDto>.Success(MapToDto(merchant), "Merchant KYC verified successfully.");
             }
@@ -517,6 +571,13 @@ namespace ZansiHustle.Application.Merchants
                 merchant.Status = MerchantStatus.Active;
                 merchant.UpdatedAtUtc = DateTime.UtcNow;
 
+                // Reaching here is a genuine transition into approved (the
+                // already-Active early-return above guards double-clicks). Mark
+                // the welcome email as sent in the SAME save as the status flip
+                // so a retry/duplicate approve can never resend it.
+                var sendWelcome = merchant.SellerWelcomeEmailSentAtUtc is null;
+                if (sendWelcome) merchant.SellerWelcomeEmailSentAtUtc = DateTime.UtcNow;
+
                 _merchantRepository.Update(merchant);
                 var saved = await _merchantRepository.SaveChangesAsync();
 
@@ -526,6 +587,8 @@ namespace ZansiHustle.Application.Merchants
                 await NotifySellerApplicationStatusAsync(merchant,
                     "Seller application approved",
                     "You can now start selling on ZansiHustle.");
+
+                if (sendWelcome) await SendSellerWelcomeEmailBestEffortAsync(merchant);
 
                 return Result<MerchantDto>.Success(MapToDto(merchant), "Merchant approved.");
             }

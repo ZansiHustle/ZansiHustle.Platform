@@ -104,5 +104,13 @@ namespace ZansiHustle.Domain.Merchants
 
         public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
         public DateTime? UpdatedAtUtc { get; set; }
+
+        /// <summary>
+        /// When the seller-approval welcome/compliance email was sent. Null until
+        /// the first time the merchant transitions into an approved (Active)
+        /// state. Used to guarantee the welcome email is sent at most once,
+        /// surviving approve double-clicks / endpoint retries / re-verification.
+        /// </summary>
+        public DateTime? SellerWelcomeEmailSentAtUtc { get; set; }
     }
 }

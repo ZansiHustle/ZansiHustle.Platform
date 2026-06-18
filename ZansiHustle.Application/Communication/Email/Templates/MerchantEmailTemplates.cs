@@ -100,6 +100,167 @@ public static class MerchantEmailTemplates
     }
 
     /// <summary>
+    /// Builds the seller-approval welcome + compliance onboarding email, sent
+    /// once when an admin approves a seller/merchant application. Warm + clear
+    /// expectations (selling standards, order acceptance, delivery/pickup,
+    /// service-provider conduct, safety, shops). Never contains admin notes.
+    /// </summary>
+    public static (string Subject, string HtmlBody, string PlainTextBody) BuildSellerApprovalWelcomeEmail(
+        string firstName, string? businessName, string supportEmail)
+    {
+        var safeName = Safe(firstName);
+        var who = string.IsNullOrWhiteSpace(businessName) ? safeName : businessName!;
+        var subject = "Welcome to ZansiHustle — Your seller account is approved";
+        var support = string.IsNullOrWhiteSpace(supportEmail) ? "support@zansihustle.co.za" : supportEmail.Trim();
+        var supportEnc = WebUtility.HtmlEncode(support);
+
+        string H(string t) => $"<h3 style='margin:26px 0 10px 0; color:{Text}; font-size:16px;'>{WebUtility.HtmlEncode(t)}</h3>";
+        string UL(params string[] items)
+        {
+            var sb = new System.Text.StringBuilder(
+                $"<ul style='margin:0 0 4px 0; padding-left:20px; color:{TextMuted}; line-height:1.7; font-size:14px;'>");
+            foreach (var i in items) sb.Append($"<li style='margin-bottom:6px;'>{i}</li>");
+            sb.Append("</ul>");
+            return sb.ToString();
+        }
+
+        var body = $@"
+            <p>Congratulations {WebUtility.HtmlEncode(who)} — your ZansiHustle seller account has been <strong style='color:{Primary};'>approved</strong>. You can now start listing products or offering services and receiving customer requests on the platform.</p>
+
+            <div style='background-color:{Surface}; border-left:4px solid {Primary}; padding:16px; margin:20px 0; border-radius:8px;'>
+                <p style='margin:0; color:{TextMuted}; font-size:14px;'>To keep ZansiHustle safe and trusted for buyers and sellers, here's what we expect from approved sellers. A few minutes now saves headaches later.</p>
+            </div>
+
+            {H("What approval means")}
+            {UL(
+                "You're cleared to sell and list on ZansiHustle.",
+                "Keep your listings, prices and availability accurate and up to date.",
+                "Approval can be reviewed if there are repeated complaints, unsafe conduct, fraud, or policy breaches.")}
+
+            {H("Product selling standards")}
+            {UL(
+                "Only list products you actually have or can fulfil.",
+                "Use accurate photos, prices, descriptions, sizes, condition and stock status.",
+                "Never list broken, unsafe, counterfeit, stolen, illegal, misleading or restricted items.",
+                "For second-hand items, describe the condition clearly and honestly.",
+                "Broken, damaged or misrepresented products may be returned or refunded.",
+                "Repeated customer complaints can affect your listing visibility or account status.")}
+
+            {H("Accepting orders")}
+            {UL(
+                "Only accept an order when you're sure you can fulfil it.",
+                "Don't accept if the item is unavailable, damaged, or you can't prepare it for collection.",
+                "Repeated rejections, missed pickups or unfulfilled orders may affect your seller trust and listing performance.",
+                "Prepare parcels properly and on time — if a courier pickup is scheduled, have the parcel ready.")}
+
+            {H("Delivery &amp; pickup")}
+            {UL(
+                "For product orders, ZansiHustle may arrange delivery through its dispatch partners.",
+                "Confirm your correct pickup address and package items safely.",
+                "Don't miss a scheduled courier pickup.",
+                "Use the in-app flow for delivery — please don't arrange private off-platform delivery or contact the customer directly unless the platform flow allows it.",
+                "Respect customers' private contact and address information.")}
+
+            {H("Service provider standards")}
+            {UL(
+                "Only accept service bookings you can honour, and arrive on time — or communicate early if there's an issue.",
+                "Keep service descriptions, pricing, house-call/travel fees, availability and visit-shop options accurate.",
+                "For house calls, respect customer safety and privacy; for visit-shop services keep your location and operating details accurate.",
+                "Act professionally; never request unsafe, inappropriate or off-platform arrangements.",
+                "Mark a service complete only when the work was genuinely done.")}
+
+            {H("Safety &amp; conduct")}
+            {UL(
+                "Your safety and your customers' safety both matter — keep communication respectful and meet/serve in safe environments.",
+                "Report suspicious behaviour, and don't share customer information beyond what's needed to fulfil an order.",
+                "ZansiHustle may step in where there are disputes, safety reports, fraud concerns or repeated complaints.")}
+
+            {H("Your shop on ZansiHustle")}
+            {UL(
+                "Your shop is your public seller storefront — it shows customers your brand, products/services, area and credibility.",
+                "A complete shop profile groups your listings under one professional identity and builds customer confidence.",
+                "Manage your products and services under your shop where supported.")}
+
+            {H("How to succeed")}
+            {UL(
+                "Keep listings updated and respond quickly to requests.",
+                "Accept only what you can fulfil, and package products properly.",
+                "Keep service appointments professional, use clear photos, and keep prices and fees honest.",
+                "Watch your notifications, and contact support whenever you're unsure.")}
+
+            {H("Support")}
+            <p style='margin:0 0 4px 0; color:{TextMuted}; font-size:14px;'>Questions or something not working? We're here to help:</p>
+            {UL($"Email: <a href='mailto:{supportEnc}' style='color:{Primary}; text-decoration:none;'>{supportEnc}</a>")}
+
+            <p style='margin-top:24px; font-size:12px; color:{TextMuted}; line-height:1.6;'>
+                ZansiHustle may update its seller guidelines over time. Continued use of the platform means following the current platform rules and marketplace standards. This email is onboarding guidance, not a full legal contract — please refer to the in-app and website policies for the complete terms.
+            </p>";
+
+        var htmlBody = Wrap(
+            firstName: safeName,
+            title: "Your seller account is approved",
+            subtitle: "Welcome to ZansiHustle — let's get you selling",
+            body: body,
+            footerTitle: "ZansiHustle Seller Support");
+
+        var plainTextBody = $@"Welcome to ZansiHustle, {who}.
+
+Your seller account has been approved. You can now start listing products or offering services and receiving customer requests.
+
+WHAT APPROVAL MEANS
+- You're cleared to sell and list on ZansiHustle.
+- Keep your listings, prices and availability accurate.
+- Approval can be reviewed if there are repeated complaints, unsafe conduct, fraud, or policy breaches.
+
+PRODUCT SELLING STANDARDS
+- Only list products you actually have or can fulfil.
+- Use accurate photos, prices, descriptions, sizes, condition and stock status.
+- Never list broken, unsafe, counterfeit, stolen, illegal, misleading or restricted items.
+- Describe second-hand condition clearly. Broken/misrepresented products may be returned or refunded.
+- Repeated complaints can affect your listing visibility or account status.
+
+ACCEPTING ORDERS
+- Only accept an order when you can fulfil it.
+- Don't accept if the item is unavailable/damaged or you can't prepare it for collection.
+- Repeated rejections, missed pickups or unfulfilled orders may affect your seller trust and listing performance.
+- Prepare parcels on time; have the parcel ready for scheduled courier pickup.
+
+DELIVERY & PICKUP
+- ZansiHustle may arrange delivery via its dispatch partners.
+- Confirm your pickup address, package safely, don't miss pickups.
+- Use the in-app flow; respect customers' private contact and address info.
+
+SERVICE PROVIDER STANDARDS
+- Only accept bookings you can honour; arrive on time or communicate early.
+- Keep descriptions, pricing, fees, availability and visit options accurate.
+- Respect safety and privacy; never request off-platform/unsafe arrangements.
+- Mark services complete only when genuinely done.
+
+SAFETY & CONDUCT
+- Your safety and your customers' both matter; keep communication respectful.
+- Report suspicious behaviour; don't share customer info beyond fulfilment needs.
+- ZansiHustle may step in for disputes, safety reports, fraud or repeated complaints.
+
+YOUR SHOP
+- Your shop is your public storefront — brand, listings, area, credibility.
+- A complete profile builds customer confidence.
+
+HOW TO SUCCEED
+- Keep listings updated, respond quickly, accept only what you can fulfil.
+- Package properly, keep appointments professional, use clear photos, keep prices honest.
+- Watch notifications; contact support when unsure.
+
+SUPPORT
+- Email: {support}
+
+ZansiHustle may update its seller guidelines over time. Continued use means following current platform rules. This email is onboarding guidance, not a full legal contract — see the in-app and website policies for full terms.
+
+ZansiHustle Seller Support";
+
+        return (subject, htmlBody, plainTextBody);
+    }
+
+    /// <summary>
     /// Builds the internal notification for new lead (sent to team).
     /// </summary>
     public static (string Subject, string HtmlBody, string PlainTextBody) BuildNewLeadNotification(string leadName, string phone, string? email, string? category, string? province, string? referrerName, string? city = null)

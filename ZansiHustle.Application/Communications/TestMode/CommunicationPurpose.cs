@@ -15,6 +15,8 @@ public enum CommunicationPurpose
     OrderStatusSeller = 3,
     DeliveryUpdateCustomer = 4,
     PickupUpdateSeller = 5,
+    /// <summary>Seller-application approval welcome/compliance email — overridable in test mode.</summary>
+    SellerApplicationApproved = 6,
 
     // Security (overridden ONLY when OverrideSecurityOtpRecipients=true).
     SecurityOtp = 100,
