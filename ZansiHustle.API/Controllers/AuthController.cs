@@ -295,6 +295,50 @@ public class AuthController : BaseController
                 ErrorCodes.BadRequest, "Request is required."));
 
         var result = await _phoneVerificationService.VerifyOtpAsync(dto.PhoneNumber, dto.Code, cancellationToken);
+
+        // On a successful check, persist phone verification on the account so
+        // login no longer blocks it. Best-effort (never throws); covers both the
+        // real Twilio "approved" path and the Auth:TestMode bypass code, since
+        // both return Verified=true.
+        if (result.IsSuccess && result.Data is { Verified: true })
+            await _authService.MarkPhoneConfirmedAsync(dto.PhoneNumber, result.Data.PhoneNumber);
+
+        return ToActionResult(result);
+    }
+
+    /// <summary>
+    /// Sends an ACCOUNT-VERIFICATION one-time code to the user's email
+    /// (purpose EmailVerification — separate from password reset). Pairs with
+    /// <c>/verify-email-otp</c>. Enumeration-safe.
+    /// </summary>
+    [HttpPost("send-email-otp")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(Result<EmailOtpSessionDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> SendEmailOtp([FromBody] SendEmailOtpRequestDto dto)
+    {
+        if (dto is null)
+            return ToActionResult(Result<EmailOtpSessionDto>.Failure(
+                ErrorCodes.BadRequest, "Request is required."));
+
+        var result = await _authService.RequestAccountEmailOtpAsync(dto.Email);
+        return ToActionResult(result);
+    }
+
+    /// <summary>
+    /// Verifies an account-verification email OTP issued by
+    /// <c>/send-email-otp</c>. On success the account's email is marked
+    /// confirmed, which satisfies the login verification gate.
+    /// </summary>
+    [HttpPost("verify-email-otp")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(Result<VerifyEmailOtpResponseDto>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> VerifyEmailOtp([FromBody] VerifyEmailOtpRequestDto dto)
+    {
+        if (dto is null)
+            return ToActionResult(Result<VerifyEmailOtpResponseDto>.Failure(
+                ErrorCodes.BadRequest, "Request is required."));
+
+        var result = await _authService.VerifyAccountEmailOtpAsync(dto.SessionId, dto.Code);
         return ToActionResult(result);
     }
 }

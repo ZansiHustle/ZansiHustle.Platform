@@ -91,6 +91,30 @@ public sealed class AuthService : IAuthService
             if (!validPassword)
                 return Result<AuthTokenDto>.Failure(ErrorCodes.InvalidCredentials, "Invalid email or password.");
 
+            // ── Account verification gate (phone OR email) ──────────────────
+            // Verification policy: an account is verified when EITHER its phone
+            // OR its email is confirmed. Login is blocked ONLY when NEITHER is —
+            // so a user who verified by phone, OR by email, passes.
+            //   • Existing accounts were backfilled to PhoneNumberConfirmed=true
+            //     (migration BackfillPhoneNumberConfirmed) → never blocked.
+            //   • A phone-less account must confirm its email; a phone+email
+            //     account can use either channel.
+            // We don't issue tokens — we return RequiresVerification + the phone
+            // AND email so the client can offer SMS/WhatsApp/Email and resend.
+            var isVerified = user.PhoneNumberConfirmed || user.EmailConfirmed;
+            if (!isVerified)
+            {
+                _logger.LogInformation(
+                    "Login requires verification (no session issued). UserId={UserId}", user.Id);
+                return Result<AuthTokenDto>.Success(new AuthTokenDto
+                {
+                    RequiresVerification = true,
+                    VerificationPhoneNumber = user.PhoneNumber,
+                    VerificationEmail = user.Email,
+                    UserId = user.Id,
+                }, "Please verify your account to continue.");
+            }
+
             // v1: email verification is a soft signal (surfaced via CurrentUserDto.EmailConfirmed).
             // Sensitive flows (seller activation, payouts, KYC) gate on EmailConfirmed in feature code.
 
@@ -769,6 +793,175 @@ public sealed class AuthService : IAuthService
             _logger.LogError(ex, "Failed to load current user {UserId}.", userId);
             return Result<CurrentUserDto>.Failure(ErrorCodes.Exception, "Failed to load current user.");
         }
+    }
+
+    /// <inheritdoc />
+    public async Task<Result<EmailOtpSessionDto>> RequestAccountEmailOtpAsync(string email)
+    {
+        var normalizedEmail = (email ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(normalizedEmail))
+            return Result<EmailOtpSessionDto>.Failure(ErrorCodes.BadRequest, "Email address is required.");
+
+        User? user;
+        try
+        {
+            user = await _userManager.FindByEmailAsync(normalizedEmail);
+        }
+        catch (Exception dbEx)
+        {
+            _logger.LogError(dbEx, "Account email OTP: user lookup failed — DB unreachable?");
+            return Result<EmailOtpSessionDto>.Failure(
+                ErrorCodes.Exception,
+                "The verification service is temporarily unavailable. Please try again in a moment.");
+        }
+
+        // Enumeration-safe: an unknown / inactive email gets the same envelope
+        // shape with a throwaway session that simply won't verify.
+        if (user is null || !user.IsActive || user.AccountStatus != AccountStatus.Active)
+        {
+            _logger.LogInformation("Account email OTP: no active user for email, returning dummy session.");
+            return Result<EmailOtpSessionDto>.Success(new EmailOtpSessionDto
+            {
+                SessionId = Guid.NewGuid().ToString("N"),
+                ExpiresAtUtc = DateTime.UtcNow.AddMinutes(5),
+                CodeLength = 6,
+                ResendCooldownSeconds = 30,
+                EmailMasked = MaskIdentifier(normalizedEmail, OtpChannel.Email),
+            }, "If an account matches, a verification code has been sent.");
+        }
+
+        var issue = await _otpService.IssueAsync(new OtpIssueRequest
+        {
+            Destination = user.Email!,
+            Channel = OtpChannel.Email,
+            Purpose = OtpPurpose.EmailVerification,
+            UserId = user.Id,
+            DisplayName = user.FirstName ?? user.Email ?? "there",
+        });
+        if (!issue.IsSuccess || issue.Data is null)
+        {
+            _logger.LogWarning(
+                "Account email OTP dispatch failed for user {UserId}. Code={Code} Message={Message}",
+                user.Id, issue.Code, issue.Message);
+            return Result<EmailOtpSessionDto>.Failure(issue.Code, issue.Message);
+        }
+
+        _logger.LogInformation(
+            "Account email OTP issued for user {UserId}. SessionId={SessionId}", user.Id, issue.Data.SessionId);
+
+        return Result<EmailOtpSessionDto>.Success(new EmailOtpSessionDto
+        {
+            SessionId = issue.Data.SessionId,
+            ExpiresAtUtc = issue.Data.ExpiresAtUtc,
+            CodeLength = issue.Data.CodeLength,
+            ResendCooldownSeconds = issue.Data.ResendCooldownSeconds,
+            EmailMasked = MaskIdentifier(user.Email!, OtpChannel.Email),
+        }, "Verification code sent.");
+    }
+
+    /// <inheritdoc />
+    public async Task<Result<VerifyEmailOtpResponseDto>> VerifyAccountEmailOtpAsync(string sessionId, string code)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(code))
+            return Result<VerifyEmailOtpResponseDto>.Failure(ErrorCodes.BadRequest, "Session id and code are required.");
+
+        var verify = await _otpService.VerifyAsync(new OtpVerifyRequest { SessionId = sessionId, Code = code });
+        if (!verify.IsSuccess || verify.Data is null)
+            return Result<VerifyEmailOtpResponseDto>.Failure(verify.Code, verify.Message);
+
+        // Cross-purpose guard: only an EmailVerification code may confirm email
+        // (a password-reset code must never flip EmailConfirmed).
+        if (verify.Data.Purpose != OtpPurpose.EmailVerification)
+            return Result<VerifyEmailOtpResponseDto>.Failure(ErrorCodes.OtpInvalid, "Invalid verification code.");
+        if (!verify.Data.UserId.HasValue)
+            return Result<VerifyEmailOtpResponseDto>.Failure(ErrorCodes.OtpInvalid, "Invalid verification code.");
+
+        User? user;
+        try
+        {
+            user = await _userManager.FindByIdAsync(verify.Data.UserId.Value.ToString());
+        }
+        catch (Exception dbEx)
+        {
+            _logger.LogError(dbEx, "Account email OTP verify: user lookup failed.");
+            return Result<VerifyEmailOtpResponseDto>.Failure(
+                ErrorCodes.Exception,
+                "The verification service is temporarily unavailable. Please try again in a moment.");
+        }
+
+        if (user is null)
+            return Result<VerifyEmailOtpResponseDto>.Failure(ErrorCodes.NotFound, "Account not found.");
+
+        // The OTP session is bound to this user id, so we confirm exactly the
+        // right account — never a wrong-user confirm.
+        if (!user.EmailConfirmed)
+        {
+            user.EmailConfirmed = true;
+            await _userManager.UpdateAsync(user);
+            _logger.LogInformation(
+                "Email verification persisted (EmailConfirmed=true) for user {UserId}.", user.Id);
+        }
+
+        return Result<VerifyEmailOtpResponseDto>.Success(
+            new VerifyEmailOtpResponseDto { Verified = true }, "Email verified.");
+    }
+
+    /// <inheritdoc />
+    public async Task MarkPhoneConfirmedAsync(string rawPhone, string? normalizedPhone)
+    {
+        try
+        {
+            // Prefer the Twilio-normalised E.164; fall back to normalising the
+            // raw input. Bail if neither yields a phone shape.
+            var e164 = string.IsNullOrWhiteSpace(normalizedPhone)
+                ? NormalisePhone(rawPhone ?? string.Empty)
+                : normalizedPhone!.Trim();
+            if (string.IsNullOrWhiteSpace(e164)) return;
+
+            // The account may have stored the phone as E.164 ("+27…"), local
+            // ("0…"), or exactly what was typed — match all three. Coalesce so
+            // no candidate is null (a null EF comparison becomes "IS NULL" and
+            // would wrongly match phone-less accounts).
+            var local = E164ToLocal(e164) ?? e164;
+            var raw = string.IsNullOrWhiteSpace(rawPhone) ? e164 : rawPhone!.Trim();
+
+            var matches = await _userManager.Users
+                .Where(u => u.PhoneNumber != null &&
+                            (u.PhoneNumber == e164 || u.PhoneNumber == local || u.PhoneNumber == raw))
+                .ToListAsync();
+
+            // Only confirm when EXACTLY one account owns the number — never risk
+            // confirming the wrong user if a phone was somehow duplicated.
+            if (matches.Count != 1)
+            {
+                _logger.LogWarning(
+                    "MarkPhoneConfirmed: {Count} accounts matched the phone — skipping to avoid a wrong-user confirm.",
+                    matches.Count);
+                return;
+            }
+
+            var user = matches[0];
+            if (!user.PhoneNumberConfirmed)
+            {
+                user.PhoneNumberConfirmed = true;
+                await _userManager.UpdateAsync(user);
+                _logger.LogInformation(
+                    "Phone verification persisted (PhoneNumberConfirmed=true) for user {UserId}.", user.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Best-effort — must never break the verify-otp response.
+            _logger.LogError(ex, "MarkPhoneConfirmed failed.");
+        }
+    }
+
+    /// <summary>"+27XXXXXXXXX" → "0XXXXXXXXX" (SA local form), else null.</summary>
+    private static string? E164ToLocal(string e164)
+    {
+        if (string.IsNullOrWhiteSpace(e164)) return null;
+        if (e164.StartsWith("+27") && e164.Length > 3) return "0" + e164.Substring(3);
+        return null;
     }
 
     /// <inheritdoc />

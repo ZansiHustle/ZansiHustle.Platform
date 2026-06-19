@@ -7,6 +7,7 @@ using ZansiHustle.Application.Communications.Email.Interfaces;
 using ZansiHustle.Application.Communications.Otp.Interfaces;
 using ZansiHustle.Application.Communications.Otp.Models;
 using ZansiHustle.Application.Communications.Sms.Interfaces;
+using ZansiHustle.Application.Communications.TestMode;
 using ZansiHustle.Application.Communications.WhatsApp.Interfaces;
 using ZansiHustle.Shared.Enums.Communications;
 using ZansiHustle.Shared.Errors;
@@ -27,6 +28,7 @@ public sealed class OtpService : IOtpService
     private readonly ISmsService _smsService;
     private readonly IWhatsAppService _whatsAppService;
     private readonly IEmailService _emailService;
+    private readonly ICommunicationRecipientResolver _recipients;
     private readonly ILogger<OtpService> _logger;
 
     public OtpService(
@@ -36,6 +38,7 @@ public sealed class OtpService : IOtpService
         ISmsService smsService,
         IWhatsAppService whatsAppService,
         IEmailService emailService,
+        ICommunicationRecipientResolver recipients,
         ILogger<OtpService> logger)
     {
         _store = store;
@@ -44,6 +47,7 @@ public sealed class OtpService : IOtpService
         _smsService = smsService;
         _whatsAppService = whatsAppService;
         _emailService = emailService;
+        _recipients = recipients;
         _logger = logger;
     }
 
@@ -198,17 +202,21 @@ public sealed class OtpService : IOtpService
             case OtpChannel.Email:
             {
                 var displayName = string.IsNullOrWhiteSpace(request.DisplayName) ? "there" : request.DisplayName!;
-                // Pick purpose-specific email copy so the user sees
-                // language that matches why they're receiving the code
-                // (password reset vs generic verification). Falls back
-                // to the generic OTP template for anything we haven't
-                // authored dedicated copy for yet.
+                var ttlMinutes = (int)Math.Ceiling(_settings.TtlSeconds / 60.0);
+                // UAT/test override: redirect DELIVERY to the configured test
+                // email while keeping the session's real destination (used for
+                // hashing + verify) intact — so the override never breaks the
+                // code check. Default no-op (only overrides when
+                // CommunicationTestMode + OverrideSecurityOtpRecipients are on).
+                var deliverTo = _recipients.ResolveEmail(request.Destination, CommunicationPurpose.SecurityOtp)
+                                ?? request.Destination;
+                // Pick purpose-specific email copy so the user sees language that
+                // matches why they're receiving the code.
                 if (request.Purpose == OtpPurpose.PasswordReset)
-                {
-                    var ttlMinutes = (int)Math.Ceiling(_settings.TtlSeconds / 60.0);
-                    return await _emailService.SendPasswordResetOtpAsync(request.Destination, displayName, code, ttlMinutes, cancellationToken);
-                }
-                return await _emailService.SendOtpAsync(request.Destination, displayName, code, cancellationToken);
+                    return await _emailService.SendPasswordResetOtpAsync(deliverTo, displayName, code, ttlMinutes, cancellationToken);
+                if (request.Purpose == OtpPurpose.EmailVerification)
+                    return await _emailService.SendAccountVerificationOtpAsync(deliverTo, displayName, code, ttlMinutes, cancellationToken);
+                return await _emailService.SendOtpAsync(deliverTo, displayName, code, cancellationToken);
             }
             default:
                 return Result.Failure(ErrorCodes.BadRequest, "Unsupported OTP channel.");

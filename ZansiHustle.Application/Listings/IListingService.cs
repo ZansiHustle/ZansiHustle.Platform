@@ -28,5 +28,14 @@ namespace ZansiHustle.Application.Listings
         Task<Result<ListingDto>> CreateAsync(Guid ownerUserId, CreateListingRequestDto request);
         Task<Result<ListingDto>> UpdateAsync(Guid ownerUserId, Guid listingId, UpdateListingRequestDto request);
         Task<Result> DeleteAsync(Guid ownerUserId, Guid listingId);
+
+        /// <summary>
+        /// Attaches the caller's EXISTING listings to one of their shops
+        /// (sets ListingSource=ShopProfile + ShopProfileId). Idempotent;
+        /// enforces that each listing is owned by the caller and belongs to the
+        /// shop's merchant. Never duplicates or moves another seller's items.
+        /// </summary>
+        Task<Result<AssignShopItemsResultDto>> AssignToShopAsync(
+            Guid ownerUserId, Guid shopProfileId, IReadOnlyCollection<Guid> listingIds);
     }
 }

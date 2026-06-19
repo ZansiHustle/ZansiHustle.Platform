@@ -383,7 +383,23 @@ namespace ZansiHustle.Infrastructure.ZansiPulse
                 if (request?.CategoryIds is null || request.CategoryIds.Count == 0)
                     return Result<List<UserInterestScoreDto>>.Failure(ErrorCodes.BadRequest, "Select at least one category.");
 
-                var settings = await LoadSettingsAsync(ct);
+                // Settings are TUNABLES with safe coded defaults (GetDecimal
+                // falls back to ZansiPulseDefaults). Onboarding must NOT hard-fail
+                // if the settings table is unavailable/empty — this is the one DB
+                // dependency the working read path (GetMyInterests) doesn't have,
+                // so load it DEFENSIVELY. A missing/locked ZansiPulseSettings can
+                // never block a user from finishing onboarding.
+                Dictionary<string, string> settings;
+                try
+                {
+                    settings = await LoadSettingsAsync(ct);
+                }
+                catch (Exception sx)
+                {
+                    _logger.LogWarning(sx,
+                        "ZansiPulse onboarding: settings load failed — using defaults. UserId={UserId}", userId);
+                    settings = new Dictionary<string, string>();
+                }
                 var seed = GetDecimal(settings, ZansiPulseDefaults.OnboardingScoreKey, ZansiPulseDefaults.OnboardingInterestScore);
                 var max = GetDecimal(settings, ZansiPulseDefaults.MaxScoreKey, ZansiPulseDefaults.MaxInterestScore);
                 var now = DateTime.UtcNow;
@@ -403,7 +419,12 @@ namespace ZansiHustle.Infrastructure.ZansiPulse
                 var existing = await _db.ZansiPulseUserInterestScores
                     .Where(x => x.UserId == userId && x.SubCategoryId == null && validIds.Contains(x.CategoryId))
                     .ToListAsync(ct);
-                var byCategory = existing.ToDictionary(x => x.CategoryId);
+                // Dup-safe (group + first): a stray duplicate (UserId, CategoryId,
+                // null) row from behavioural nudges must never crash onboarding
+                // via a ToDictionary key collision.
+                var byCategory = existing
+                    .GroupBy(x => x.CategoryId)
+                    .ToDictionary(g => g.Key, g => g.First());
 
                 foreach (var categoryId in validIds)
                 {
@@ -436,7 +457,11 @@ namespace ZansiHustle.Infrastructure.ZansiPulse
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "ZansiPulse SaveOnboardingInterests failed. UserId={UserId}", userId);
+                // Log enough to pinpoint the cause in UAT without leaking data:
+                // exception type/message (via ex) + user + how many categories.
+                _logger.LogError(ex,
+                    "ZansiPulse SaveOnboardingInterests failed. UserId={UserId} CategoryCount={Count} ExceptionType={ExType}",
+                    userId, request?.CategoryIds?.Count ?? 0, ex.GetType().Name);
                 return Result<List<UserInterestScoreDto>>.Failure(ErrorCodes.Exception, "Could not save interests.");
             }
         }
@@ -1178,9 +1203,16 @@ namespace ZansiHustle.Infrastructure.ZansiPulse
 
         private async Task<Dictionary<string, string>> LoadSettingsAsync(CancellationToken ct)
         {
-            return await _db.ZansiPulseSettings.AsNoTracking()
+            // Build the dictionary manually (last-wins) rather than via
+            // ToDictionaryAsync: a unique index guards Key today, but a key
+            // collision must never be able to throw and 500 a user-facing flow.
+            var rows = await _db.ZansiPulseSettings.AsNoTracking()
                 .Where(s => s.IsActive)
-                .ToDictionaryAsync(s => s.Key, s => s.Value, ct);
+                .Select(s => new { s.Key, s.Value })
+                .ToListAsync(ct);
+            var dict = new Dictionary<string, string>(rows.Count);
+            foreach (var r in rows) dict[r.Key] = r.Value;
+            return dict;
         }
 
         private static decimal ResolveEventWeight(ZansiPulseEventType type, Dictionary<string, string> settings)

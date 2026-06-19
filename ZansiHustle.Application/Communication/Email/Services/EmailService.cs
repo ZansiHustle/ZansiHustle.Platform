@@ -98,6 +98,31 @@ public sealed class EmailService : IEmailService
         }
     }
 
+    public async Task<Result> SendAccountVerificationOtpAsync(string toEmail, string firstName, string otpCode, int ttlMinutes, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var template = AuthEmailTemplates.BuildAccountVerificationOtpEmail(firstName, otpCode, ttlMinutes);
+
+            var message = new EmailMessage
+            {
+                ToEmail = toEmail,
+                ToName = firstName,
+                Subject = template.Subject,
+                HtmlBody = template.HtmlBody,
+                PlainTextBody = template.PlainTextBody,
+                Sender = EmailSender.Accounts
+            };
+
+            return await _emailProvider.SendAsync(message, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to prepare account-verification OTP email for {Email}.", toEmail);
+            return Result.Failure(ErrorCodes.Exception, "Failed to send verification email.");
+        }
+    }
+
     public async Task<Result> SendPasswordResetOtpAsync(string toEmail, string firstName, string otpCode, int ttlMinutes, CancellationToken cancellationToken = default)
     {
         try

@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using ZansiHustle.Application.Common.Interfaces.Shared;
 using ZansiHustle.Application.Common.Paging;
 using ZansiHustle.Application.Listings.Dtos;
 using ZansiHustle.Application.Media.Storage;
@@ -30,6 +31,7 @@ namespace ZansiHustle.Application.Listings
         private readonly ISellerCategoryRepository _sellerCategoryRepository;
         private readonly IShopProfileRepository _shopProfileRepository;
         private readonly IStorageUrlResolver _storageUrlResolver;
+        private readonly ICurrentUserService _currentUser;
         private readonly ILogger<ListingService> _logger;
 
         public ListingService(
@@ -38,6 +40,7 @@ namespace ZansiHustle.Application.Listings
             ISellerCategoryRepository sellerCategoryRepository,
             IShopProfileRepository shopProfileRepository,
             IStorageUrlResolver storageUrlResolver,
+            ICurrentUserService currentUser,
             ILogger<ListingService> logger)
         {
             _listingRepository = listingRepository;
@@ -45,7 +48,87 @@ namespace ZansiHustle.Application.Listings
             _sellerCategoryRepository = sellerCategoryRepository;
             _shopProfileRepository = shopProfileRepository;
             _storageUrlResolver = storageUrlResolver;
+            _currentUser = currentUser;
             _logger = logger;
+        }
+
+        // True when the signed-in user owns this listing (via its merchant's
+        // owner). Authoritative ownership signal for the mobile app to mark
+        // "Your listing" + gate buy/book/review/report on a user's OWN items.
+        // Safe for anonymous callers (UserId null → false). Relies on the
+        // listing's Merchant navigation already being loaded by the queries
+        // (it is — MerchantName/Slug are mapped from it).
+        private bool ComputeIsOwner(Listing listing)
+        {
+            var me = _currentUser.UserId;
+            return me is Guid uid
+                && listing.Merchant?.OwnerUserId is Guid ownerId
+                && ownerId == uid;
+        }
+
+        /// <inheritdoc />
+        public async Task<Result<AssignShopItemsResultDto>> AssignToShopAsync(
+            Guid ownerUserId, Guid shopProfileId, IReadOnlyCollection<Guid> listingIds)
+        {
+            try
+            {
+                if (ownerUserId == Guid.Empty)
+                    return Result<AssignShopItemsResultDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found.");
+
+                var shop = await _shopProfileRepository.GetByIdAsync(shopProfileId);
+                if (shop is null)
+                    return Result<AssignShopItemsResultDto>.Failure(ErrorCodes.NotFound, "The selected shop does not exist.");
+
+                // Ownership: the shop's merchant must be owned by the caller.
+                var merchant = await _merchantRepository.GetByIdAsync(shop.MerchantId);
+                if (merchant is null || merchant.OwnerUserId != ownerUserId)
+                    return Result<AssignShopItemsResultDto>.Failure(ErrorCodes.Forbidden, "You can only manage your own shop.");
+
+                if (shop.Status == ShopProfileStatus.Suspended)
+                    return Result<AssignShopItemsResultDto>.Failure(ErrorCodes.Forbidden, "Cannot add items to a suspended shop.");
+
+                var ids = (listingIds ?? Array.Empty<Guid>())
+                    .Where(g => g != Guid.Empty).Distinct().ToList();
+                if (ids.Count == 0)
+                    return Result<AssignShopItemsResultDto>.Failure(ErrorCodes.BadRequest, "Select at least one item to add.");
+
+                var result = new AssignShopItemsResultDto();
+                foreach (var id in ids)
+                {
+                    var listing = await _listingRepository.GetByIdAsync(id);
+                    // Skip silently anything that isn't the caller's own item under
+                    // this shop's merchant — never touch another seller's listing.
+                    if (listing is null
+                        || listing.Merchant?.OwnerUserId != ownerUserId
+                        || listing.MerchantId != shop.MerchantId)
+                    {
+                        result.Skipped++;
+                        continue;
+                    }
+
+                    if (listing.ListingSource == ListingSource.ShopProfile && listing.ShopProfileId == shopProfileId)
+                    {
+                        result.AlreadyInShop++; // idempotent — no duplicate
+                        continue;
+                    }
+
+                    listing.ListingSource = ListingSource.ShopProfile;
+                    listing.ShopProfileId = shopProfileId;
+                    listing.UpdatedAtUtc = DateTime.UtcNow;
+                    _listingRepository.Update(listing);
+                    result.Attached++;
+                }
+
+                if (result.Attached > 0)
+                    await _listingRepository.SaveChangesAsync();
+
+                return Result<AssignShopItemsResultDto>.Success(result, "Shop items updated.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "AssignToShop failed. shop={ShopId} user={UserId}", shopProfileId, ownerUserId);
+                return Result<AssignShopItemsResultDto>.Failure(ErrorCodes.Exception, "Could not update shop items.");
+            }
         }
 
         /// <inheritdoc />
@@ -1255,6 +1338,7 @@ namespace ZansiHustle.Application.Listings
                 MerchantName = listing.Merchant?.Name,
                 MerchantSlug = listing.Merchant?.Slug,
                 MerchantLogoUrl = listing.Merchant?.LogoUrl,
+                IsOwner = ComputeIsOwner(listing),
                 Title = listing.Title,
                 Description = listing.Description,
                 Price = listing.Price,
@@ -1313,6 +1397,7 @@ namespace ZansiHustle.Application.Listings
                 MerchantId = listing.MerchantId,
                 MerchantName = listing.Merchant?.Name,
                 MerchantSlug = listing.Merchant?.Slug,
+                IsOwner = ComputeIsOwner(listing),
                 Title = listing.Title,
                 Price = listing.Price,
                 Currency = listing.Currency,

@@ -36,6 +36,10 @@ namespace ZansiHustle.Application.Listings.Dtos
         public string? MerchantName { get; set; }
         public string? MerchantSlug { get; set; }
 
+        /// <summary>True when the signed-in user owns this listing — drives the
+        /// "Your listing" marker on feed cards. False for anonymous callers.</summary>
+        public bool IsOwner { get; set; }
+
         public string Title { get; set; } = string.Empty;
         public decimal Price { get; set; }
         public string Currency { get; set; } = "ZAR";

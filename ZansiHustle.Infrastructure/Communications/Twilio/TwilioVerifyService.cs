@@ -5,6 +5,7 @@ using Twilio.Exceptions;
 using Twilio.Rest.Verify.V2.Service;
 using ZansiHustle.Application.Auth;
 using ZansiHustle.Application.Communications.PhoneVerification;
+using ZansiHustle.Application.Communications.TestMode;
 using ZansiHustle.Shared.Enums.Communications;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
@@ -46,6 +47,7 @@ public sealed class TwilioVerifyService : IPhoneVerificationService
     private readonly ITwilioClientProvider _clientProvider;
     private readonly TwilioSettings _settings;
     private readonly AuthTestModeSettings _testMode;
+    private readonly ICommunicationRecipientResolver _recipients;
     private readonly IMemoryCache _cache;
     private readonly ILogger<TwilioVerifyService> _logger;
 
@@ -53,15 +55,30 @@ public sealed class TwilioVerifyService : IPhoneVerificationService
         ITwilioClientProvider clientProvider,
         IOptions<TwilioSettings> options,
         IOptions<AuthTestModeSettings> testModeOptions,
+        ICommunicationRecipientResolver recipients,
         IMemoryCache cache,
         ILogger<TwilioVerifyService> logger)
     {
         _clientProvider = clientProvider;
         _settings = options.Value ?? new TwilioSettings();
         _testMode = testModeOptions.Value ?? new AuthTestModeSettings();
+        _recipients = recipients;
         _cache = cache;
         _logger = logger;
     }
+
+    /// <summary>
+    /// UAT/test override for security-OTP delivery. When CommunicationTestMode
+    /// is enabled AND OverrideSecurityOtpRecipients is true, the resolver returns
+    /// the configured OverrideSmsTo number; otherwise it returns the real number
+    /// unchanged (default-safe — production sends to the real number exactly as
+    /// before). We apply the SAME mapping on send AND verify so Twilio Verify's
+    /// per-destination code always lines up. The caller/mobile keeps working with
+    /// the user's REAL number — only the Twilio "to" is redirected. The resolver
+    /// logs (masked) when an override is applied; the OTP code is never logged.
+    /// </summary>
+    private string ResolveOtpDestination(string realE164)
+        => _recipients.ResolveSms(realE164, CommunicationPurpose.SecurityOtp) ?? realE164;
 
     public async Task<Result<SendOtpResult>> SendOtpAsync(
         string phoneNumber,
@@ -109,9 +126,13 @@ public sealed class TwilioVerifyService : IPhoneVerificationService
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            // Apply the security-OTP test override (default no-op). The mobile
+            // still verifies against the real number — we redirect both sides.
+            var deliverTo = ResolveOtpDestination(normalized);
+
             var options = new CreateVerificationOptions(
                 pathServiceSid: _settings.Verify.ServiceSid,
-                to: normalized,
+                to: deliverTo,
                 channel: twilioChannel);
 
             var verification = await VerificationResource.CreateAsync(options, client);
@@ -214,9 +235,13 @@ public sealed class TwilioVerifyService : IPhoneVerificationService
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            // Same security-OTP override mapping as send, so the code we issued
+            // to the override number verifies correctly (default no-op).
+            var checkTo = ResolveOtpDestination(normalized);
+
             var options = new CreateVerificationCheckOptions(_settings.Verify.ServiceSid)
             {
-                To = normalized,
+                To = checkTo,
                 Code = code.Trim()
             };
 

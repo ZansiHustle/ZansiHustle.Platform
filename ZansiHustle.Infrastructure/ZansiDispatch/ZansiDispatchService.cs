@@ -1796,6 +1796,15 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                 var note = $"Requested pickup {request.NewPickupDateUtc:yyyy-MM-dd}.{(string.IsNullOrWhiteSpace(request.Reason) ? "" : $" {request.Reason!.Trim()}")}";
                 LogAction(s, ZansiDispatchActionType.PickupRescheduleRequested, actor, actorUserId, s.Status, s.Status, null, null, request.Reason, note, null, null);
 
+                // Persist the seller's NEW requested pickup date so it surfaces in
+                // seller tracking and the ZansiDispatch drawer as "requested pickup".
+                // This is the seller's REQUEST only — the provider's
+                // ExpectedCollectionDate stays the source of truth and is NOT touched
+                // here, so the seller sees both dates (and the "differs from courier
+                // collection" note when they disagree). Never a faked provider date.
+                s.SellerRequestedPickupDate = request.NewPickupDateUtc.Date;
+                s.UpdatedAt = DateTime.UtcNow;
+
                 var provider = ResolveShipmentProvider(s.ProviderType);
                 var trackingRef = s.TrackingNumber ?? s.ShortTrackingReference;
                 if (provider is not null && provider.IsEnabled && provider.SupportsPickupReschedule && !string.IsNullOrWhiteSpace(trackingRef))
@@ -1815,9 +1824,11 @@ namespace ZansiHustle.Infrastructure.ZansiDispatch
                     return Result<ShipmentDto>.Failure(ErrorCodes.Exception, "The courier couldn't reschedule pickup automatically. Our team has been alerted.");
                 }
 
-                // Provider can't reschedule → leave an ops task (request is logged above).
+                // Provider can't reschedule live → this is an ops request (logged
+                // above). We DON'T pretend it went to the courier — ZansiDispatch
+                // reviews it and confirms the new collection date.
                 await _db.SaveChangesAsync(ct);
-                return Result<ShipmentDto>.Success(MapShipment(s), "Pickup reschedule requested. Pending courier/ops confirmation.");
+                return Result<ShipmentDto>.Success(MapShipment(s), "Reschedule request sent to ZansiDispatch. We’ll confirm your new collection date.");
             }
             catch (Exception ex)
             {

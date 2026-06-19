@@ -37,6 +37,11 @@ namespace ZansiHustle.Application.Listings.Dtos
         public string? MerchantSlug { get; set; }
         public string? MerchantLogoUrl { get; set; }
 
+        /// <summary>True when the signed-in user owns this listing (its merchant's
+        /// owner). The app uses this to mark "Your listing" and disable buy/book/
+        /// review/report on the owner's own item. False for anonymous callers.</summary>
+        public bool IsOwner { get; set; }
+
         public string Title { get; set; } = string.Empty;
         public string? Description { get; set; }
         public decimal Price { get; set; }

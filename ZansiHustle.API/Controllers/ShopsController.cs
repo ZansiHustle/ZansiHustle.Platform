@@ -4,9 +4,13 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using ZansiHustle.Application.Common.Interfaces.Shared;
 using ZansiHustle.Application.Common.Paging;
+using ZansiHustle.Application.Listings;
+using ZansiHustle.Application.Listings.Dtos;
 using ZansiHustle.Application.Shops;
 using ZansiHustle.Application.Shops.Dtos;
 using ZansiHustle.Shared.Enums.Shops;
+using System.Collections.Generic;
+using System.Linq;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
 
@@ -27,12 +31,39 @@ namespace ZansiHustle.API.Controllers
     public class ShopsController : BaseController
     {
         private readonly IShopProfileService _shopService;
+        private readonly IListingService _listingService;
         private readonly ICurrentUserService _currentUserService;
 
-        public ShopsController(IShopProfileService shopService, ICurrentUserService currentUserService)
+        public ShopsController(
+            IShopProfileService shopService,
+            IListingService listingService,
+            ICurrentUserService currentUserService)
         {
             _shopService = shopService;
+            _listingService = listingService;
             _currentUserService = currentUserService;
+        }
+
+        /// <summary>
+        /// Attaches the caller's EXISTING listings to their shop storefront.
+        /// Body: { productIds: [], serviceIds: [] }. Idempotent + ownership-
+        /// enforced in the service (only the caller's own items, only the
+        /// shop's merchant, never another seller's listing, no duplicates).
+        /// </summary>
+        [HttpPost("{shopId:guid}/items")]
+        [ProducesResponseType(typeof(Result<AssignShopItemsResultDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> AddItems(Guid shopId, [FromBody] AssignShopItemsRequestDto request)
+        {
+            var userId = _currentUserService.UserId;
+            if (!userId.HasValue)
+                return ToActionResult(Result<AssignShopItemsResultDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            var ids = new List<Guid>();
+            if (request?.ProductIds is { Count: > 0 }) ids.AddRange(request.ProductIds);
+            if (request?.ServiceIds is { Count: > 0 }) ids.AddRange(request.ServiceIds);
+
+            var result = await _listingService.AssignToShopAsync(userId.Value, shopId, ids.Distinct().ToList());
+            return ToActionResult(result);
         }
 
         // ─── Owner ──────────────────────────────────────────────────

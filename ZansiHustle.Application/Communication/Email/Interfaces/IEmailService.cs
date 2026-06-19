@@ -29,6 +29,12 @@ public interface IEmailService
     Task<Result> SendPasswordResetOtpAsync(string toEmail, string firstName, string otpCode, int ttlMinutes, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Sends an ACCOUNT-VERIFICATION OTP email — copy makes clear the code is
+    /// for verifying the user's ZansiHustle account (not a password reset).
+    /// </summary>
+    Task<Result> SendAccountVerificationOtpAsync(string toEmail, string firstName, string otpCode, int ttlMinutes, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Sends a forgot-password email containing a reset link. Retained for
     /// any legacy link-based caller; the current product flow uses OTP
     /// via <see cref="SendPasswordResetOtpAsync"/>.

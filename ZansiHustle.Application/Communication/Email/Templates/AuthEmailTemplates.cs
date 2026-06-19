@@ -134,6 +134,48 @@ public static class AuthEmailTemplates
         return (subject, htmlBody, plainText);
     }
 
+    public static (string Subject, string HtmlBody, string PlainTextBody) BuildAccountVerificationOtpEmail(string firstName, string otpCode, int ttlMinutes)
+    {
+        var safeName = Safe(firstName);
+        var safeOtp = Safe(otpCode);
+        var expiresIn = ttlMinutes <= 0 ? "a few minutes" : ttlMinutes == 1 ? "1 minute" : $"{ttlMinutes} minutes";
+
+        var subject = "Verify your ZansiHustle account";
+        var htmlBody = Wrap(
+            firstName: safeName,
+            title: "Verify your account",
+            subtitle: "Confirm your ZansiHustle account",
+            body: $@"
+                <p>Use the code below to verify your ZansiHustle account and finish signing in.</p>
+
+                <div style='margin:28px 0; text-align:center;'>
+                    <div style='display:inline-block; letter-spacing:8px; font-size:30px; font-weight:800; color:{Dark}; background:{Surface}; border:1px solid {Border}; padding:16px 24px; border-radius:12px;'>
+                        {WebUtility.HtmlEncode(safeOtp)}
+                    </div>
+                </div>
+
+                <p>This code expires in {expiresIn}. Do not share it with anyone.</p>
+                <div style='margin-top:20px; padding:14px 16px; background:{Surface}; border:1px solid {Border}; border-left:4px solid {Warning}; border-radius:10px; color:{Text};'>
+                    If you did not create a ZansiHustle account, you can safely ignore this email.
+                </div>",
+            footerTitle: "ZansiHustle Security Team");
+
+        var plainText = $"""
+            Hi {safeName},
+
+            Verify your ZansiHustle account with this code:
+
+            {safeOtp}
+
+            This code expires in {expiresIn}. Do not share it with anyone.
+            If you did not create a ZansiHustle account, you can ignore this email.
+
+            ZansiHustle Security Team
+            """;
+
+        return (subject, htmlBody, plainText);
+    }
+
     public static (string Subject, string HtmlBody, string PlainTextBody) BuildPasswordResetOtpEmail(string firstName, string otpCode, int ttlMinutes)
     {
         var safeName = Safe(firstName);

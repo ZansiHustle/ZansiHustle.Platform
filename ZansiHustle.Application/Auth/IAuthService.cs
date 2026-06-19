@@ -87,4 +87,27 @@ public interface IAuthService
     /// Logs a user out by revoking their active refresh tokens.
     /// </summary>
     Task<Result> LogoutAsync(Guid userId);
+
+    /// <summary>
+    /// Issues an ACCOUNT-VERIFICATION OTP to the user's email (purpose
+    /// EmailVerification, distinct from password reset). Enumeration-safe — the
+    /// response shape is identical whether or not the email is on file.
+    /// </summary>
+    Task<Result<EmailOtpSessionDto>> RequestAccountEmailOtpAsync(string email);
+
+    /// <summary>
+    /// Verifies an account-verification email OTP. On success sets
+    /// <c>EmailConfirmed = true</c> for the session's user (never the wrong
+    /// account — the user id is bound to the OTP session) and returns verified.
+    /// </summary>
+    Task<Result<VerifyEmailOtpResponseDto>> VerifyAccountEmailOtpAsync(string sessionId, string code);
+
+    /// <summary>
+    /// Persists phone verification (sets <c>PhoneNumberConfirmed = true</c>) for
+    /// the user that owns the given phone number, after a successful OTP check.
+    /// Matches on E.164 / local / raw forms and only updates when EXACTLY one
+    /// account matches (never confirms the wrong user). Best-effort — never
+    /// throws, so it can't break the verify-otp response.
+    /// </summary>
+    Task MarkPhoneConfirmedAsync(string rawPhone, string? normalizedPhone);
 }
