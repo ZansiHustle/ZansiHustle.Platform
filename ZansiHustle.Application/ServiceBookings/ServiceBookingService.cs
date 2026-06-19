@@ -623,6 +623,11 @@ namespace ZansiHustle.Application.ServiceBookings
                 ListingId = b.ListingId,
                 MerchantId = b.MerchantId,
                 ServiceName = b.Listing?.Title ?? "Service",
+                // First real listing image (already loaded with b.Listing); null
+                // when the service has no photos — client falls back to an icon.
+                ServiceImageUrl = b.Listing?.Images != null && b.Listing.Images.Count > 0
+                    ? b.Listing.Images[0]
+                    : null,
                 Status = NormaliseStatus(b.Status),
                 PaymentStatus = b.Order?.PaymentStatus.ToString() ?? string.Empty,
                 Mode = b.Mode.ToString(),
