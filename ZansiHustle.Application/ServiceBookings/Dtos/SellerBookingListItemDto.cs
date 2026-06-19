@@ -10,6 +10,10 @@ namespace ZansiHustle.Application.ServiceBookings.Dtos
         public Guid ListingId { get; set; }
 
         public string ServiceName { get; set; } = string.Empty;
+        /// <summary>First listing image URL for the booked service, if any. Null when
+        /// the listing has no images — the client falls back to an icon tile (no
+        /// placeholder is invented server-side).</summary>
+        public string? ServiceImageUrl { get; set; }
         /// <summary>Normalised status name (legacy Confirmed → "Requested").</summary>
         public string Status { get; set; } = string.Empty;
         public string PaymentStatus { get; set; } = string.Empty;
