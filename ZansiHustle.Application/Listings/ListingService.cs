@@ -705,10 +705,18 @@ namespace ZansiHustle.Application.Listings
                 }
                 catch (DbUpdateException ex)
                 {
-                    _logger.LogError(ex, "Database error updating listing {ListingId}.", listingId);
+                    // Surface the underlying DB reason (e.g. a CHECK/length/NOT-NULL
+                    // violation) instead of a blind generic message — previously this
+                    // swallowed the cause, so a save failure was an opaque 500 with no
+                    // way to tell what the DB rejected. The base exception message is
+                    // the SQL provider's detail. Logged AND returned so the client can
+                    // show the seller (and us) exactly what failed.
+                    var detail = ex.GetBaseException().Message;
+                    _logger.LogError(ex,
+                        "Database error updating listing {ListingId}. Detail={Detail}", listingId, detail);
                     return Result<ListingDto>.Failure(
                         ErrorCodes.Exception,
-                        "Could not save your listing. Please try again.");
+                        $"Could not save your listing: {detail}");
                 }
 
                 if (!saved)

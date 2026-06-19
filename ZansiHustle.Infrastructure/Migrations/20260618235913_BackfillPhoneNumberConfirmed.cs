@@ -18,7 +18,7 @@ namespace ZansiHustle.Infrastructure.Migrations
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.Sql(
-                "UPDATE [AspNetUsers] SET [PhoneNumberConfirmed] = 1 WHERE [PhoneNumberConfirmed] = 0;");
+                "UPDATE [Users] SET [PhoneNumberConfirmed] = 1 WHERE [PhoneNumberConfirmed] = 0;");
         }
 
         /// <inheritdoc />
