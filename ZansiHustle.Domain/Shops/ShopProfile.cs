@@ -46,6 +46,13 @@ namespace ZansiHustle.Domain.Shops
         public string? LogoUrl { get; set; }
         public string? BannerUrl { get; set; }
 
+        /// <summary>
+        /// Curated storefront theme preset key (see <see cref="ShopThemePresets"/>).
+        /// Drives the Shop Profile page's visual styling on the client only.
+        /// Defaults to <c>zansi_default</c>; existing shops are backfilled to it.
+        /// </summary>
+        public string ThemePresetKey { get; set; } = ShopThemePresets.Default;
+
         // Shop-specific contact, independent of merchant contact —
         // a seller may want a different public-facing contact for
         // their shop than the one tied to their KYC/bank record.

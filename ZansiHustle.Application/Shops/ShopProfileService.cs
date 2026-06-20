@@ -118,6 +118,11 @@ namespace ZansiHustle.Application.Shops
                 if (!categoryCheck.IsSuccess)
                     return Result<ShopProfileDto>.Failure(categoryCheck.Code, categoryCheck.Message);
 
+                // Theme preset: null/empty → default; unknown → 400 (never save junk).
+                var themeKey = ShopThemePresets.Normalize(request.ThemePresetKey);
+                if (themeKey is null)
+                    return Result<ShopProfileDto>.Failure(ErrorCodes.BadRequest, "Selected shop theme is not recognised.");
+
                 var now = DateTime.UtcNow;
                 var shop = new ShopProfile
                 {
@@ -136,6 +141,7 @@ namespace ZansiHustle.Application.Shops
                     Province = Trim(request.Province),
                     City = Trim(request.City),
                     AddressLine1 = Trim(request.AddressLine1),
+                    ThemePresetKey = themeKey,
                     // Early-access default: skip admin review, mark
                     // Active immediately, tag the subscription state
                     // as EarlyAccess so reporting can count opt-ins
@@ -203,6 +209,14 @@ namespace ZansiHustle.Application.Shops
                 if (request.Province != null) shop.Province = Trim(request.Province);
                 if (request.City != null) shop.City = Trim(request.City);
                 if (request.AddressLine1 != null) shop.AddressLine1 = Trim(request.AddressLine1);
+                // Theme: only when supplied. Unknown value → 400; empty → default.
+                if (request.ThemePresetKey != null)
+                {
+                    var themeKey = ShopThemePresets.Normalize(request.ThemePresetKey);
+                    if (themeKey is null)
+                        return Result<ShopProfileDto>.Failure(ErrorCodes.BadRequest, "Selected shop theme is not recognised.");
+                    shop.ThemePresetKey = themeKey;
+                }
                 shop.UpdatedAtUtc = DateTime.UtcNow;
 
                 _shopRepository.Update(shop);
@@ -395,6 +409,7 @@ namespace ZansiHustle.Application.Shops
                 Description = s.Description,
                 LogoUrl = s.LogoUrl,
                 BannerUrl = s.BannerUrl,
+                ThemePresetKey = s.ThemePresetKey,
                 ContactEmail = s.ContactEmail,
                 ContactPhoneNumber = s.ContactPhoneNumber,
                 WhatsAppNumber = s.WhatsAppNumber,
@@ -446,6 +461,7 @@ namespace ZansiHustle.Application.Shops
                 Description = s.Description,
                 LogoUrl = s.LogoUrl,
                 BannerUrl = s.BannerUrl,
+                ThemePresetKey = s.ThemePresetKey,
                 SellerCategoryName = categoryName,
                 SellerSubcategoryName = subcategoryName,
                 Province = s.Province,

@@ -1,4 +1,5 @@
 using System;
+using ZansiHustle.Domain.Shops;
 using ZansiHustle.Shared.Enums.Shops;
 
 namespace ZansiHustle.Application.Shops.Dtos
@@ -18,6 +19,8 @@ namespace ZansiHustle.Application.Shops.Dtos
         public string? Description { get; set; }
         public string? LogoUrl { get; set; }
         public string? BannerUrl { get; set; }
+        /// <summary>Curated storefront theme preset key (defaults to zansi_default).</summary>
+        public string ThemePresetKey { get; set; } = ShopThemePresets.Default;
         public string? ContactEmail { get; set; }
         public string? ContactPhoneNumber { get; set; }
         public string? WhatsAppNumber { get; set; }

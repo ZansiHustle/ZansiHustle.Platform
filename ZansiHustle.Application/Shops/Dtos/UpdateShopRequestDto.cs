@@ -21,6 +21,9 @@ namespace ZansiHustle.Application.Shops.Dtos
         public string? Province { get; set; }
         public string? City { get; set; }
         public string? AddressLine1 { get; set; }
+        /// <summary>Curated storefront theme preset key. Omit to keep the current
+        /// value; an unknown value is rejected with a 400.</summary>
+        public string? ThemePresetKey { get; set; }
     }
 
     /// <summary>

@@ -25,6 +25,14 @@ namespace ZansiHustle.Infrastructure.Persistence.Shops
             entity.Property(x => x.LogoUrl).HasMaxLength(500);
             entity.Property(x => x.BannerUrl).HasMaxLength(500);
 
+            // Storefront theme preset key. Required with a DB-level default so
+            // existing rows backfill to zansi_default on migration and new rows
+            // without an explicit value are still valid.
+            entity.Property(x => x.ThemePresetKey)
+                .IsRequired()
+                .HasMaxLength(40)
+                .HasDefaultValue(ShopThemePresets.Default);
+
             entity.Property(x => x.ContactEmail).HasMaxLength(200);
             entity.Property(x => x.ContactPhoneNumber).HasMaxLength(40);
             entity.Property(x => x.WhatsAppNumber).HasMaxLength(40);
