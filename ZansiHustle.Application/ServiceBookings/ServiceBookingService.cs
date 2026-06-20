@@ -628,6 +628,9 @@ namespace ZansiHustle.Application.ServiceBookings
                 ServiceImageUrl = b.Listing?.Images != null && b.Listing.Images.Count > 0
                     ? b.Listing.Images[0]
                     : null,
+                // Provider public identity (trust) — shown to the customer.
+                ProviderName = b.Merchant?.Name,
+                ProviderProfileImageUrl = b.Merchant?.ProfileImageUrl,
                 Status = NormaliseStatus(b.Status),
                 PaymentStatus = b.Order?.PaymentStatus.ToString() ?? string.Empty,
                 Mode = b.Mode.ToString(),

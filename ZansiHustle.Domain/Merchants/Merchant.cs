@@ -26,6 +26,17 @@ namespace ZansiHustle.Domain.Merchants
         public MerchantStatus Status { get; set; } = MerchantStatus.Pending;
         public MerchantKycStatus KycStatus { get; set; } = MerchantKycStatus.Pending;
 
+        // ── Seller-account buyer-facing visibility ──────────────────
+        // Global pause for SELLER-ACCOUNT listings (ListingSource.SellerAccount).
+        // Separate from Status (approval) and from a Shop's own visibility — a
+        // paused seller account hides only its seller-account listings from
+        // public discovery; shop-attached items follow the shop's visibility.
+        // Defaults to Visible; existing rows are backfilled to Visible.
+        public SellerVisibilityStatus SellerVisibility { get; set; } = SellerVisibilityStatus.Visible;
+        public DateTime? SellerPausedAtUtc { get; set; }
+        public string? SellerPauseReason { get; set; }
+        public DateTime? SellerVisibilityUpdatedAtUtc { get; set; }
+
         public bool IsPayoutEligible { get; set; }
 
         public Guid? OwnerUserId { get; set; }
@@ -69,6 +80,22 @@ namespace ZansiHustle.Domain.Merchants
         public string? WebsiteUrl { get; set; }
         public string? LogoUrl { get; set; }
         public string? BannerUrl { get; set; }
+
+        /// <summary>
+        /// Public seller/provider profile picture URL (the face shown to
+        /// buyers / service customers). Denormalised like LogoUrl/BannerUrl;
+        /// set from a MerchantProfileImage upload (public bucket, permanent
+        /// URL). Separate from the private KYC selfie (Portrait MediaAsset).
+        /// </summary>
+        public string? ProfileImageUrl { get; set; }
+
+        /// <summary>
+        /// Admin's reason when the seller application is rejected. Surfaced to
+        /// the seller so they know what to fix before resubmitting. Cleared on
+        /// approve / KYC-verify so a re-approved account never shows a stale
+        /// reason. Required (non-empty) when an admin rejects.
+        /// </summary>
+        public string? KycRejectionReason { get; set; }
 
         // ── Bank / payout details ───────────────────────────────────
         // Used by the seller portal's /merchant/bank page. A change to any

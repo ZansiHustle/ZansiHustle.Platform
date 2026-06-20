@@ -79,6 +79,16 @@ namespace ZansiHustle.Domain.Shops
         public ShopProfileStatus Status { get; set; } = ShopProfileStatus.Draft;
         public ShopSubscriptionStatus SubscriptionStatus { get; set; } = ShopSubscriptionStatus.None;
 
+        // ── Buyer-facing visibility (seller pause / hide all shop items) ──
+        // Distinct from Status (lifecycle): a lifecycle-Active shop can be
+        // seller-Paused. When not Visible the shop + its attached listings are
+        // hidden from public discovery; the owner can still preview/manage it.
+        // Defaults to Visible; existing rows are backfilled to Visible.
+        public ShopVisibilityStatus VisibilityStatus { get; set; } = ShopVisibilityStatus.Visible;
+        public DateTime? VisibilityPausedAtUtc { get; set; }
+        public string? VisibilityPauseReason { get; set; }
+        public DateTime? VisibilityUpdatedAtUtc { get; set; }
+
         public DateTime? EarlyAccessGrantedAtUtc { get; set; }
         public DateTime? EarlyAccessUntilUtc { get; set; }
         public DateTime? SubscriptionStartedAtUtc { get; set; }

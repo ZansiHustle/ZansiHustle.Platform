@@ -151,7 +151,27 @@ namespace ZansiHustle.API.Controllers
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public async Task<IActionResult> GetPublicById(Guid id)
         {
-            var result = await _shopService.GetPublicByIdAsync(id);
+            // Pass the caller (null when anonymous) so the OWNER can still load
+            // their own paused/hidden shop to preview it; buyers get a 404.
+            var result = await _shopService.GetPublicByIdAsync(id, _currentUserService.UserId);
+            return ToActionResult(result);
+        }
+
+        /// <summary>
+        /// Owner: pause / resume this shop's buyer-facing visibility. Body:
+        /// { isPaused, reason? }. Pausing hides the shop + its attached listings
+        /// from buyers without deleting anything. Self-resume is blocked when the
+        /// shop is admin-held (UnderReview / Blocked).
+        /// </summary>
+        [HttpPut("mine/{shopId:guid}/visibility")]
+        [ProducesResponseType(typeof(Result<ShopProfileDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> UpdateMyVisibility(Guid shopId, [FromBody] ShopVisibilityRequestDto request)
+        {
+            var userId = _currentUserService.UserId;
+            if (!userId.HasValue)
+                return ToActionResult(Result<ShopProfileDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            var result = await _shopService.UpdateVisibilityAsync(userId.Value, shopId, request?.IsPaused ?? false, request?.Reason);
             return ToActionResult(result);
         }
 

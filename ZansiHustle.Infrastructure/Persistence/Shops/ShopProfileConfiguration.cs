@@ -51,6 +51,16 @@ namespace ZansiHustle.Infrastructure.Persistence.Shops
             entity.Property(x => x.Status).IsRequired();
             entity.Property(x => x.SubscriptionStatus).IsRequired();
 
+            // Buyer-facing visibility (seller pause / hide all shop items).
+            // Required int with a DB-level default so existing rows backfill to
+            // Visible (1) on migration.
+            entity.Property(x => x.VisibilityStatus)
+                .HasConversion<int>()
+                .IsRequired()
+                .HasDefaultValue(ZansiHustle.Shared.Enums.Shops.ShopVisibilityStatus.Visible);
+            entity.Property(x => x.VisibilityPauseReason).HasMaxLength(500);
+            entity.HasIndex(x => x.VisibilityStatus);
+
             entity.Property(x => x.BillingProvider).HasMaxLength(120);
             entity.Property(x => x.BillingReference).HasMaxLength(200);
             entity.Property(x => x.SuspensionReason).HasMaxLength(500);

@@ -46,6 +46,13 @@ namespace ZansiHustle.Application.Merchants.Dtos
         public string? WebsiteUrl { get; set; }
         public string? LogoUrl { get; set; }
         public string? BannerUrl { get; set; }
+        /// <summary>Public seller/provider profile picture URL.</summary>
+        public string? ProfileImageUrl { get; set; }
+        /// <summary>
+        /// Admin's reason when the application was rejected (owner/admin only —
+        /// NOT on the public DTO). Lets the seller see what to fix and resubmit.
+        /// </summary>
+        public string? KycRejectionReason { get; set; }
 
         /// <summary>Bank / payout details.</summary>
         public string? BankName { get; set; }

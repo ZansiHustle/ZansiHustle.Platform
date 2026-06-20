@@ -127,6 +127,14 @@ namespace ZansiHustle.Infrastructure.Persistence.Engagement
                     on like.ListingId equals listing.Id
                 where like.UserId == userId
                       && listing.Status == ListingStatus.Active
+                      // Hide likes whose seller account or shop is paused — same
+                      // independent-pause contract as the buyer feed.
+                      && ((listing.ListingSource != ListingSource.ShopProfile
+                              && listing.Merchant != null
+                              && listing.Merchant.SellerVisibility == ZansiHustle.Shared.Enums.Merchants.SellerVisibilityStatus.Visible)
+                          || (listing.ListingSource == ListingSource.ShopProfile
+                              && listing.ShopProfile != null
+                              && listing.ShopProfile.VisibilityStatus == ZansiHustle.Shared.Enums.Shops.ShopVisibilityStatus.Visible))
                 orderby like.CreatedAtUtc descending
                 select listing;
 

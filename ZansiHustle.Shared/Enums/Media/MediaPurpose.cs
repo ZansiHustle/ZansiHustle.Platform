@@ -30,6 +30,14 @@ namespace ZansiHustle.Shared.Enums.Media
         ShopLogo = 20,
         ShopBanner = 21,
         UserAvatar = 22,
+        /// <summary>
+        /// Public seller/provider profile picture (the face buyers see and
+        /// who may arrive for a service booking). PUBLIC + no review gate —
+        /// it goes live immediately like a logo/banner; an admin can still
+        /// reject it later. DISTINCT from <see cref="Portrait"/>, which is
+        /// the private KYC selfie used only for verification.
+        /// </summary>
+        MerchantProfileImage = 23,
 
         // ── Marketplace (peer-to-peer second-hand) ───────────────────
         // Permanent public asset attached to a MarketplaceListing.

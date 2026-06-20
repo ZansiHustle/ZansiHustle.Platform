@@ -304,6 +304,7 @@ namespace ZansiHustle.Application.Merchants
             // even when the merchant has already-public assets.
             var logoUrl = await _storageUrlResolver.RefreshAsync(merchant.LogoUrl);
             var bannerUrl = await _storageUrlResolver.RefreshAsync(merchant.BannerUrl);
+            var profileImageUrl = await _storageUrlResolver.RefreshAsync(merchant.ProfileImageUrl);
 
             decimal? distanceKm = null;
             if (hasCoords && merchant.Latitude.HasValue && merchant.Longitude.HasValue)
@@ -355,6 +356,7 @@ namespace ZansiHustle.Application.Merchants
 
                 LogoUrl = logoUrl,
                 BannerUrl = bannerUrl,
+                ProfileImageUrl = profileImageUrl,
 
                 Phone = merchant.ContactPhoneNumber,
                 WhatsApp = merchant.WhatsAppNumber,
@@ -528,6 +530,8 @@ namespace ZansiHustle.Application.Merchants
 
                 merchant.KycStatus = MerchantKycStatus.Verified;
                 merchant.Status = MerchantStatus.Active;
+                // Clear any prior rejection reason on verify.
+                merchant.KycRejectionReason = null;
                 merchant.UpdatedAtUtc = DateTime.UtcNow;
 
                 // Send the welcome email once — only if it hasn't been sent
@@ -569,6 +573,9 @@ namespace ZansiHustle.Application.Merchants
                     return Result<MerchantDto>.Success(MapToDto(merchant), "Merchant already approved.");
 
                 merchant.Status = MerchantStatus.Active;
+                // Clear any prior rejection reason so a re-approved account
+                // never shows stale "needs changes" copy.
+                merchant.KycRejectionReason = null;
                 merchant.UpdatedAtUtc = DateTime.UtcNow;
 
                 // Reaching here is a genuine transition into approved (the
@@ -603,12 +610,21 @@ namespace ZansiHustle.Application.Merchants
         {
             try
             {
+                // A reason is mandatory — the seller must know WHAT to fix
+                // before resubmitting. No more silent rejections.
+                if (string.IsNullOrWhiteSpace(reason))
+                    return Result<MerchantDto>.Failure(ErrorCodes.BadRequest, "A rejection reason is required.");
+
                 var merchant = await _merchantRepository.GetByIdAsync(id);
 
                 if (merchant is null)
                     return Result<MerchantDto>.Failure(ErrorCodes.NotFound, "Merchant not found.");
 
                 merchant.Status = MerchantStatus.Suspended;
+                // Persist the reason so the seller can see it and amend before
+                // resubmitting. Also flag KYC as rejected for clarity.
+                merchant.KycRejectionReason = reason.Trim();
+                merchant.KycStatus = MerchantKycStatus.Rejected;
                 merchant.UpdatedAtUtc = DateTime.UtcNow;
 
                 _merchantRepository.Update(merchant);
@@ -714,6 +730,7 @@ namespace ZansiHustle.Application.Merchants
                     // in the post-shop-creation flow.
                     dto.LogoUrl   = await _storageUrlResolver.RefreshAsync(dto.LogoUrl);
                     dto.BannerUrl = await _storageUrlResolver.RefreshAsync(dto.BannerUrl);
+                    dto.ProfileImageUrl = await _storageUrlResolver.RefreshAsync(dto.ProfileImageUrl);
                     mapped.Add(dto);
                 }
 
@@ -802,6 +819,7 @@ namespace ZansiHustle.Application.Merchants
                     WebsiteUrl = request.WebsiteUrl?.Trim(),
                     LogoUrl = request.LogoUrl?.Trim(),
                     BannerUrl = request.BannerUrl?.Trim(),
+                    ProfileImageUrl = request.ProfileImageUrl?.Trim(),
                     Status = MerchantStatus.Pending,
                     KycStatus = MerchantKycStatus.Pending,
                     IsPayoutEligible = false,
@@ -811,6 +829,17 @@ namespace ZansiHustle.Application.Merchants
                     TotalRevenue = 0m,
                     CreatedAtUtc = DateTime.UtcNow
                 };
+
+                // Public profile picture is mandatory for every seller — it's
+                // the buyer-facing face (and who may arrive for a service
+                // booking). Distinct from the private KYC selfie. The mobile
+                // wizard requires + uploads it, sending the resolved public
+                // URL; reject submits that arrive without it.
+                if (string.IsNullOrWhiteSpace(request.ProfileImageUrl))
+                {
+                    return Result<MerchantDto>.Failure(ErrorCodes.BadRequest,
+                        "A public profile picture is required.");
+                }
 
                 // Validate required verification uploads BEFORE writing the
                 // Merchant row. Each required purpose must be present among
@@ -938,6 +967,7 @@ namespace ZansiHustle.Application.Merchants
                 if (request.WebsiteUrl        is not null) merchant.WebsiteUrl        = request.WebsiteUrl.Trim();
                 if (request.LogoUrl           is not null) merchant.LogoUrl           = request.LogoUrl.Trim();
                 if (request.BannerUrl         is not null) merchant.BannerUrl         = request.BannerUrl.Trim();
+                if (request.ProfileImageUrl   is not null) merchant.ProfileImageUrl   = request.ProfileImageUrl.Trim();
                 merchant.UpdatedAtUtc = DateTime.UtcNow;
 
                 _merchantRepository.Update(merchant);
@@ -1196,6 +1226,8 @@ namespace ZansiHustle.Application.Merchants
                 WebsiteUrl = merchant.WebsiteUrl,
                 LogoUrl = merchant.LogoUrl,
                 BannerUrl = merchant.BannerUrl,
+                ProfileImageUrl = merchant.ProfileImageUrl,
+                KycRejectionReason = merchant.KycRejectionReason,
                 BankName = merchant.BankName,
                 BankAccountHolder = merchant.BankAccountHolder,
                 BankAccountNumber = merchant.BankAccountNumber,

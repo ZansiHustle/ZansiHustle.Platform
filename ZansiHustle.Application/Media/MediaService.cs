@@ -66,6 +66,10 @@ namespace ZansiHustle.Application.Media
             [MediaPurpose.ShopLogo]       = new("public", MediaVisibility.Public,  4_000_000, ImagesOnly,   RequiresReview: false),
             [MediaPurpose.ShopBanner]     = new("public", MediaVisibility.Public,  6_000_000, ImagesOnly,   RequiresReview: false),
             [MediaPurpose.UserAvatar]     = new("public", MediaVisibility.Public,  4_000_000, ImagesOnly,   RequiresReview: false),
+            // Public seller profile picture — goes live immediately (no review
+            // gate), same public-bucket semantics as a logo. The selfie
+            // (Portrait) stays private + reviewed; this is the buyer-facing face.
+            [MediaPurpose.MerchantProfileImage] = new("public", MediaVisibility.Public, 4_000_000, ImagesOnly, RequiresReview: false),
 
             // Marketplace listing images. PUBLIC container is mandatory:
             // the listing renders the stored URL directly to buyers, so

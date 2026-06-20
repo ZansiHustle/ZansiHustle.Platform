@@ -23,6 +23,14 @@ namespace ZansiHustle.Application.ServiceBookings.Dtos
         /// placeholder is invented server-side).</summary>
         public string? ServiceImageUrl { get; set; }
 
+        // Provider snapshot — PUBLIC trust info shown to the customer so they
+        // know who is providing the service / may arrive for a house call.
+        // Name + public profile picture only (no private contact/KYC).
+        /// <summary>Provider/seller display name (Merchant.Name).</summary>
+        public string? ProviderName { get; set; }
+        /// <summary>Provider's PUBLIC profile picture (Merchant.ProfileImageUrl).</summary>
+        public string? ProviderProfileImageUrl { get; set; }
+
         /// <summary>Enum name: Requested/Accepted/InProgress/Completed/… The
         /// legacy Confirmed value is normalised to "Requested" for display.</summary>
         public string Status { get; set; } = string.Empty;

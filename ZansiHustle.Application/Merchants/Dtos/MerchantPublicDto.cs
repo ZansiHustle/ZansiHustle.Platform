@@ -84,6 +84,12 @@ namespace ZansiHustle.Application.Merchants.Dtos
         // Media
         public string? LogoUrl { get; set; }
         public string? BannerUrl { get; set; }
+        /// <summary>
+        /// Public seller/provider profile picture — the face buyers see and
+        /// who may arrive for a service booking. Public-safe (it's explicitly
+        /// the public photo; the private KYC selfie is never exposed here).
+        /// </summary>
+        public string? ProfileImageUrl { get; set; }
 
         // Public contact
         public string? Phone { get; set; }

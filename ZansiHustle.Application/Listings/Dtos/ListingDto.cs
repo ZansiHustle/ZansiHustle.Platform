@@ -36,6 +36,10 @@ namespace ZansiHustle.Application.Listings.Dtos
         public string? MerchantName { get; set; }
         public string? MerchantSlug { get; set; }
         public string? MerchantLogoUrl { get; set; }
+        /// <summary>Seller's PUBLIC profile picture (the person/provider) — distinct
+        /// from <see cref="MerchantLogoUrl"/> (shop brand). For the seller/provider
+        /// identity card on listing detail.</summary>
+        public string? MerchantProfileImageUrl { get; set; }
 
         /// <summary>True when the signed-in user owns this listing (its merchant's
         /// owner). The app uses this to mark "Your listing" and disable buy/book/

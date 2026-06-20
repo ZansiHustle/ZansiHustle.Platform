@@ -43,6 +43,14 @@ namespace ZansiHustle.Application.Merchants.Dtos
         public string? BannerUrl { get; set; }
 
         /// <summary>
+        /// Public seller profile picture URL (already uploaded via a
+        /// MerchantProfileImage media upload, which returns a permanent
+        /// public URL). Shown to buyers/service customers. Separate from the
+        /// private KYC selfie. Required at submit once the client sends it.
+        /// </summary>
+        public string? ProfileImageUrl { get; set; }
+
+        /// <summary>
         /// Ids of MediaAsset rows the client uploaded during onboarding
         /// (ID document, portrait/selfie, product sample, etc.). The
         /// service re-parents them onto the new Merchant.

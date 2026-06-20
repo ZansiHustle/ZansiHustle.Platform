@@ -248,9 +248,62 @@ namespace ZansiHustle.Application.Shops
             }
         }
 
+        public async Task<Result<ShopProfileDto>> UpdateVisibilityAsync(Guid ownerUserId, Guid shopId, bool isPaused, string? reason)
+        {
+            try
+            {
+                var shop = await _shopRepository.GetByIdAsync(shopId);
+                if (shop is null)
+                    return Result<ShopProfileDto>.Failure(ErrorCodes.NotFound, "Shop not found.");
+
+                // Ownership via Merchant.OwnerUserId.
+                var merchant = await _merchantRepository.GetByIdAsync(shop.MerchantId);
+                if (merchant is null || merchant.OwnerUserId != ownerUserId)
+                    return Result<ShopProfileDto>.Failure(ErrorCodes.Forbidden, "You don't have access to this shop.");
+
+                // Admin-held states are not self-serviceable by the seller.
+                if (shop.VisibilityStatus == ShopVisibilityStatus.Blocked ||
+                    shop.VisibilityStatus == ShopVisibilityStatus.UnderReview)
+                {
+                    return Result<ShopProfileDto>.Failure(
+                        ErrorCodes.Forbidden,
+                        "This shop's visibility is managed by ZansiHustle and can't be changed here.");
+                }
+
+                var now = DateTime.UtcNow;
+                if (isPaused)
+                {
+                    shop.VisibilityStatus = ShopVisibilityStatus.Paused;
+                    shop.VisibilityPausedAtUtc = now;
+                    shop.VisibilityPauseReason = Trim(reason);
+                }
+                else
+                {
+                    shop.VisibilityStatus = ShopVisibilityStatus.Visible;
+                    shop.VisibilityPausedAtUtc = null;
+                    shop.VisibilityPauseReason = null;
+                }
+                shop.VisibilityUpdatedAtUtc = now;
+                shop.UpdatedAtUtc = now;
+
+                _shopRepository.Update(shop);
+                if (!await _shopRepository.SaveChangesAsync())
+                    return Result<ShopProfileDto>.Failure(ErrorCodes.Exception, "Failed to update shop visibility.");
+
+                var dto = await MapToDtoAsync(shop);
+                return Result<ShopProfileDto>.Success(dto, isPaused ? "Shop paused." : "Shop is live again.");
+            }
+            catch (Exception ex)
+            {
+                return Result<ShopProfileDto>.Failure(
+                    ErrorCodes.Exception,
+                    $"An error occurred while updating shop visibility. {ex.Message}");
+            }
+        }
+
         // ─── Public ─────────────────────────────────────────────────
 
-        public async Task<Result<ShopProfilePublicDto>> GetPublicByIdAsync(Guid id)
+        public async Task<Result<ShopProfilePublicDto>> GetPublicByIdAsync(Guid id, Guid? viewerUserId = null)
         {
             try
             {
@@ -260,6 +313,21 @@ namespace ZansiHustle.Application.Shops
                 // owner/admin concern, not a buyer concern.
                 if (shop is null || shop.Status != ShopProfileStatus.Active)
                     return Result<ShopProfilePublicDto>.Failure(ErrorCodes.NotFound, "Shop not found.");
+
+                // Buyer-facing visibility. A paused/hidden shop 404s for buyers,
+                // but the OWNER may still open it (so their preview works + can
+                // show the paused banner). Ownership resolves via Merchant.OwnerUserId.
+                if (shop.VisibilityStatus != ShopVisibilityStatus.Visible)
+                {
+                    var isOwner = false;
+                    if (viewerUserId.HasValue && viewerUserId.Value != Guid.Empty)
+                    {
+                        var owningMerchant = await _merchantRepository.GetByIdAsync(shop.MerchantId);
+                        isOwner = owningMerchant?.OwnerUserId == viewerUserId.Value;
+                    }
+                    if (!isOwner)
+                        return Result<ShopProfilePublicDto>.Failure(ErrorCodes.NotFound, "Shop not found.");
+                }
 
                 // Detail endpoint uses the enriched projection (joins
                 // Merchant + owner User for the About-tab fields). The
@@ -437,6 +505,9 @@ namespace ZansiHustle.Application.Shops
                 AddressLine1 = s.AddressLine1,
                 Status = s.Status,
                 SubscriptionStatus = s.SubscriptionStatus,
+                VisibilityStatus = s.VisibilityStatus,
+                VisibilityPausedAtUtc = s.VisibilityPausedAtUtc,
+                VisibilityPauseReason = s.VisibilityPauseReason,
                 EarlyAccessGrantedAtUtc = s.EarlyAccessGrantedAtUtc,
                 EarlyAccessUntilUtc = s.EarlyAccessUntilUtc,
                 SubscriptionStartedAtUtc = s.SubscriptionStartedAtUtc,
@@ -478,6 +549,7 @@ namespace ZansiHustle.Application.Shops
                 BannerUrl = s.BannerUrl,
                 ThemePresetKey = s.ThemePresetKey,
                 ThemeBackgroundMode = s.ThemeBackgroundMode,
+                VisibilityStatus = s.VisibilityStatus,
                 SellerCategoryName = categoryName,
                 SellerSubcategoryName = subcategoryName,
                 Province = s.Province,
@@ -512,6 +584,12 @@ namespace ZansiHustle.Application.Shops
 
             dto.WebsiteUrl = string.IsNullOrWhiteSpace(merchant.WebsiteUrl) ? null : merchant.WebsiteUrl;
             dto.IsVerified = merchant.KycStatus == MerchantKycStatus.Verified;
+            // Seller's public profile picture (the person behind the shop) —
+            // a public, permanent R2 URL, so passed through as-is. Distinct
+            // from the shop's own LogoUrl (brand).
+            dto.SellerProfileImageUrl = string.IsNullOrWhiteSpace(merchant.ProfileImageUrl)
+                ? null
+                : merchant.ProfileImageUrl;
 
             if (merchant.OwnerUserId.HasValue && merchant.OwnerUserId.Value != Guid.Empty)
             {

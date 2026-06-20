@@ -19,7 +19,21 @@ namespace ZansiHustle.Application.Shops
         Task<Result<ShopProfileDto>> CreateMineAsync(Guid ownerUserId, CreateShopRequestDto request);
         Task<Result<ShopProfileDto>> UpdateMineAsync(Guid ownerUserId, Guid shopId, UpdateShopRequestDto request);
 
-        Task<Result<ShopProfilePublicDto>> GetPublicByIdAsync(Guid id);
+        /// <summary>
+        /// Seller pauses / resumes their shop's buyer-facing visibility. Pausing
+        /// hides the shop + its attached listings from public discovery without
+        /// deleting anything or changing listing statuses. Self-resume is blocked
+        /// when the shop is admin-held (UnderReview / Blocked).
+        /// </summary>
+        Task<Result<ShopProfileDto>> UpdateVisibilityAsync(Guid ownerUserId, Guid shopId, bool isPaused, string? reason);
+
+        /// <summary>
+        /// Public shop detail. <paramref name="viewerUserId"/> is the
+        /// authenticated caller (null for anonymous). A paused/hidden shop 404s
+        /// for buyers, but the OWNER can still load it so their preview works
+        /// and can surface the "paused" banner.
+        /// </summary>
+        Task<Result<ShopProfilePublicDto>> GetPublicByIdAsync(Guid id, Guid? viewerUserId = null);
         Task<Result<PagedResult<ShopProfilePublicDto>>> SearchPublicAsync(int page, int pageSize, string? q);
 
         Task<Result<PagedResult<ShopProfileDto>>> SearchAdminAsync(int page, int pageSize, ShopProfileStatus? status, string? q);

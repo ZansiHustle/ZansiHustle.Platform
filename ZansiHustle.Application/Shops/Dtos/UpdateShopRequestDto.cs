@@ -36,4 +36,14 @@ namespace ZansiHustle.Application.Shops.Dtos
     {
         public string? Reason { get; set; }
     }
+
+    /// <summary>
+    /// Body for <c>PUT /api/shops/mine/{shopId}/visibility</c>. Seller pause /
+    /// resume of the shop's buyer-facing visibility.
+    /// </summary>
+    public class ShopVisibilityRequestDto
+    {
+        public bool IsPaused { get; set; }
+        public string? Reason { get; set; }
+    }
 }

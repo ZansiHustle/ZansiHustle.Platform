@@ -8,6 +8,8 @@ using ZansiHustle.Application.Persistence.Listings;
 using ZansiHustle.Domain.Listings;
 using ZansiHustle.Infrastructure.Data;
 using ZansiHustle.Shared.Enums.Listings;
+using ZansiHustle.Shared.Enums.Merchants;
+using ZansiHustle.Shared.Enums.Shops;
 
 namespace ZansiHustle.Infrastructure.Persistence.Listings
 {
@@ -46,6 +48,23 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
             query = query
                 .Where(x => x.Status == ListingStatus.Active)
                 .Where(x => x.AvailabilityMode != AvailabilityMode.InStoreOnly);
+
+            //   3. Buyer-facing visibility gate. The two pauses are INDEPENDENT:
+            //      • SellerAccount listings are hidden when the owning merchant
+            //        is seller-paused (Merchant.SellerVisibility != Visible).
+            //      • ShopProfile listings are hidden when their shop is paused
+            //        (ShopProfile.VisibilityStatus != Visible) — a seller pause
+            //        does NOT hide shop items, and vice-versa.
+            //      Defaults are Visible, so existing rows are unaffected. Owner/
+            //      admin management reads (GetByOwner/GetByMerchant) never apply
+            //      this gate, so the seller still sees everything in Seller Centre.
+            query = query.Where(x =>
+                (x.ListingSource != ListingSource.ShopProfile
+                    && x.Merchant != null
+                    && x.Merchant.SellerVisibility == SellerVisibilityStatus.Visible)
+                || (x.ListingSource == ListingSource.ShopProfile
+                    && x.ShopProfile != null
+                    && x.ShopProfile.VisibilityStatus == ShopVisibilityStatus.Visible));
 
             if (filter.Type.HasValue)
                 query = query.Where(x => x.Type == filter.Type.Value);
@@ -182,7 +201,12 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
                 .Include(x => x.SellerSubcategory)
                 .Include(x => x.Variants)
                 .Where(x => x.ListingSource == ListingSource.ShopProfile
-                    && x.ShopProfileId == shopProfileId)
+                    && x.ShopProfileId == shopProfileId
+                    // Hide the whole catalog when the shop is paused/under-review/
+                    // blocked. Buyers get an empty catalog; the owner manages items
+                    // via Seller Centre (GetByOwner — never this public read).
+                    && x.ShopProfile != null
+                    && x.ShopProfile.VisibilityStatus == ShopVisibilityStatus.Visible)
                 .OrderByDescending(x => x.CreatedAtUtc)
                 .ToListAsync();
         }

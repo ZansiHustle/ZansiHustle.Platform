@@ -1346,6 +1346,7 @@ namespace ZansiHustle.Application.Listings
                 MerchantName = listing.Merchant?.Name,
                 MerchantSlug = listing.Merchant?.Slug,
                 MerchantLogoUrl = listing.Merchant?.LogoUrl,
+                MerchantProfileImageUrl = listing.Merchant?.ProfileImageUrl,
                 IsOwner = ComputeIsOwner(listing),
                 Title = listing.Title,
                 Description = listing.Description,

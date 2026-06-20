@@ -37,6 +37,11 @@ namespace ZansiHustle.Application.Shops.Dtos
         public ShopProfileStatus Status { get; set; }
         public ShopSubscriptionStatus SubscriptionStatus { get; set; }
 
+        /// <summary>Buyer-facing visibility (Visible / Paused / UnderReview / Blocked).</summary>
+        public ShopVisibilityStatus VisibilityStatus { get; set; } = ShopVisibilityStatus.Visible;
+        public DateTime? VisibilityPausedAtUtc { get; set; }
+        public string? VisibilityPauseReason { get; set; }
+
         public DateTime? EarlyAccessGrantedAtUtc { get; set; }
         public DateTime? EarlyAccessUntilUtc { get; set; }
         public DateTime? SubscriptionStartedAtUtc { get; set; }

@@ -1,5 +1,6 @@
 using System;
 using ZansiHustle.Domain.Shops;
+using ZansiHustle.Shared.Enums.Shops;
 
 namespace ZansiHustle.Application.Shops.Dtos
 {
@@ -25,6 +26,10 @@ namespace ZansiHustle.Application.Shops.Dtos
         /// <summary>Storefront background mode: light/themed/dark (defaults to light).
         /// Drives how strongly the preset affects the shop page background.</summary>
         public string ThemeBackgroundMode { get; set; } = ShopThemeBackgroundModes.Default;
+        /// <summary>Buyer-facing visibility. Almost always Visible on public reads
+        /// (paused shops 404 for buyers); surfaced so the OWNER's own preview can
+        /// render a "paused / hidden from buyers" banner.</summary>
+        public ShopVisibilityStatus VisibilityStatus { get; set; } = ShopVisibilityStatus.Visible;
         public string? SellerCategoryName { get; set; }
         public string? SellerSubcategoryName { get; set; }
         public string? Province { get; set; }
@@ -69,6 +74,14 @@ namespace ZansiHustle.Application.Shops.Dtos
         /// claim — purely identity verification.
         /// </summary>
         public bool IsVerified { get; set; }
+
+        /// <summary>
+        /// The owning seller's PUBLIC profile picture (<c>Merchant.ProfileImageUrl</c>)
+        /// — the person behind the shop. DISTINCT from the shop logo
+        /// (<c>LogoUrl</c>, the brand). Buyers see this to know who they're
+        /// dealing with. Never the private KYC selfie.
+        /// </summary>
+        public string? SellerProfileImageUrl { get; set; }
 
         // ── Engagement ───────────────────────────────────────────────
         /// <summary>Denormalised follower count from <c>ShopProfile.FollowersCount</c>.</summary>

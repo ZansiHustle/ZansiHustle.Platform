@@ -58,7 +58,11 @@ namespace ZansiHustle.Infrastructure.Persistence.Shops
         {
             var query = _context.ShopProfiles
                 .AsNoTracking()
-                .Where(s => s.Status == ShopProfileStatus.Active);
+                // Public discovery: lifecycle-Active AND buyer-visible. A
+                // seller-paused (or under-review/blocked) shop drops out of
+                // search/list; default Visible leaves existing shops unaffected.
+                .Where(s => s.Status == ShopProfileStatus.Active
+                    && s.VisibilityStatus == ShopVisibilityStatus.Visible);
 
             if (!string.IsNullOrWhiteSpace(q))
             {

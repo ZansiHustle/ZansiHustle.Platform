@@ -42,5 +42,8 @@ namespace ZansiHustle.Application.Merchants.Dtos
         public string? WebsiteUrl { get; set; }
         public string? LogoUrl { get; set; }
         public string? BannerUrl { get; set; }
+
+        /// <summary>Public seller profile picture URL (see CreateMyMerchantRequestDto).</summary>
+        public string? ProfileImageUrl { get; set; }
     }
 }

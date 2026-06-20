@@ -57,6 +57,15 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Merchants
                 .HasConversion<int>()
                 .IsRequired();
 
+            // Seller-account buyer visibility. Required int with a DB-level
+            // default so existing rows backfill to Visible (1) on migration.
+            builder.Property(x => x.SellerVisibility)
+                .HasConversion<int>()
+                .IsRequired()
+                .HasDefaultValue(ZansiHustle.Shared.Enums.Merchants.SellerVisibilityStatus.Visible);
+            builder.Property(x => x.SellerPauseReason).HasMaxLength(500);
+            builder.HasIndex(x => x.SellerVisibility);
+
             builder.Property(x => x.ContactEmail)
                 .HasMaxLength(256);
 
@@ -113,6 +122,12 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Merchants
                 .HasMaxLength(500);
 
             builder.Property(x => x.BannerUrl)
+                .HasMaxLength(500);
+
+            builder.Property(x => x.ProfileImageUrl)
+                .HasMaxLength(500);
+
+            builder.Property(x => x.KycRejectionReason)
                 .HasMaxLength(500);
 
             builder.Property(x => x.Rating)

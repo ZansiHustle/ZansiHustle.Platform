@@ -495,7 +495,14 @@ namespace ZansiHustle.Infrastructure.ZansiPulse
                 // of truth rather than introduce a divergent rule.
                 var candidates = await _db.Listings.AsNoTracking()
                     .Where(l => l.Status == ListingStatus.Active
-                        && l.AvailabilityMode != AvailabilityMode.InStoreOnly)
+                        && l.AvailabilityMode != AvailabilityMode.InStoreOnly
+                        // Drop seller-paused / shop-paused listings (independent pauses).
+                        && ((l.ListingSource != ListingSource.ShopProfile
+                                && l.Merchant != null
+                                && l.Merchant.SellerVisibility == ZansiHustle.Shared.Enums.Merchants.SellerVisibilityStatus.Visible)
+                            || (l.ListingSource == ListingSource.ShopProfile
+                                && l.ShopProfile != null
+                                && l.ShopProfile.VisibilityStatus == ZansiHustle.Shared.Enums.Shops.ShopVisibilityStatus.Visible)))
                     .OrderByDescending(l => l.CreatedAtUtc)
                     .Take(ListingCandidatePool)
                     .Include(l => l.Merchant)
@@ -658,6 +665,13 @@ namespace ZansiHustle.Infrastructure.ZansiPulse
                     join l in _db.Listings.AsNoTracking() on m.ListingId equals l.Id
                     where l.Status == ListingStatus.Active
                           && l.AvailabilityMode != AvailabilityMode.InStoreOnly
+                          // Drop seller-paused / shop-paused listings (independent pauses).
+                          && ((l.ListingSource != ListingSource.ShopProfile
+                                  && l.Merchant != null
+                                  && l.Merchant.SellerVisibility == ZansiHustle.Shared.Enums.Merchants.SellerVisibilityStatus.Visible)
+                              || (l.ListingSource == ListingSource.ShopProfile
+                                  && l.ShopProfile != null
+                                  && l.ShopProfile.VisibilityStatus == ZansiHustle.Shared.Enums.Shops.ShopVisibilityStatus.Visible))
                     select new { m, l };
 
                 if (!string.IsNullOrWhiteSpace(filter.Province))

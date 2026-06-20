@@ -649,6 +649,11 @@ public static class ServiceExtensions
         services.AddScoped<
             ZansiHustle.Application.Sellers.Requests.ISellerRequestsService,
             ZansiHustle.Application.Sellers.Requests.SellerRequestsService>();
+        // Seller Account Profile / control centre (identity, real counts, order
+        // stats, seller-account visibility pause).
+        services.AddScoped<
+            ZansiHustle.Application.Seller.AccountProfile.ISellerAccountProfileService,
+            ZansiHustle.Application.Seller.AccountProfile.SellerAccountProfileService>();
         services.AddScoped<IPaymentRepository, PaymentRepository>();
         services.AddScoped<IPaymentService, PaymentService>();
         services.AddScoped<IEventPlanService, EventPlanService>();
