@@ -22,6 +22,9 @@ namespace ZansiHustle.Application.Shops.Dtos
         /// <summary>Curated storefront theme preset key (defaults to zansi_default).
         /// Drives the Shop Profile page styling on the client.</summary>
         public string ThemePresetKey { get; set; } = ShopThemePresets.Default;
+        /// <summary>Storefront background mode: light/themed/dark (defaults to light).
+        /// Drives how strongly the preset affects the shop page background.</summary>
+        public string ThemeBackgroundMode { get; set; } = ShopThemeBackgroundModes.Default;
         public string? SellerCategoryName { get; set; }
         public string? SellerSubcategoryName { get; set; }
         public string? Province { get; set; }

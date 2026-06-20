@@ -21,6 +21,8 @@ namespace ZansiHustle.Application.Shops.Dtos
         public string? BannerUrl { get; set; }
         /// <summary>Curated storefront theme preset key (defaults to zansi_default).</summary>
         public string ThemePresetKey { get; set; } = ShopThemePresets.Default;
+        /// <summary>Storefront background mode: light/themed/dark (defaults to light).</summary>
+        public string ThemeBackgroundMode { get; set; } = ShopThemeBackgroundModes.Default;
         public string? ContactEmail { get; set; }
         public string? ContactPhoneNumber { get; set; }
         public string? WhatsAppNumber { get; set; }

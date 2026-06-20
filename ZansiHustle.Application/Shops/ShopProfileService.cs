@@ -123,6 +123,11 @@ namespace ZansiHustle.Application.Shops
                 if (themeKey is null)
                     return Result<ShopProfileDto>.Failure(ErrorCodes.BadRequest, "Selected shop theme is not recognised.");
 
+                // Background mode: null/empty → light; unknown → 400.
+                var backgroundMode = ShopThemeBackgroundModes.Normalize(request.ThemeBackgroundMode);
+                if (backgroundMode is null)
+                    return Result<ShopProfileDto>.Failure(ErrorCodes.BadRequest, "Selected background style is not recognised.");
+
                 var now = DateTime.UtcNow;
                 var shop = new ShopProfile
                 {
@@ -142,6 +147,7 @@ namespace ZansiHustle.Application.Shops
                     City = Trim(request.City),
                     AddressLine1 = Trim(request.AddressLine1),
                     ThemePresetKey = themeKey,
+                    ThemeBackgroundMode = backgroundMode,
                     // Early-access default: skip admin review, mark
                     // Active immediately, tag the subscription state
                     // as EarlyAccess so reporting can count opt-ins
@@ -216,6 +222,14 @@ namespace ZansiHustle.Application.Shops
                     if (themeKey is null)
                         return Result<ShopProfileDto>.Failure(ErrorCodes.BadRequest, "Selected shop theme is not recognised.");
                     shop.ThemePresetKey = themeKey;
+                }
+                // Background mode: only when supplied. Unknown value → 400; empty → light.
+                if (request.ThemeBackgroundMode != null)
+                {
+                    var backgroundMode = ShopThemeBackgroundModes.Normalize(request.ThemeBackgroundMode);
+                    if (backgroundMode is null)
+                        return Result<ShopProfileDto>.Failure(ErrorCodes.BadRequest, "Selected background style is not recognised.");
+                    shop.ThemeBackgroundMode = backgroundMode;
                 }
                 shop.UpdatedAtUtc = DateTime.UtcNow;
 
@@ -410,6 +424,7 @@ namespace ZansiHustle.Application.Shops
                 LogoUrl = s.LogoUrl,
                 BannerUrl = s.BannerUrl,
                 ThemePresetKey = s.ThemePresetKey,
+                ThemeBackgroundMode = s.ThemeBackgroundMode,
                 ContactEmail = s.ContactEmail,
                 ContactPhoneNumber = s.ContactPhoneNumber,
                 WhatsAppNumber = s.WhatsAppNumber,
@@ -462,6 +477,7 @@ namespace ZansiHustle.Application.Shops
                 LogoUrl = s.LogoUrl,
                 BannerUrl = s.BannerUrl,
                 ThemePresetKey = s.ThemePresetKey,
+                ThemeBackgroundMode = s.ThemeBackgroundMode,
                 SellerCategoryName = categoryName,
                 SellerSubcategoryName = subcategoryName,
                 Province = s.Province,

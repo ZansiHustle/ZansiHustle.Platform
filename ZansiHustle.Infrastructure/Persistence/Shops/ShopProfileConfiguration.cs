@@ -33,6 +33,13 @@ namespace ZansiHustle.Infrastructure.Persistence.Shops
                 .HasMaxLength(40)
                 .HasDefaultValue(ShopThemePresets.Default);
 
+            // Storefront background mode (light/themed/dark). Required with a
+            // DB-level default so existing rows backfill to "light" on migration.
+            entity.Property(x => x.ThemeBackgroundMode)
+                .IsRequired()
+                .HasMaxLength(20)
+                .HasDefaultValue(ShopThemeBackgroundModes.Default);
+
             entity.Property(x => x.ContactEmail).HasMaxLength(200);
             entity.Property(x => x.ContactPhoneNumber).HasMaxLength(40);
             entity.Property(x => x.WhatsAppNumber).HasMaxLength(40);

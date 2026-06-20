@@ -24,5 +24,8 @@ namespace ZansiHustle.Application.Shops.Dtos
         /// <summary>Curated storefront theme preset key. Null/empty → zansi_default.
         /// Unknown values are rejected with a 400.</summary>
         public string? ThemePresetKey { get; set; }
+        /// <summary>Storefront background mode (light/themed/dark). Null/empty → light.
+        /// Unknown values are rejected with a 400.</summary>
+        public string? ThemeBackgroundMode { get; set; }
     }
 }

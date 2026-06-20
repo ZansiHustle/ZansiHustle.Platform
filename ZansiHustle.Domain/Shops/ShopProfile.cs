@@ -53,6 +53,15 @@ namespace ZansiHustle.Domain.Shops
         /// </summary>
         public string ThemePresetKey { get; set; } = ShopThemePresets.Default;
 
+        /// <summary>
+        /// Storefront background mode (see <see cref="ShopThemeBackgroundModes"/>).
+        /// Controls how strongly the preset affects the shop page background:
+        /// <c>light</c> (accents only), <c>themed</c> (soft branded background),
+        /// or <c>dark</c> (bold dark storefront). Defaults to <c>light</c>;
+        /// existing shops are backfilled to it. Client-only presentation.
+        /// </summary>
+        public string ThemeBackgroundMode { get; set; } = ShopThemeBackgroundModes.Default;
+
         // Shop-specific contact, independent of merchant contact —
         // a seller may want a different public-facing contact for
         // their shop than the one tied to their KYC/bank record.
