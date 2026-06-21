@@ -559,6 +559,8 @@ namespace ZansiHustle.Application.Marketplace
                 IsBoosted = entity.IsBoosted,
                 IsFeatured = entity.IsFeatured,
                 Status = entity.Status,
+                Rating = entity.Rating,
+                ReviewCount = entity.ReviewCount,
                 CreatedAtUtc = entity.CreatedAtUtc,
                 UpdatedAtUtc = entity.UpdatedAtUtc,
             };

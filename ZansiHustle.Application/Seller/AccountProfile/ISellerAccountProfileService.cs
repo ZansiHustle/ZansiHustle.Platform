@@ -30,5 +30,12 @@ namespace ZansiHustle.Application.Seller.AccountProfile
         /// route through the Verification flow.
         /// </summary>
         Task<Result<SellerAccountProfileDto>> UpdateTradingProfileAsync(Guid ownerUserId, SellerTradingProfileRequestDto request);
+
+        /// <summary>
+        /// Saves the seller's courier-collection (pickup) address. Operational
+        /// data used for product-order dispatch — not a public-facing change,
+        /// so it never triggers review. AddressLine1 is required.
+        /// </summary>
+        Task<Result<SellerAccountProfileDto>> UpdatePickupAddressAsync(Guid ownerUserId, SellerPickupAddressRequestDto request);
     }
 }

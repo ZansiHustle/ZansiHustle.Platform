@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using ZansiHustle.Application.Chat;
+using ZansiHustle.Application.Persistence.Marketplace;
 using ZansiHustle.Application.Persistence.Merchants;
 using ZansiHustle.Application.Persistence.Reviews;
 using ZansiHustle.Application.Persistence.Shops;
@@ -32,17 +34,23 @@ namespace ZansiHustle.Application.Reviews
         private readonly IReviewRepository _reviews;
         private readonly IMerchantRepository _merchants;
         private readonly IShopProfileRepository _shops;
+        private readonly IMarketplaceListingRepository _marketplaceListings;
+        private readonly IChatService _chat;
         private readonly ILogger<ReviewService> _logger;
 
         public ReviewService(
             IReviewRepository reviews,
             IMerchantRepository merchants,
             IShopProfileRepository shops,
+            IMarketplaceListingRepository marketplaceListings,
+            IChatService chat,
             ILogger<ReviewService> logger)
         {
             _reviews = reviews;
             _merchants = merchants;
             _shops = shops;
+            _marketplaceListings = marketplaceListings;
+            _chat = chat;
             _logger = logger;
         }
 
@@ -340,6 +348,32 @@ namespace ZansiHustle.Application.Reviews
                     return Result.Success();
                 }
 
+                case ReviewTargetType.MarketplaceListing:
+                {
+                    // Casual peer-to-peer listing. TargetId = MarketplaceListing.Id.
+                    // Owner is a User (not a Merchant) — ownership check is direct.
+                    // Feedback is allowed after active/sold/archived (per product),
+                    // so we deliberately DON'T gate on listing.Status.
+                    var listing = await _marketplaceListings.GetByIdAsync(targetId);
+                    if (listing is null)
+                        return Result.Failure(ErrorCodes.NotFound, "Listing not found.");
+
+                    if (listing.OwnerUserId == currentUserId)
+                        return Result.Failure(
+                            ErrorCodes.Forbidden,
+                            "You can't review your own listing.");
+
+                    // Interaction gate — require a prior buyer ↔ seller chat about
+                    // this listing so reviews come from people who actually engaged.
+                    var hasInteracted = await _chat.HasMarketplaceConversationAsync(targetId, currentUserId);
+                    if (!hasInteracted)
+                        return Result.Failure(
+                            ErrorCodes.Forbidden,
+                            "Message the seller first. You can leave feedback after you've interacted about this listing.");
+
+                    return Result.Success();
+                }
+
                 case ReviewTargetType.Product:
                 case ReviewTargetType.Service:
                     return Result.Failure(
@@ -377,7 +411,9 @@ namespace ZansiHustle.Application.Reviews
             // targets currently have no aggregate row to refresh (Listing
             // aggregates ship when those review surfaces enable) so we
             // bail out early for them.
-            if (targetType != ReviewTargetType.Store && targetType != ReviewTargetType.Shop)
+            if (targetType != ReviewTargetType.Store
+                && targetType != ReviewTargetType.Shop
+                && targetType != ReviewTargetType.MarketplaceListing)
                 return;
 
             var (avg, count) = await _reviews.GetSummaryAsync(targetType, targetId);
@@ -407,6 +443,17 @@ namespace ZansiHustle.Application.Reviews
                     shop.ReviewCount = count;
                     _shops.Update(shop);
                     await _shops.SaveChangesAsync();
+                    return;
+                }
+
+                case ReviewTargetType.MarketplaceListing:
+                {
+                    var listing = await _marketplaceListings.GetByIdAsync(targetId);
+                    if (listing is null) return;
+                    listing.Rating = avg;
+                    listing.ReviewCount = count;
+                    _marketplaceListings.Update(listing);
+                    await _marketplaceListings.SaveChangesAsync();
                     return;
                 }
             }

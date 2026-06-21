@@ -158,6 +158,53 @@ namespace ZansiHustle.Application.Seller.AccountProfile
             }
         }
 
+        public async Task<Result<SellerAccountProfileDto>> UpdatePickupAddressAsync(Guid ownerUserId, SellerPickupAddressRequestDto request)
+        {
+            try
+            {
+                if (ownerUserId == Guid.Empty)
+                    return Result<SellerAccountProfileDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found.");
+                if (request is null)
+                    return Result<SellerAccountProfileDto>.Failure(ErrorCodes.BadRequest, "Request is required.");
+                if (string.IsNullOrWhiteSpace(request.AddressLine1))
+                    return Result<SellerAccountProfileDto>.Failure(ErrorCodes.BadRequest, "A pickup street address is required.");
+
+                var merchant = await ResolveSellerMerchantAsync(ownerUserId);
+                if (merchant is null)
+                    return Result<SellerAccountProfileDto>.Failure(ErrorCodes.NotFound, "No seller account found.");
+
+                // Pickup = the merchant's structured address (shared with the
+                // public area for this single-merchant model). Operational data
+                // for courier collection; never a review trigger. Street-level
+                // detail (AddressLine1 / suburb / postal / geo) is private —
+                // buyers only ever see City + Province.
+                merchant.AddressLine1 = Trim(request.AddressLine1);
+                merchant.Suburb = Trim(request.Suburb);
+                if (!string.IsNullOrWhiteSpace(request.City)) merchant.City = Trim(request.City);
+                if (!string.IsNullOrWhiteSpace(request.Province)) merchant.Province = Trim(request.Province);
+                merchant.PostalCode = Trim(request.PostalCode);
+                merchant.FormattedAddress = Trim(request.FormattedAddress);
+                merchant.GooglePlaceId = Trim(request.GooglePlaceId);
+                merchant.Country = Trim(request.Country);
+                merchant.CountryCode = Trim(request.CountryCode);
+                if (request.Latitude.HasValue) merchant.Latitude = request.Latitude;
+                if (request.Longitude.HasValue) merchant.Longitude = request.Longitude;
+                merchant.UpdatedAtUtc = DateTime.UtcNow;
+
+                _merchants.Update(merchant);
+                if (!await _merchants.SaveChangesAsync())
+                    return Result<SellerAccountProfileDto>.Failure(ErrorCodes.Exception, "Failed to update pickup address.");
+
+                var dto = await BuildAsync(ownerUserId, merchant);
+                return Result<SellerAccountProfileDto>.Success(dto, "Pickup address updated.");
+            }
+            catch (Exception ex)
+            {
+                return Result<SellerAccountProfileDto>.Failure(
+                    ErrorCodes.Exception, $"An error occurred while updating your pickup address. {ex.Message}");
+            }
+        }
+
         // ── Helpers ──────────────────────────────────────────────────────────
 
         private static string? Trim(string? value)

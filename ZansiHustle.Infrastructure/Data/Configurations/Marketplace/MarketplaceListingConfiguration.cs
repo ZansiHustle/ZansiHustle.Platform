@@ -60,6 +60,12 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Marketplace
                 .HasConversion<int>()
                 .IsRequired();
 
+            // Denormalised review aggregate (mirrors Merchant/ShopProfile.Rating
+            // precision exactly: decimal(5,2)). Source of truth is the Reviews
+            // table; refreshed by ReviewService on each review write.
+            builder.Property(x => x.Rating)
+                .HasPrecision(5, 2);
+
             builder.Property(x => x.CreatedAtUtc)
                 .IsRequired();
 

@@ -27,5 +27,13 @@ namespace ZansiHustle.Shared.Enums.Reviews
 
         /// <summary>Review of an individual service Listing. (Reserved.)</summary>
         Service = 4,
+
+        /// <summary>
+        /// Review of a casual peer-to-peer Marketplace listing. TargetId =
+        /// MarketplaceListing.Id. Gated on a prior buyer ↔ seller marketplace
+        /// conversation; aggregate refreshes MarketplaceListing.Rating /
+        /// ReviewCount.
+        /// </summary>
+        MarketplaceListing = 5,
     }
 }

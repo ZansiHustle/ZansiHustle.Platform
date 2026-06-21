@@ -529,6 +529,10 @@ public static class ServiceExtensions
         services.AddScoped<
             ZansiHustle.Application.Persistence.ServiceBookings.IServiceBookingRepository,
             ZansiHustle.Infrastructure.Persistence.ServiceBookings.ServiceBookingRepository>();
+        // Two-way service-booking reviews (customer ↔ provider). Dedicated table.
+        services.AddScoped<
+            ZansiHustle.Application.Persistence.ServiceBookings.IServiceBookingReviewRepository,
+            ZansiHustle.Infrastructure.Persistence.ServiceBookings.ServiceBookingReviewRepository>();
 
         // ── Notifications + realtime + push (booking workflow, bell, page) ──
         // Notification is the source of truth (REST); SignalR (in-app) + OneSignal
@@ -557,6 +561,9 @@ public static class ServiceExtensions
         services.AddScoped<
             ZansiHustle.Application.Seller.Earnings.ISellerEarningsService,
             ZansiHustle.Application.Seller.Earnings.SellerEarningsService>();
+        services.AddScoped<
+            ZansiHustle.Application.Finance.ILedgerReconcileService,
+            ZansiHustle.Infrastructure.Finance.LedgerReconcileService>();
         services.AddScoped<
             ZansiHustle.Application.Persistence.Trust.ITrustEventRepository,
             ZansiHustle.Infrastructure.Persistence.Trust.TrustEventRepository>();
@@ -630,6 +637,9 @@ public static class ServiceExtensions
         services.AddScoped<
             ZansiHustle.Application.ServiceBookings.IServiceBookingService,
             ZansiHustle.Application.ServiceBookings.ServiceBookingService>();
+        services.AddScoped<
+            ZansiHustle.Application.ServiceBookings.IServiceBookingReviewService,
+            ZansiHustle.Application.ServiceBookings.ServiceBookingReviewService>();
         services.AddScoped<
             ZansiHustle.Application.Reviews.IReviewService,
             ZansiHustle.Application.Reviews.ReviewService>();

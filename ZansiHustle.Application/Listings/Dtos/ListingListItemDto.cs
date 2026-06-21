@@ -32,9 +32,28 @@ namespace ZansiHustle.Application.Listings.Dtos
         /// <summary>Joined ShopProfile name when ListingSource == ShopProfile.</summary>
         public string? ShopProfileName { get; set; }
 
+        /// <summary>Joined ShopProfile LOGO (the storefront's own brand mark)
+        /// when ListingSource == ShopProfile; null otherwise. Distinct from the
+        /// owning Merchant's logo — a shop-attached listing's card pill should
+        /// show THIS, not the merchant logo.</summary>
+        public string? ShopLogoUrl { get; set; }
+
         public Guid MerchantId { get; set; }
         public string? MerchantName { get; set; }
         public string? MerchantSlug { get; set; }
+
+        /// <summary>Shop/brand logo (public). Used by feed cards for the seller
+        /// pill avatar when the merchant presents as a store.</summary>
+        public string? MerchantLogoUrl { get; set; }
+
+        /// <summary>Seller/provider PUBLIC profile picture (the face shown to
+        /// buyers). Distinct from the shop logo and from the private KYC selfie.
+        /// Feed cards prefer this for the seller pill avatar.</summary>
+        public string? MerchantProfileImageUrl { get; set; }
+
+        /// <summary>True when the owning merchant is KYC-verified. Drives the
+        /// real verified tick on feed cards — never fabricated.</summary>
+        public bool MerchantVerified { get; set; }
 
         /// <summary>True when the signed-in user owns this listing — drives the
         /// "Your listing" marker on feed cards. False for anonymous callers.</summary>

@@ -59,6 +59,18 @@ namespace ZansiHustle.Application.Marketplace.Dtos
         /// </summary>
         public bool IsLikedByMe { get; set; }
 
+        // ── Reviews (denormalised aggregate) ─────────────────────────
+        /// <summary>
+        /// Average review rating (1.00–5.00) over Active reviews for this
+        /// listing, or null when there are none. Mirrors
+        /// <c>MarketplaceListing.Rating</c> so the buyer detail screen can show
+        /// the aggregate without a second /api/reviews/summary call.
+        /// </summary>
+        public decimal? Rating { get; set; }
+
+        /// <summary>Count of Active reviews for this listing.</summary>
+        public int ReviewCount { get; set; }
+
         public DateTime CreatedAtUtc { get; set; }
         public DateTime? UpdatedAtUtc { get; set; }
     }

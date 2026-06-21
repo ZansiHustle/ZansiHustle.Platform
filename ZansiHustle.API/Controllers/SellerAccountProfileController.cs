@@ -74,5 +74,21 @@ namespace ZansiHustle.API.Controllers
 
             return ToActionResult(await _profile.UpdateTradingProfileAsync(userId.Value, request));
         }
+
+        /// <summary>
+        /// Save the seller's courier-collection (pickup) address used for
+        /// product-order dispatch. Operational/private — not a public change.
+        /// </summary>
+        [HttpPut("pickup-address")]
+        [ProducesResponseType(typeof(Result<SellerAccountProfileDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> UpdatePickupAddress([FromBody] SellerPickupAddressRequestDto request)
+        {
+            var userId = _currentUserService.UserId;
+            if (!userId.HasValue)
+                return ToActionResult(Result<SellerAccountProfileDto>.Failure(
+                    ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            return ToActionResult(await _profile.UpdatePickupAddressAsync(userId.Value, request));
+        }
     }
 }

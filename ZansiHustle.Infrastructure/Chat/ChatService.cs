@@ -270,6 +270,25 @@ namespace ZansiHustle.Infrastructure.Chat
             }
         }
 
+        // ── Interaction gate (marketplace reviews) ─────────────────
+
+        /// <inheritdoc />
+        public Task<bool> HasMarketplaceConversationAsync(
+            Guid listingId, Guid userId, CancellationToken ct = default)
+        {
+            // The user "interacted" about the listing when they're either the
+            // cached buyer on the conversation OR a participant row for it.
+            // Either side qualifies (the seller can also review the buyer's
+            // interaction surface, and the cached BuyerUserId is the fast path).
+            return _db.Conversations
+                .AsNoTracking()
+                .Where(c => c.Type == ConversationType.MarketplaceListing
+                            && c.MarketplaceListingId == listingId
+                            && (c.BuyerUserId == userId
+                                || c.Participants.Any(p => p.UserId == userId)))
+                .AnyAsync(ct);
+        }
+
         // ── Inbox ──────────────────────────────────────────────────
 
         public async Task<Result<List<ConversationListItemDto>>> GetInboxAsync(

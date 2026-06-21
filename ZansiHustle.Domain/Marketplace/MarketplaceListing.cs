@@ -67,6 +67,17 @@ namespace ZansiHustle.Domain.Marketplace
         /// </summary>
         public int LikeCount { get; set; }
 
+        /// <summary>
+        /// Denormalised average review rating (1.00–5.00) over Active reviews
+        /// for this listing, or null when there are none. Source of truth is
+        /// the polymorphic <c>Reviews</c> table; refreshed by ReviewService on
+        /// each review write. Same pattern as Merchant / ShopProfile.Rating.
+        /// </summary>
+        public decimal? Rating { get; set; }
+
+        /// <summary>Denormalised count of Active reviews for this listing.</summary>
+        public int ReviewCount { get; set; }
+
         /// <summary>Ordered set of images attached to this listing.</summary>
         public List<MarketplaceListingImage> Images { get; set; } = new();
 

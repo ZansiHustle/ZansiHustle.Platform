@@ -115,4 +115,27 @@ namespace ZansiHustle.Application.Seller.AccountProfile.Dtos
         public string? Province { get; set; }
         public string? ProfileImageUrl { get; set; }
     }
+
+    /// <summary>
+    /// Body for <c>PUT /api/seller/account-profile/pickup-address</c> — the
+    /// courier-collection address for product orders. This is operational
+    /// (private) data, distinct from the public area shown to buyers, though
+    /// it currently shares the merchant's structured-address columns. Captured
+    /// via Google Places on the client; geo fields help courier accuracy.
+    /// Null leaves a field unchanged where sensible; AddressLine1 is required.
+    /// </summary>
+    public class SellerPickupAddressRequestDto
+    {
+        public string? AddressLine1 { get; set; }
+        public string? Suburb { get; set; }
+        public string? City { get; set; }
+        public string? Province { get; set; }
+        public string? PostalCode { get; set; }
+        public decimal? Latitude { get; set; }
+        public decimal? Longitude { get; set; }
+        public string? GooglePlaceId { get; set; }
+        public string? FormattedAddress { get; set; }
+        public string? Country { get; set; }
+        public string? CountryCode { get; set; }
+    }
 }

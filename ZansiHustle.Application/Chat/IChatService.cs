@@ -68,5 +68,17 @@ namespace ZansiHustle.Application.Chat
         /// </summary>
         Task<Result<ChatUnreadSummaryDto>> GetUnreadSummaryAsync(
             Guid callerUserId, CancellationToken ct = default);
+
+        /// <summary>
+        /// True when the user has interacted (via chat) about a marketplace
+        /// listing — i.e. any MarketplaceListing conversation anchored to
+        /// <paramref name="listingId"/> where the user is the cached buyer OR a
+        /// participant row. Used as the interaction gate for marketplace-listing
+        /// reviews ("message the seller before you can leave feedback"). Returns
+        /// a plain bool (not a Result) — it's a pure predicate for the review
+        /// validator, never surfaced directly to a controller.
+        /// </summary>
+        Task<bool> HasMarketplaceConversationAsync(
+            Guid listingId, Guid userId, CancellationToken ct = default);
     }
 }

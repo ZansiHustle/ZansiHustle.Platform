@@ -15,16 +15,25 @@ namespace ZansiHustle.Application.Seller.Earnings.Dtos
         public string Range { get; set; } = "30d";
         public string Currency { get; set; } = "ZAR";
 
-        /// <summary>Total value of paid sales in the range (GMV).</summary>
+        /// <summary>Total value of paid sales in the range (GMV = sum of Order.Total).</summary>
         public decimal GrossSales { get; set; }
         public decimal ProductSales { get; set; }
         public decimal ServiceSales { get; set; }
-        /// <summary>Platform commission withheld — 0 until a commission model exists.</summary>
+        /// <summary>Fee base = sum of Order.Subtotal (EXCLUDES delivery). The amount
+        /// the 3% gateway and 5% platform fees are computed against.</summary>
+        public decimal EligibleSales { get; set; }
+        /// <summary>Gateway (Ozow) fees withheld — 3% of eligible sales. A cost,
+        /// not platform profit.</summary>
+        public decimal GatewayFees { get; set; }
+        /// <summary>ZansiHustle platform fees withheld — now real 5% of eligible sales.</summary>
         public decimal PlatformFees { get; set; }
+        /// <summary>Delivery/courier fees excluded from earnings (sum of Order.DeliveryFee).
+        /// Pass-through — never seller earnings.</summary>
+        public decimal DeliveryExcluded { get; set; }
         /// <summary>Paid sales that were later reversed (rejected/cancelled bookings,
         /// cancelled orders). Not part of available/pending.</summary>
         public decimal Refunds { get; set; }
-        /// <summary>GrossSales − PlatformFees − Refunds.</summary>
+        /// <summary>EligibleSales − GatewayFees − PlatformFees − Refunds.</summary>
         public decimal NetProceeds { get; set; }
 
         /// <summary>Net of in-progress work — clears once the order/booking completes.</summary>

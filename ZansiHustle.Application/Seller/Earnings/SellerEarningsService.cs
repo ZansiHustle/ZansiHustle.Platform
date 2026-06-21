@@ -17,12 +17,17 @@ namespace ZansiHustle.Application.Seller.Earnings
 {
     /// <summary>
     /// Computes seller proceeds from PAID orders + service-booking lifecycle.
-    /// Query-based V1 (no proceeds ledger yet) — reuses the existing seller order
-    /// query + the batch booking-status lookup. Settlement model:
-    ///   • Completed work (order Completed / booking Completed)      → Available
-    ///   • Reversed (order Cancelled / booking Rejected|Cancelled)   → Refunds
-    ///   • Everything else paid                                      → Pending
-    /// No commission model exists, so PlatformFees = 0 and Net = Gross − Refunds.
+    /// Query-based (reuses the seller order query + the batch booking-status
+    /// lookup). Money math now uses the SHARED <see cref="SellerFeeCalculator"/>
+    /// so the dashboard matches the finance ledgers exactly:
+    ///   eligibleBase = Order.Subtotal (EXCLUDES delivery)
+    ///   gatewayFee   = 3% (Ozow cost)   platformFee = 5% (platform revenue)
+    ///   sellerNet    = eligibleBase − gatewayFee − platformFee   (≈ 92%)
+    /// Delivery (Order.DeliveryFee) is NEVER seller earnings.
+    /// Settlement model:
+    ///   • Completed work (order Completed / booking Completed)      → Available (net)
+    ///   • Reversed (order Cancelled / booking Rejected|Cancelled)   → Refunds (excluded)
+    ///   • Everything else paid                                      → Pending (net)
     /// </summary>
     public sealed class SellerEarningsService : ISellerEarningsService
     {
@@ -63,7 +68,8 @@ namespace ZansiHustle.Application.Seller.Earnings
                     : new Dictionary<Guid, ServiceBookingStatus>();
 
             decimal gross = 0m, productSales = 0m, serviceSales = 0m,
-                    refunds = 0m, available = 0m, pending = 0m;
+                    eligibleSales = 0m, gatewayFees = 0m, platformFees = 0m,
+                    deliveryExcluded = 0m, refunds = 0m, available = 0m, pending = 0m;
             int ordersCount = 0, bookingsCount = 0;
             var currency = "ZAR";
 
@@ -75,14 +81,25 @@ namespace ZansiHustle.Application.Seller.Earnings
                 if (!string.IsNullOrWhiteSpace(o.Currency)) currency = o.Currency;
 
                 var isService = IsServiceOrder(o);
+                // GMV split stays gross (Order.Total) so "sales" reads as sales.
                 gross += o.Total;
                 if (isService) { serviceSales += o.Total; bookingsCount++; }
                 else { productSales += o.Total; ordersCount++; }
 
+                // Fee math on the eligible base (Subtotal — delivery excluded).
+                var eligibleBase = o.Subtotal;
+                var fees = SellerFeeCalculator.Compute(eligibleBase);
+                eligibleSales += eligibleBase;
+                gatewayFees += fees.GatewayFee;
+                platformFees += fees.PlatformFee;
+                deliveryExcluded += o.DeliveryFee ?? 0m;
+
                 var bucket = ClassifySettlement(o, isService, bookingStatuses);
+                // Available/Pending now carry seller NET, not gross. Refunds
+                // (cancelled/rejected) are excluded from both buckets.
                 if (bucket == Refunded) refunds += o.Total;
-                else if (bucket == Available) available += o.Total;
-                else pending += o.Total;
+                else if (bucket == Available) available += fees.SellerNet;
+                else pending += fees.SellerNet;
 
                 foreach (var item in o.Items)
                 {
@@ -103,8 +120,8 @@ namespace ZansiHustle.Application.Seller.Earnings
                 });
             }
 
-            const decimal platformFees = 0m; // no commission model yet
-            var net = gross - platformFees - refunds;
+            // Seller proceeds net of real fees: eligible − 3% gateway − 5% platform − refunds.
+            var net = eligibleSales - gatewayFees - platformFees - refunds;
             var totalCount = ordersCount + bookingsCount;
             var aov = totalCount > 0 ? Math.Round(gross / totalCount, 2, MidpointRounding.AwayFromZero) : 0m;
 
@@ -115,7 +132,10 @@ namespace ZansiHustle.Application.Seller.Earnings
                 GrossSales = gross,
                 ProductSales = productSales,
                 ServiceSales = serviceSales,
+                EligibleSales = eligibleSales,
+                GatewayFees = gatewayFees,
                 PlatformFees = platformFees,
+                DeliveryExcluded = deliveryExcluded,
                 Refunds = refunds,
                 NetProceeds = net,
                 PendingSettlement = pending,
@@ -134,7 +154,9 @@ namespace ZansiHustle.Application.Seller.Earnings
                         Title = x.Key,
                         QuantityOrBookings = x.Value.qty,
                         GrossSales = x.Value.gross,
-                        NetProceeds = x.Value.gross // fees 0 — never overstated
+                        // Per-item gross GMV — kept as-is (fees are applied at the
+                        // order level, not allocated per line item).
+                        NetProceeds = x.Value.gross
                     })
                     .ToList(),
                 RecentActivity = activity
@@ -165,14 +187,14 @@ namespace ZansiHustle.Application.Seller.Earnings
 
             // Total earned = completed/eligible work only (the "Available" bucket):
             // cancelled/refunded never count; paid-but-unfulfilled is NOT yet earned.
-            // Fees = 0 (no commission model), so net == gross of eligible orders.
+            // NET of real fees (eligible − 3% gateway − 5% platform); delivery excluded.
             decimal totalEarned = 0m;
             var currency = "ZAR";
             foreach (var o in paid)
             {
                 if (!string.IsNullOrWhiteSpace(o.Currency)) currency = o.Currency;
                 if (ClassifySettlement(o, IsServiceOrder(o), bookingStatuses) == Available)
-                    totalEarned += o.Total;
+                    totalEarned += SellerFeeCalculator.Compute(o.Subtotal).SellerNet;
             }
 
             // TODO(seller-payouts): there is no seller withdrawal/payout flow yet, so

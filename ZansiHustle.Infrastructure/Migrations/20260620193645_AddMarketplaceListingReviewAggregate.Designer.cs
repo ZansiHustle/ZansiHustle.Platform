@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using ZansiHustle.Infrastructure.Data;
 
@@ -11,9 +12,11 @@ using ZansiHustle.Infrastructure.Data;
 namespace ZansiHustle.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260620193645_AddMarketplaceListingReviewAggregate")]
+    partial class AddMarketplaceListingReviewAggregate
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -891,141 +894,6 @@ namespace ZansiHustle.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("EventTypeTemplates", (string)null);
-                });
-
-            modelBuilder.Entity("ZansiHustle.Domain.Finance.PlatformLedgerEntry", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<decimal>("Amount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<Guid?>("BackfillBatchId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .HasMaxLength(8)
-                        .HasColumnType("nvarchar(8)");
-
-                    b.Property<int>("EntryType")
-                        .HasColumnType("int");
-
-                    b.Property<bool>("IsBackfilled")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<DateTime>("OccurredAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid?>("OrderId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid?>("ServiceBookingId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<int>("SourceType")
-                        .HasColumnType("int");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("OrderId", "EntryType")
-                        .IsUnique()
-                        .HasFilter("[OrderId] IS NOT NULL");
-
-                    b.ToTable("PlatformLedgerEntries", (string)null);
-                });
-
-            modelBuilder.Entity("ZansiHustle.Domain.Finance.SellerLedgerEntry", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid?>("BackfillBatchId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .HasMaxLength(8)
-                        .HasColumnType("nvarchar(8)");
-
-                    b.Property<decimal>("DeliveryFeeAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<decimal>("EligibleBaseAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<int>("EntryType")
-                        .HasColumnType("int");
-
-                    b.Property<decimal>("GatewayFeeAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<decimal>("GrossAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<bool>("IsBackfilled")
-                        .HasColumnType("bit");
-
-                    b.Property<Guid?>("MerchantId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<DateTime>("OccurredAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<Guid?>("OrderId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<decimal>("PlatformFeeAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<decimal>("SellerNetAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("decimal(18,2)");
-
-                    b.Property<Guid>("SellerUserId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid?>("ServiceBookingId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<int>("SourceType")
-                        .HasColumnType("int");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("int");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("OrderId", "EntryType")
-                        .IsUnique()
-                        .HasFilter("[OrderId] IS NOT NULL");
-
-                    b.HasIndex("SellerUserId", "Status");
-
-                    b.ToTable("SellerLedgerEntries", (string)null);
                 });
 
             modelBuilder.Entity("ZansiHustle.Domain.Fundraising.Stakeholder", b =>
@@ -3405,61 +3273,6 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.ToTable("ServiceBookings", (string)null);
                 });
 
-            modelBuilder.Entity("ZansiHustle.Domain.ServiceBookings.ServiceBookingReview", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid>("BookingId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("Comment")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime?>("DeletedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("Direction")
-                        .HasColumnType("int");
-
-                    b.Property<int>("Rating")
-                        .HasColumnType("int");
-
-                    b.Property<Guid>("RevieweeUserId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid>("ReviewerUserId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime?>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ReviewerUserId");
-
-                    b.HasIndex("BookingId", "Direction")
-                        .IsUnique()
-                        .HasDatabaseName("UX_ServiceBookingReviews_Booking_Direction_Active")
-                        .HasFilter("[Status] = 1");
-
-                    b.HasIndex("BookingId", "Status")
-                        .HasDatabaseName("IX_ServiceBookingReviews_Booking_Status");
-
-                    b.ToTable("ServiceBookingReviews", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_ServiceBookingReviews_Rating_1_5", "[Rating] BETWEEN 1 AND 5");
-                        });
-                });
-
             modelBuilder.Entity("ZansiHustle.Domain.Shops.ShopProfile", b =>
                 {
                     b.Property<Guid>("Id")
@@ -5657,15 +5470,6 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.Navigation("Merchant");
 
                     b.Navigation("Order");
-                });
-
-            modelBuilder.Entity("ZansiHustle.Domain.ServiceBookings.ServiceBookingReview", b =>
-                {
-                    b.HasOne("ZansiHustle.Domain.Identity.User", null)
-                        .WithMany()
-                        .HasForeignKey("ReviewerUserId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("ZansiHustle.Domain.Shops.ShopProfile", b =>

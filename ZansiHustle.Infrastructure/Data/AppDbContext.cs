@@ -31,6 +31,7 @@ using ZansiHustle.Domain.Shops;
 using ZansiHustle.Domain.SellerLeads;
 using ZansiHustle.Domain.ZansiPulse;
 using ZansiHustle.Domain.ZansiDispatch;
+using ZansiHustle.Domain.Finance;
 
 namespace ZansiHustle.Infrastructure.Data;
 
@@ -139,6 +140,12 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     // ZansiHustle.Infrastructure.Persistence...ServiceBookingConfiguration.
     public DbSet<ServiceBooking> ServiceBookings => Set<ServiceBooking>();
 
+    // ── Two-way service-booking reviews (customer↔provider) ────────────────
+    // Dedicated table (not the polymorphic Reviews table) so direction +
+    // reviewee are modelled explicitly. Config:
+    // ZansiHustle.Infrastructure.Data.Configurations.ServiceBookings.ServiceBookingReviewConfiguration.
+    public DbSet<ServiceBookingReview> ServiceBookingReviews => Set<ServiceBookingReview>();
+
     // ── Notifications (in-app bell + page) and push device registry ────────
     // Notification is the source of truth behind the bell/page; SignalR +
     // OneSignal are best-effort delivery layers on top. Configs:
@@ -242,4 +249,13 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     public DbSet<ZansiDispatchLedgerEntry> ZansiDispatchLedgerEntries => Set<ZansiDispatchLedgerEntry>();
     public DbSet<ZansiDispatchProviderRequestLog> ZansiDispatchProviderRequestLogs => Set<ZansiDispatchProviderRequestLog>();
     public DbSet<ZansiDispatchSetting> ZansiDispatchSettings => Set<ZansiDispatchSetting>();
+
+    // ── Finance ledgers (seller proceeds + platform book) ──────────────────
+    // Append-only accounting tables. Seller funds (SellerLedgerEntries) and
+    // platform funds (PlatformLedgerEntries) are kept STRICTLY separate. Written
+    // by the idempotent reconcile job (LedgerReconcileService); the seller
+    // dashboard reads the SAME fee math via SellerFeeCalculator. Configs in
+    // ZansiHustle.Infrastructure.Data.Configurations.Finance.* (auto-applied).
+    public DbSet<SellerLedgerEntry> SellerLedgerEntries => Set<SellerLedgerEntry>();
+    public DbSet<PlatformLedgerEntry> PlatformLedgerEntries => Set<PlatformLedgerEntry>();
 }
