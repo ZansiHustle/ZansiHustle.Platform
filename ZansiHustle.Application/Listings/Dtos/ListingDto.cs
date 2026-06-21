@@ -32,6 +32,9 @@ namespace ZansiHustle.Application.Listings.Dtos
         /// <summary>Joined display name of the ShopProfile when ListingSource == ShopProfile.</summary>
         public string? ShopProfileName { get; set; }
 
+        /// <summary>The ShopProfile's own logo (storefront brand mark) for shop-attached listings; null for non-shop listings.</summary>
+        public string? ShopLogoUrl { get; set; }
+
         public Guid MerchantId { get; set; }
         public string? MerchantName { get; set; }
         public string? MerchantSlug { get; set; }

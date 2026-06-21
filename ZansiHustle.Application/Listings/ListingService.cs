@@ -1342,6 +1342,7 @@ namespace ZansiHustle.Application.Listings
                 ListingSource = listing.ListingSource,
                 ShopProfileId = listing.ShopProfileId,
                 ShopProfileName = listing.ShopProfile?.Name,
+                ShopLogoUrl = listing.ShopProfile?.LogoUrl,
                 MerchantId = listing.MerchantId,
                 MerchantName = listing.Merchant?.Name,
                 MerchantSlug = listing.Merchant?.Slug,
