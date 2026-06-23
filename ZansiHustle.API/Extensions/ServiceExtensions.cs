@@ -507,6 +507,8 @@ public static class ServiceExtensions
         services.AddScoped<IMarketingDashboardRepository, MarketingDashboardRepository>();
         services.AddScoped<IAnalyticsRepository, AnalyticsRepository>();
         services.AddScoped<IAdminOrderRepository, AdminOrderRepository>();
+        services.AddScoped<ZansiHustle.Application.Persistence.Admin.Listings.IAdminListingRepository,
+                           ZansiHustle.Infrastructure.Persistence.Admin.Listings.AdminListingRepository>();
         services.AddScoped<IAdminCustomerRepository, AdminCustomerRepository>();
         services.AddScoped<ZansiHustle.Application.Persistence.Admin.Users.IAdminUserRepository,
                            ZansiHustle.Infrastructure.Persistence.Admin.Users.AdminUserRepository>();
@@ -515,6 +517,9 @@ public static class ServiceExtensions
         services.AddScoped<IAdminSupportRepository, AdminSupportRepository>();
         services.AddScoped<IMerchantRepository, MerchantRepository>();
         services.AddScoped<ISellerCategoryRepository, SellerCategoryRepository>();
+        services.AddScoped<
+            ZansiHustle.Application.Persistence.AppConfigs.IAppRuntimeConfigRepository,
+            ZansiHustle.Infrastructure.Persistence.AppConfigs.AppRuntimeConfigRepository>();
         services.AddScoped<IListingRepository, ListingRepository>();
         services.AddScoped<
             ZansiHustle.Application.Persistence.Reviews.IReviewRepository,
@@ -624,6 +629,8 @@ public static class ServiceExtensions
         services.AddScoped<IMarketingDashboardService, MarketingDashboardService>();
         services.AddScoped<IAnalyticsService, AnalyticsService>();
         services.AddScoped<IAdminOrderService, AdminOrderService>();
+        services.AddScoped<ZansiHustle.Application.Admin.Listings.IAdminListingService,
+                           ZansiHustle.Application.Admin.Listings.AdminListingService>();
         services.AddScoped<IAdminCustomerService, AdminCustomerService>();
         services.AddScoped<ZansiHustle.Application.Admin.Users.IAdminUserService,
                            ZansiHustle.Application.Admin.Users.AdminUserService>();
@@ -632,6 +639,9 @@ public static class ServiceExtensions
         services.AddScoped<IAdminSupportService, AdminSupportService>();
         services.AddScoped<IMerchantService, MerchantService>();
         services.AddScoped<ISellerCategoryService, SellerCategoryService>();
+        services.AddScoped<
+            ZansiHustle.Application.AppConfigs.IAppRuntimeConfigService,
+            ZansiHustle.Application.AppConfigs.AppRuntimeConfigService>();
         services.AddScoped<IAgentMappingService, AgentMappingService>();
         services.AddScoped<IListingService, ListingService>();
         services.AddScoped<
@@ -780,6 +790,18 @@ public static class ServiceExtensions
             ZansiHustle.Application.ZansiDispatch.IZansiDispatchService,
             ZansiHustle.Infrastructure.ZansiDispatch.ZansiDispatchService>();
 
+        // ── Mobile app version control (public check + gate middleware + admin) ─
+        // The appsettings "MobileAppVersion" section is the code/config fallback
+        // used when no DB rule matches — it ships force-update OFF, so the gate is
+        // launch-safe even before any MobileAppVersionRules row exists. The service
+        // talks to AppDbContext directly (same pattern as ChatService).
+        services.Configure<ZansiHustle.Application.AppVersion.MobileAppVersionFallbackOptions>(
+            configuration.GetSection(
+                ZansiHustle.Application.AppVersion.MobileAppVersionFallbackOptions.SectionName));
+        services.AddScoped<
+            ZansiHustle.Application.AppVersion.IMobileAppVersionService,
+            ZansiHustle.Infrastructure.AppVersion.MobileAppVersionService>();
+
         return services;
     }
 
@@ -843,6 +865,15 @@ public static class ServiceExtensions
         app.UseHttpsRedirection();
         app.UseAuthentication();
         app.UseAuthorization();
+
+        // Mobile hard-update gate. Placed after auth so it can short-circuit
+        // outdated mobile builds with 426 before they reach feature endpoints.
+        // It is fully self-guarded: header-less callers (web/portal), the
+        // version-check endpoint, auth bootstrap, health/status, and any
+        // non-/api path are all exempt, and the check is fail-safe — a missing
+        // or malformed X-App-* header can never block a caller.
+        app.UseMiddleware<AppVersionGateMiddleware>();
+
         app.MapControllers();
 
         // Authenticated realtime hub for user-targeted in-app events
@@ -918,6 +949,40 @@ public static class ServiceExtensions
         // transient failure here cannot affect quoting correctness.
         await SafeSeedAsync(logger, "ZansiDispatchSettings",
             () => ZansiDispatchSettingsSeeder.SeedAsync(dbContextForSeed));
+
+        // Mobile version-control baseline rules (Android/Google, Android/Huawei,
+        // iOS/Apple). Idempotent; all rows ship force-update OFF, so seeding can
+        // never lock anyone out. The gate also has the appsettings fallback if the
+        // rows are ever missing.
+        await SafeSeedAsync(logger, "MobileAppVersionRules",
+            () => MobileAppVersionRuleSeeder.SeedAsync(dbContextForSeed));
+
+        // ── App-version gate startup banner ───────────────────────────────────
+        // Surface how many enabled rules back the mobile update gate and whether
+        // the appsettings fallback is configured, so a misconfigured deployment
+        // is obvious at boot.
+        try
+        {
+            var enabledRules = await dbContextForSeed.MobileAppVersionRules
+                .CountAsync(x => x.IsEnabled);
+            var fallback = services
+                .GetRequiredService<Microsoft.Extensions.Options.IOptions<
+                    ZansiHustle.Application.AppVersion.MobileAppVersionFallbackOptions>>().Value;
+            var hasFallback = !string.IsNullOrWhiteSpace(fallback.MinimumSupportedVersion);
+            logger.LogInformation(
+                "[AppVersionConfig] enabledRules={EnabledRules} fallback={Fallback}",
+                enabledRules, hasFallback);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "[AppVersionConfig] Could not log app-version gate banner at startup.");
+        }
+
+        // Remote app-control flags (feature gates the Portal Super Admin toggles
+        // and the mobile app reads). Idempotent — only inserts missing keys, all
+        // default to enabled, so a transient failure here cannot disable a feature.
+        await SafeSeedAsync(logger, "AppRuntimeConfigs",
+            () => AppRuntimeConfigSeeder.SeedAsync(dbContextForSeed));
 
         // ── ZansiDispatch provider-mode startup banner / launch-safety guard ──
         // Make the active delivery-pricing mode visible at boot, and SHOUT if a

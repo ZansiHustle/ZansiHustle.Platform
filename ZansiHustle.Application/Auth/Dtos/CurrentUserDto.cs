@@ -14,4 +14,7 @@ public sealed class CurrentUserDto
     public bool EmailConfirmed { get; set; }
     public List<string> Roles { get; set; } = new();
     public string AccountStatus { get; set; } = string.Empty;
+
+    /// <summary>The user's profile picture URL (from their UserProfile), if set.</summary>
+    public string? ProfileImageUrl { get; set; }
 }

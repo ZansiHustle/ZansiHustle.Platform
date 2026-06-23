@@ -32,6 +32,7 @@ using ZansiHustle.Domain.SellerLeads;
 using ZansiHustle.Domain.ZansiPulse;
 using ZansiHustle.Domain.ZansiDispatch;
 using ZansiHustle.Domain.Finance;
+using ZansiHustle.Domain.AppVersion;
 
 namespace ZansiHustle.Infrastructure.Data;
 
@@ -235,6 +236,12 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     public DbSet<ZansiPulseSnapshot> ZansiPulseSnapshots => Set<ZansiPulseSnapshot>();
     public DbSet<ZansiPulseSetting> ZansiPulseSettings => Set<ZansiPulseSetting>();
 
+    // ── App runtime configs — admin-controlled remote feature flags ─────────
+    // One flexible row type the Portal Super Admin toggles and the mobile app
+    // reads (public rows only) to gate features at runtime.
+    public DbSet<ZansiHustle.Domain.AppConfigs.AppRuntimeConfig> AppRuntimeConfigs =>
+        Set<ZansiHustle.Domain.AppConfigs.AppRuntimeConfig>();
+
     // ── ZansiDispatch — logistics control layer ────────────────────────────
     // Checkout delivery quotes/options, shipment lifecycle + reconciliation,
     // audit ledger, provider request logs, and tunable settings. Reference ids
@@ -258,4 +265,14 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     // ZansiHustle.Infrastructure.Data.Configurations.Finance.* (auto-applied).
     public DbSet<SellerLedgerEntry> SellerLedgerEntries => Set<SellerLedgerEntry>();
     public DbSet<PlatformLedgerEntry> PlatformLedgerEntries => Set<PlatformLedgerEntry>();
+
+    // ── Mobile app version-control rules ───────────────────────────────────
+    // One row per (Platform, Channel) store target driving the public
+    // GET /api/app-version/mobile check and the App-Version gate middleware.
+    // A missing/disabled row falls back to Platform+Generic, then to the
+    // appsettings "MobileAppVersion" section — force-update is NEVER implied
+    // by absence. Config:
+    // ZansiHustle.Infrastructure.Persistence.AppVersion.MobileAppVersionRuleConfiguration
+    // (auto-applied above).
+    public DbSet<MobileAppVersionRule> MobileAppVersionRules => Set<MobileAppVersionRule>();
 }

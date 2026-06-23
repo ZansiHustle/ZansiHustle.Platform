@@ -41,6 +41,7 @@ public sealed class AuthService : IAuthService
     private readonly IPhoneVerificationService _phoneVerificationService;
     private readonly IMemoryCache _cache;
     private readonly ILogger<AuthService> _logger;
+    private readonly ZansiHustle.Application.Users.IUserProfileService _userProfileService;
 
     public AuthService(
         UserManager<User> userManager,
@@ -49,7 +50,8 @@ public sealed class AuthService : IAuthService
         IOtpService otpService,
         IPhoneVerificationService phoneVerificationService,
         IMemoryCache cache,
-        ILogger<AuthService> logger)
+        ILogger<AuthService> logger,
+        ZansiHustle.Application.Users.IUserProfileService userProfileService)
     {
         _userManager = userManager;
         _jwtTokenGenerator = jwtTokenGenerator;
@@ -58,6 +60,7 @@ public sealed class AuthService : IAuthService
         _phoneVerificationService = phoneVerificationService;
         _cache = cache;
         _logger = logger;
+        _userProfileService = userProfileService;
     }
 
     /// <summary>
@@ -773,6 +776,21 @@ public sealed class AuthService : IAuthService
 
             var roles = await _userManager.GetRolesAsync(user);
 
+            // Surface the user's profile picture (from their UserProfile) so the
+            // mobile side menu + profile screen can show it. Best-effort: a
+            // missing/failed profile lookup just leaves the avatar to fall back.
+            string? profileImageUrl = null;
+            try
+            {
+                var profile = await _userProfileService.GetByUserIdAsync(user.Id);
+                if (profile.IsSuccess)
+                    profileImageUrl = profile.Data?.ProfileImageUrl;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to load profile image for user {UserId}.", user.Id);
+            }
+
             var dto = new CurrentUserDto
             {
                 Id = user.Id,
@@ -783,7 +801,8 @@ public sealed class AuthService : IAuthService
                 PhoneNumber = user.PhoneNumber,
                 EmailConfirmed = user.EmailConfirmed,
                 Roles = roles.ToList(),
-                AccountStatus = user.AccountStatus.ToString()
+                AccountStatus = user.AccountStatus.ToString(),
+                ProfileImageUrl = profileImageUrl
             };
 
             return Result<CurrentUserDto>.Success(dto);
