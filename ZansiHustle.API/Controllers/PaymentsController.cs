@@ -32,6 +32,7 @@ namespace ZansiHustle.API.Controllers
         private readonly YocoSettings _yocoSettings;
         private readonly MockCheckoutSettings _mockSettings;
         private readonly IWebHostEnvironment _env;
+        private readonly ZansiHustle.Application.AppConfigs.IAppRuntimeConfigGate _configGate;
         private readonly ILogger<PaymentsController> _logger;
 
         public PaymentsController(
@@ -41,6 +42,7 @@ namespace ZansiHustle.API.Controllers
             IOptions<YocoSettings> yocoSettings,
             IOptions<MockCheckoutSettings> mockSettings,
             IWebHostEnvironment env,
+            ZansiHustle.Application.AppConfigs.IAppRuntimeConfigGate configGate,
             ILogger<PaymentsController> logger)
         {
             _paymentService = paymentService;
@@ -49,6 +51,7 @@ namespace ZansiHustle.API.Controllers
             _yocoSettings = yocoSettings.Value ?? new YocoSettings();
             _mockSettings = mockSettings.Value ?? new MockCheckoutSettings();
             _env = env;
+            _configGate = configGate;
             _logger = logger;
         }
 
@@ -87,6 +90,19 @@ namespace ZansiHustle.API.Controllers
                     "[Payments][Initialize] denied: no userId in token. orderId={OrderId} cfRay={CfRay} trace={TraceId} elapsedMs={Elapsed}",
                     request?.OrderId, rayId ?? "<none>", traceId, sw.ElapsedMilliseconds);
                 return ToActionResult(Result<InitializePaymentResponseDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+            }
+
+            // Remote App-Control gate: payment initiation can be paused platform-wide
+            // from the Portal. Blocked BEFORE any provider session is opened, so
+            // nothing is charged. Clean 403 business error (never a 500).
+            if (!await _configGate.IsEnabledForUserAsync("paymentInitiationEnabled", _currentUserService.Email))
+            {
+                _logger.LogInformation(
+                    "[Payments][Initialize] blocked by paymentInitiationEnabled=false. orderId={OrderId}",
+                    request?.OrderId);
+                return ToActionResult(Result<InitializePaymentResponseDto>.Failure(
+                    "FEATURE_DISABLED",
+                    "Payments are temporarily unavailable. Payments are currently paused while we update the payment experience. Please try again soon."));
             }
 
             try

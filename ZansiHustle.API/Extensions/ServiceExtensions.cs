@@ -642,6 +642,9 @@ public static class ServiceExtensions
         services.AddScoped<
             ZansiHustle.Application.AppConfigs.IAppRuntimeConfigService,
             ZansiHustle.Application.AppConfigs.AppRuntimeConfigService>();
+        services.AddScoped<
+            ZansiHustle.Application.AppConfigs.IAppRuntimeConfigGate,
+            ZansiHustle.Application.AppConfigs.AppRuntimeConfigGate>();
         services.AddScoped<IAgentMappingService, AgentMappingService>();
         services.AddScoped<IListingService, ListingService>();
         services.AddScoped<
@@ -879,6 +882,11 @@ public static class ServiceExtensions
         // Authenticated realtime hub for user-targeted in-app events
         // (NotificationCreated / NotificationUnreadCountChanged / BookingStatusChanged).
         app.MapHub<ZansiHustle.API.Realtime.RealtimeHub>("/hubs/realtime");
+
+        // Public, anonymous hub: broadcasts only a lightweight { version, updatedAt }
+        // "appConfigsChanged" signal so online clients can re-fetch the public
+        // config map live. No config VALUES are ever pushed here.
+        app.MapHub<ZansiHustle.API.Realtime.AppConfigHub>("/hubs/app-configs");
 
         return app;
     }

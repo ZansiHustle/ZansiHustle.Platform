@@ -71,6 +71,20 @@ namespace ZansiHustle.Infrastructure.Data.Seed
                 "Allow customers to book services.", "Customer",
                 "Bookings are temporarily closed",
                 "Service bookings are currently paused while we improve the experience. Please check again soon."),
+            new("cartAccessEnabled", "Cart Access",
+                "Allow customers to open and view their shopping cart.", "Customer",
+                "Cart is temporarily unavailable",
+                "The cart is temporarily closed while we update the shopping experience. Please check again soon."),
+            new("checkoutEnabled", "Checkout",
+                "Allow customers to proceed from cart/product flow into checkout.", "Customer",
+                "Checkout is temporarily unavailable",
+                "Checkout is currently paused while we prepare the store. Please try again soon."),
+
+            // ── Payments ─────────────────────────────────────────────────────────
+            new("paymentInitiationEnabled", "Payment Initiation",
+                "Allow customers to start payment after checkout.", "Payments",
+                "Payments are temporarily unavailable",
+                "Payments are currently paused while we update the payment experience. Please try again soon."),
 
             // ── Messaging ────────────────────────────────────────────────────────
             new("marketplaceMessagingEnabled", "Marketplace messaging",
@@ -113,6 +127,14 @@ namespace ZansiHustle.Infrastructure.Data.Seed
                 "Allow customers to track orders.", "System",
                 "Order tracking is paused",
                 "Order tracking is temporarily unavailable. Please try again later."),
+
+            // ── Review override ──────────────────────────────────────────────────
+            // App-store review escape hatch: lets ONLY test@zansihustle.co.za
+            // bypass customer-facing feature gates while the real marketplace may
+            // be paused. Not customer-facing, so no disabled title/message.
+            new("testAccountAccessAllEnabled", "Test Account Full Access",
+                "Allows the official app review test account (test@zansihustle.co.za) to bypass app feature restrictions for app store review.",
+                "System", "", ""),
         };
     }
 }

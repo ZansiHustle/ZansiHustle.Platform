@@ -3,6 +3,8 @@ using System.Security.Claims;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
+using ZansiHustle.API.Realtime;
 using ZansiHustle.Application.AppConfigs;
 using ZansiHustle.Application.AppConfigs.Dtos;
 
@@ -16,13 +18,16 @@ namespace ZansiHustle.API.Controllers
     public class AdminAppConfigsController : BaseController
     {
         private readonly IAppRuntimeConfigService _service;
+        private readonly IHubContext<AppConfigHub> _appConfigHub;
         private readonly ILogger<AdminAppConfigsController> _logger;
 
         public AdminAppConfigsController(
             IAppRuntimeConfigService service,
+            IHubContext<AppConfigHub> appConfigHub,
             ILogger<AdminAppConfigsController> logger)
         {
             _service = service;
+            _appConfigHub = appConfigHub;
             _logger = logger;
         }
 
@@ -44,6 +49,23 @@ namespace ZansiHustle.API.Controllers
             {
                 _logger.LogInformation(
                     "App config '{Key}' updated by {UserId}.", key, userId);
+
+                // Broadcast a lightweight change signal so online clients re-fetch
+                // the public map live. NEVER push config values here. SignalR
+                // failure must not fail the save — log and continue.
+                try
+                {
+                    var updatedAt = result.Data?.UpdatedAtUtc ?? DateTime.UtcNow;
+                    await _appConfigHub.Clients.All.SendAsync("appConfigsChanged", new
+                    {
+                        version = updatedAt.Ticks,
+                        updatedAt,
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "appConfigsChanged broadcast failed for '{Key}'.", key);
+                }
             }
             return ToActionResult(result);
         }

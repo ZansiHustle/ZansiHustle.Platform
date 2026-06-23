@@ -77,6 +77,9 @@ public abstract class BaseController : ControllerBase
             "FORBIDDEN" => StatusCodes.Status403Forbidden,
             "INACTIVE_ACCOUNT" => StatusCodes.Status403Forbidden,
             "EMAIL_NOT_CONFIRMED" => StatusCodes.Status403Forbidden,
+            // Remote App-Control gate closed this flow (e.g. checkout/payment
+            // paused from the Portal). A clean business 403, not a 500.
+            "FEATURE_DISABLED" => StatusCodes.Status403Forbidden,
 
             "NOT_FOUND" => StatusCodes.Status404NotFound,
 

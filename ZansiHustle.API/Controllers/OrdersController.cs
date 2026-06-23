@@ -24,15 +24,18 @@ namespace ZansiHustle.API.Controllers
     {
         private readonly IOrderService _orderService;
         private readonly ICurrentUserService _currentUserService;
+        private readonly ZansiHustle.Application.AppConfigs.IAppRuntimeConfigGate _configGate;
         private readonly ILogger<OrdersController> _logger;
 
         public OrdersController(
             IOrderService orderService,
             ICurrentUserService currentUserService,
+            ZansiHustle.Application.AppConfigs.IAppRuntimeConfigGate configGate,
             ILogger<OrdersController> logger)
         {
             _orderService = orderService;
             _currentUserService = currentUserService;
+            _configGate = configGate;
             _logger = logger;
         }
 
@@ -51,6 +54,17 @@ namespace ZansiHustle.API.Controllers
 
             if (!userId.HasValue)
                 return ToActionResult(Result<OrderDto>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            // Remote App-Control gate: checkout (order creation) can be paused
+            // platform-wide from the Portal. Blocked BEFORE CreateAsync, so no
+            // order is created and the order lifecycle is untouched. Clean 403.
+            if (!await _configGate.IsEnabledForUserAsync("checkoutEnabled", _currentUserService.Email))
+            {
+                _logger.LogInformation("[Orders][Create] blocked by checkoutEnabled=false. userId={UserId}", userId.Value);
+                return ToActionResult(Result<OrderDto>.Failure(
+                    "FEATURE_DISABLED",
+                    "Checkout is temporarily unavailable. Checkout is currently paused while we prepare the store. Please try again soon."));
+            }
 
             var result = await _orderService.CreateAsync(userId.Value, request);
 
