@@ -17,5 +17,6 @@ namespace ZansiHustle.Application.Analytics
         Task<Result<List<RevenuePointDto>>> GetRevenueTrendAsync(int months = 7);
         Task<Result<List<RegionBreakdownDto>>> GetRegionBreakdownAsync();
         Task<Result<List<CategoryBreakdownDto>>> GetCategoryBreakdownAsync();
+        Task<Result<AnalyticsOverviewDto>> GetOverviewAsync(int growthMonths = 6);
     }
 }

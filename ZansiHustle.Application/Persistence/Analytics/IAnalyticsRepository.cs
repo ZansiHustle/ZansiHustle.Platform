@@ -14,5 +14,8 @@ namespace ZansiHustle.Application.Persistence.Analytics
         Task<List<RevenuePointDto>> GetRevenueTrendAsync(int months);
         Task<List<RegionBreakdownDto>> GetRegionBreakdownAsync();
         Task<List<CategoryBreakdownDto>> GetCategoryBreakdownAsync();
+
+        /// <summary>Live command-center snapshot (summary + growth + sections).</summary>
+        Task<AnalyticsOverviewDto> GetOverviewAsync(int growthMonths);
     }
 }

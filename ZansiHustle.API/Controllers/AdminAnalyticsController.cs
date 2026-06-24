@@ -52,5 +52,17 @@ namespace ZansiHustle.API.Controllers
             var result = await _service.GetCategoryBreakdownAsync();
             return ToActionResult(result);
         }
+
+        /// <summary>
+        /// Live command-center snapshot: summary KPIs, monthly user growth
+        /// (customers / sellers / shops), App-Control flags, and marketplace /
+        /// services / payments / dispatch sections. All aggregate counts — no PII.
+        /// </summary>
+        [HttpGet("overview")]
+        public async Task<IActionResult> GetOverview([FromQuery] int growthMonths = 6)
+        {
+            var result = await _service.GetOverviewAsync(growthMonths);
+            return ToActionResult(result);
+        }
     }
 }

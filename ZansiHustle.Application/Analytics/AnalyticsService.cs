@@ -77,5 +77,21 @@ namespace ZansiHustle.Application.Analytics
                 return Result<List<CategoryBreakdownDto>>.Failure($"Failed to retrieve category breakdown. {ex.Message}");
             }
         }
+
+        public async Task<Result<AnalyticsOverviewDto>> GetOverviewAsync(int growthMonths = 6)
+        {
+            if (growthMonths < 1) growthMonths = 1;
+            if (growthMonths > 24) growthMonths = 24;
+
+            try
+            {
+                var data = await _repository.GetOverviewAsync(growthMonths);
+                return Result<AnalyticsOverviewDto>.Success(data, "Analytics overview retrieved successfully.");
+            }
+            catch (Exception ex)
+            {
+                return Result<AnalyticsOverviewDto>.Failure($"Failed to retrieve analytics overview. {ex.Message}");
+            }
+        }
     }
 }
