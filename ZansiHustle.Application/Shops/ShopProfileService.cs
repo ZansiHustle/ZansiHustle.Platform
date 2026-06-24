@@ -2,15 +2,18 @@ using System;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Identity;
 using ZansiHustle.Application.Common.Paging;
 using ZansiHustle.Application.Persistence.Merchants;
 using ZansiHustle.Application.Persistence.SellerCategories;
 using ZansiHustle.Application.Persistence.Shops;
 using ZansiHustle.Application.Persistence.Users;
 using ZansiHustle.Application.Shops.Dtos;
+using ZansiHustle.Domain.Identity;
 using ZansiHustle.Domain.Shops;
 using ZansiHustle.Shared.Enums.Merchants;
 using ZansiHustle.Shared.Enums.Shops;
+using ZansiHustle.Shared.Enums.User;
 using ZansiHustle.Shared.Errors;
 using ZansiHustle.Shared.Results;
 
@@ -34,17 +37,20 @@ namespace ZansiHustle.Application.Shops
         private readonly IMerchantRepository _merchantRepository;
         private readonly ISellerCategoryRepository _categoryRepository;
         private readonly IUserRepository _userRepository;
+        private readonly UserManager<User> _userManager;
 
         public ShopProfileService(
             IShopProfileRepository shopRepository,
             IMerchantRepository merchantRepository,
             ISellerCategoryRepository categoryRepository,
-            IUserRepository userRepository)
+            IUserRepository userRepository,
+            UserManager<User> userManager)
         {
             _shopRepository = shopRepository;
             _merchantRepository = merchantRepository;
             _categoryRepository = categoryRepository;
             _userRepository = userRepository;
+            _userManager = userManager;
         }
 
         // ─── Mine (owner-facing) ────────────────────────────────────
@@ -102,16 +108,22 @@ namespace ZansiHustle.Application.Shops
                         "Your seller account is not yet active. Wait for approval before opening a shop.");
                 }
 
-                // Duplicate-active guard: one non-Suspended shop per
-                // merchant for now. The filtered unique index is the
-                // backstop, but a service-layer check returns a clean
-                // 409 with a friendly message instead of a DB error.
-                var existing = await _shopRepository.GetActiveByMerchantAsync(onlineMerchant.Id);
-                if (existing is not null)
+                // Duplicate-active guard: normal sellers are limited to one
+                // non-Suspended shop. Admin/SuperAdmin users are exempt — they
+                // may run multiple shops (e.g. for demos, partners, or managed
+                // storefronts) and so skip ONLY this guard. The DB no longer
+                // enforces uniqueness here (a filtered unique index can't see
+                // roles), so this service check is the sole gate for sellers.
+                var isAdminOrSuperAdmin = await IsAdminOrSuperAdminAsync(ownerUserId);
+                if (!isAdminOrSuperAdmin)
                 {
-                    return Result<ShopProfileDto>.Failure(
-                        ErrorCodes.Conflict,
-                        "You already have a shop. Edit it instead of creating another.");
+                    var existing = await _shopRepository.GetActiveByMerchantAsync(onlineMerchant.Id);
+                    if (existing is not null)
+                    {
+                        return Result<ShopProfileDto>.Failure(
+                            ErrorCodes.Conflict,
+                            "You already have a shop. Edit it instead of creating another.");
+                    }
                 }
 
                 var categoryCheck = await ValidateCategoriesAsync(request.SellerCategoryId, request.SellerSubcategoryId);
@@ -466,6 +478,23 @@ namespace ZansiHustle.Application.Shops
         }
 
         // ─── Helpers ────────────────────────────────────────────────
+
+        /// <summary>
+        /// True when the owner holds the Admin or SuperAdmin role. Used to
+        /// exempt platform staff from the one-shop-per-merchant limit. Role
+        /// names come straight from the <see cref="UserRole"/> enum (the
+        /// IdentitySeeder seeds them verbatim), and the comparison is
+        /// case-insensitive to be robust against normalisation differences.
+        /// </summary>
+        private async Task<bool> IsAdminOrSuperAdminAsync(Guid ownerUserId)
+        {
+            var user = await _userManager.FindByIdAsync(ownerUserId.ToString());
+            if (user is null) return false;
+
+            var roles = await _userManager.GetRolesAsync(user);
+            return roles.Contains(UserRole.Admin.ToString(), StringComparer.OrdinalIgnoreCase)
+                || roles.Contains(UserRole.SuperAdmin.ToString(), StringComparer.OrdinalIgnoreCase);
+        }
 
         private async Task<ShopProfileDto> MapToDtoAsync(ShopProfile s)
         {

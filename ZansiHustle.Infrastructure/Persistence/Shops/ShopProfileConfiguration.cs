@@ -78,14 +78,16 @@ namespace ZansiHustle.Infrastructure.Persistence.Shops
             // Slug must be globally unique — used in public URLs.
             entity.HasIndex(x => x.Slug).IsUnique().HasDatabaseName("UX_ShopProfiles_Slug");
 
-            // One non-Suspended shop per merchant. Suspended rows are
-            // excluded so re-opening a shop is possible without first
-            // hard-deleting the old row (preserves history). SQL Server
-            // filtered index syntax — Status 3 == ShopProfileStatus.Suspended.
-            entity.HasIndex(x => x.MerchantId)
-                .IsUnique()
-                .HasFilter($"[Status] <> {(int)ShopProfileStatus.Suspended}")
-                .HasDatabaseName("UX_ShopProfiles_Merchant_Active");
+            // Merchant lookup index (NON-unique). Previously a filtered UNIQUE
+            // index enforced "one non-Suspended shop per merchant" at the DB
+            // level. That has been relaxed: Admin/SuperAdmin users may now run
+            // multiple shops under one merchant, and a SQL Server filtered
+            // index can't make a role-aware decision. The one-shop limit for
+            // normal sellers is now enforced purely in the service layer
+            // (ShopProfileService.CreateMineAsync). This index stays only to
+            // keep GetActiveByMerchantAsync (MerchantId + Status) fast.
+            entity.HasIndex(x => new { x.MerchantId, x.Status })
+                .HasDatabaseName("IX_ShopProfiles_Merchant_Status");
 
             // Listing index — Portal /shops and public shop search hit
             // this for the typical (Status, CreatedAt desc) read.
