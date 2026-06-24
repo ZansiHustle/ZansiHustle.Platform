@@ -230,8 +230,9 @@ namespace ZansiHustle.Application.Seller.AccountProfile
             var productsCount = active.Count(l => l.Type == ListingType.Product);
             var servicesCount = active.Count(l => l.Type == ListingType.Service);
 
-            var shop = await _shops.GetActiveByMerchantAsync(merchant.Id);
-            var shopCount = shop is null ? 0 : 1;
+            // Live count of ALL the owner's (non-Suspended) shops, not just one.
+            // Admin/SuperAdmin owners can run several; normal sellers get 0 or 1.
+            var shopCount = await _shops.CountMineAsync(ownerUserId);
 
             // Real product-order behaviour (caller's own merchants only).
             var orders = await _orders.GetBySellerUserAsync(ownerUserId);

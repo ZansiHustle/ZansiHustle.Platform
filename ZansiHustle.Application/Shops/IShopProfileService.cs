@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using ZansiHustle.Application.Common.Paging;
 using ZansiHustle.Application.Shops.Dtos;
@@ -16,6 +17,14 @@ namespace ZansiHustle.Application.Shops
     public interface IShopProfileService
     {
         Task<Result<ShopProfileDto?>> GetMineAsync(Guid ownerUserId);
+
+        /// <summary>
+        /// All of the caller's shops (owner-facing My Shops list). Normal
+        /// sellers see 0 or 1; Admin/SuperAdmin owners may see several. Returns
+        /// an empty list (never null) when the seller has no shop yet.
+        /// </summary>
+        Task<Result<List<ShopProfileDto>>> GetAllMineAsync(Guid ownerUserId);
+
         Task<Result<ShopProfileDto>> CreateMineAsync(Guid ownerUserId, CreateShopRequestDto request);
         Task<Result<ShopProfileDto>> UpdateMineAsync(Guid ownerUserId, Guid shopId, UpdateShopRequestDto request);
 

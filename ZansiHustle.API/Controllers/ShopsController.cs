@@ -87,6 +87,25 @@ namespace ZansiHustle.API.Controllers
         }
 
         /// <summary>
+        /// Returns ALL the caller's shops (owner-facing My Shops list). Normal
+        /// sellers get 0 or 1; Admin/SuperAdmin owners may get several. Returns
+        /// an empty array (not 404) when the seller has no shop yet. Distinct
+        /// from GET /mine, which returns a single primary shop and is still used
+        /// by the "do I have a shop?" tri-state across other screens.
+        /// </summary>
+        [HttpGet("mine/all")]
+        [ProducesResponseType(typeof(Result<List<ShopProfileDto>>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetAllMine()
+        {
+            var userId = _currentUserService.UserId;
+            if (!userId.HasValue)
+                return ToActionResult(Result<List<ShopProfileDto>>.Failure(ErrorCodes.Unauthorized, "User identifier not found in token."));
+
+            var result = await _shopService.GetAllMineAsync(userId.Value);
+            return ToActionResult(result);
+        }
+
+        /// <summary>
         /// Creates the caller's shop. Service-layer guards:
         ///   • caller must own an Active OnlineStore Merchant (403);
         ///   • only one non-Suspended shop per merchant (409).

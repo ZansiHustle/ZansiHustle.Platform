@@ -80,6 +80,29 @@ namespace ZansiHustle.Application.Shops
             }
         }
 
+        public async Task<Result<System.Collections.Generic.List<ShopProfileDto>>> GetAllMineAsync(Guid ownerUserId)
+        {
+            try
+            {
+                var shops = await _shopRepository.GetAllMineAsync(ownerUserId);
+
+                // Map sequentially — MapToDtoAsync resolves category/subcategory
+                // names per shop. The list is tiny (0..a handful), so the N+1 is
+                // a non-issue and reuses the exact owner projection GET /mine uses.
+                var dtos = new System.Collections.Generic.List<ShopProfileDto>(shops.Count);
+                foreach (var shop in shops)
+                    dtos.Add(await MapToDtoAsync(shop));
+
+                return Result<System.Collections.Generic.List<ShopProfileDto>>.Success(dtos);
+            }
+            catch (Exception ex)
+            {
+                return Result<System.Collections.Generic.List<ShopProfileDto>>.Failure(
+                    ErrorCodes.Exception,
+                    $"An error occurred while loading your shops. {ex.Message}");
+            }
+        }
+
         public async Task<Result<ShopProfileDto>> CreateMineAsync(Guid ownerUserId, CreateShopRequestDto request)
         {
             try

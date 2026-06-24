@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -38,6 +39,32 @@ namespace ZansiHustle.Infrastructure.Persistence.Shops
                 orderby shop.CreatedAtUtc descending
                 select shop
             ).FirstOrDefaultAsync();
+        }
+
+        public async Task<List<ShopProfile>> GetAllMineAsync(Guid ownerUserId)
+        {
+            // Same ownership join + status filter as GetMineAsync, but returns
+            // every matching shop (Admin/SuperAdmin can own several). Newest
+            // first so the most recently created shop heads the My Shops list.
+            return await (
+                from shop in _context.ShopProfiles
+                join merchant in _context.Merchants on shop.MerchantId equals merchant.Id
+                where merchant.OwnerUserId == ownerUserId
+                      && shop.Status != ShopProfileStatus.Suspended
+                orderby shop.CreatedAtUtc descending
+                select shop
+            ).ToListAsync();
+        }
+
+        public Task<int> CountMineAsync(Guid ownerUserId)
+        {
+            return (
+                from shop in _context.ShopProfiles
+                join merchant in _context.Merchants on shop.MerchantId equals merchant.Id
+                where merchant.OwnerUserId == ownerUserId
+                      && shop.Status != ShopProfileStatus.Suspended
+                select shop.Id
+            ).CountAsync();
         }
 
         public Task<ShopProfile?> GetActiveByMerchantAsync(Guid merchantId)
