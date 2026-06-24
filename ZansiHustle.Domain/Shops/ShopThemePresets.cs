@@ -16,7 +16,19 @@ namespace ZansiHustle.Domain.Shops
 
         public static readonly IReadOnlySet<string> Allowed = new HashSet<string>(StringComparer.Ordinal)
         {
+            // ── Curated, selectable presets (mobile picker) ──────────────────
             "zansi_default",
+            "luxury_black_gold",
+            "soft_beauty_nude",
+            "pink_glam",
+            "barber_black_silver",
+            "clean_medical",
+            "tech_blue",
+            "fashion_cream_black",
+            "afro_earth",
+            "minimal_white_black",
+            // ── Legacy keys — kept valid so existing shops never fail to save /
+            // re-save, and old stored values stay accepted. ──────────────────
             "midnight_lime",
             "blush_pink",
             "royal_gold",
