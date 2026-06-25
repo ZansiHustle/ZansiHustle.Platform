@@ -52,6 +52,16 @@ namespace ZansiHustle.Application.Persistence.Shops
         Task<bool> SlugExistsAsync(string slug, Guid? excludingId = null);
 
         /// <summary>
+        /// True if ANY shop (optionally excluding <paramref name="excludeShopId"/>)
+        /// already uses the given normalised name. <paramref name="normalizedName"/>
+        /// must already be run through <see cref="ZansiHustle.Domain.Shops.ShopNames.Normalize"/>;
+        /// stored names are normalised the same way for the comparison, so the
+        /// match is trim + internal-whitespace-collapsed + case-insensitive.
+        /// Checks all rows (names are permanently reserved, incl. Suspended).
+        /// </summary>
+        Task<bool> NameExistsAsync(string normalizedName, Guid? excludeShopId = null);
+
+        /// <summary>
         /// Public listing — only <see cref="ShopProfileStatus.Active"/>
         /// rows. Pagination capped at 100 in the service layer.
         /// </summary>

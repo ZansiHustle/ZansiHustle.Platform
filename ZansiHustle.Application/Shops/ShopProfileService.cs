@@ -149,6 +149,19 @@ namespace ZansiHustle.Application.Shops
                     }
                 }
 
+                // Shop names are unique platform-wide (a separate rule from slug
+                // uniqueness). Block a duplicate name up-front with a friendly
+                // 409 — case-insensitive, trimmed, internal-whitespace-collapsed.
+                // Applies to Admin/SuperAdmin too: they may own MULTIPLE shops,
+                // but never two with the same name.
+                var normalizedName = ShopNames.Normalize(request.Name);
+                if (await _shopRepository.NameExistsAsync(normalizedName))
+                {
+                    return Result<ShopProfileDto>.Failure(
+                        ErrorCodes.Conflict,
+                        "A shop with this name already exists. Please choose a different shop name.");
+                }
+
                 var categoryCheck = await ValidateCategoriesAsync(request.SellerCategoryId, request.SellerSubcategoryId);
                 if (!categoryCheck.IsSuccess)
                     return Result<ShopProfileDto>.Failure(categoryCheck.Code, categoryCheck.Message);
@@ -238,7 +251,22 @@ namespace ZansiHustle.Application.Shops
                 // `Name` is special — non-empty replaces; empty/null is
                 // ignored (we never blank a required column). Slug is
                 // immutable after creation to keep external links stable.
-                if (!string.IsNullOrWhiteSpace(request.Name)) shop.Name = request.Name.Trim();
+                if (!string.IsNullOrWhiteSpace(request.Name))
+                {
+                    // Enforce unique shop names on rename too. Only checks the
+                    // DB when the normalised name actually CHANGES (so re-saving
+                    // the same name — even with different casing/spacing — never
+                    // false-conflicts), and excludes this shop from the match.
+                    var normalizedName = ShopNames.Normalize(request.Name);
+                    if (!string.Equals(ShopNames.Normalize(shop.Name), normalizedName, StringComparison.Ordinal)
+                        && await _shopRepository.NameExistsAsync(normalizedName, excludeShopId: shop.Id))
+                    {
+                        return Result<ShopProfileDto>.Failure(
+                            ErrorCodes.Conflict,
+                            "A shop with this name already exists. Please choose a different shop name.");
+                    }
+                    shop.Name = request.Name.Trim();
+                }
                 if (request.Description != null) shop.Description = Trim(request.Description);
                 if (request.LogoUrl != null) shop.LogoUrl = Trim(request.LogoUrl);
                 if (request.BannerUrl != null) shop.BannerUrl = Trim(request.BannerUrl);

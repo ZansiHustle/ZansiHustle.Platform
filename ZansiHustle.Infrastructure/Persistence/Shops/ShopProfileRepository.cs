@@ -81,6 +81,24 @@ namespace ZansiHustle.Infrastructure.Persistence.Shops
                 && (excludingId == null || s.Id != excludingId.Value));
         }
 
+        public async Task<bool> NameExistsAsync(string normalizedName, Guid? excludeShopId = null)
+        {
+            if (string.IsNullOrWhiteSpace(normalizedName)) return false;
+
+            // The normalisation (internal-whitespace collapse) isn't reliably
+            // expressible in SQL across providers, so we project the candidate
+            // (id, name) pairs and normalise in memory with the SAME helper the
+            // service uses. Shop volume is small and this runs only on
+            // create/update (rare), so the in-memory pass is safe + exact.
+            var names = await _context.ShopProfiles
+                .AsNoTracking()
+                .Where(s => excludeShopId == null || s.Id != excludeShopId.Value)
+                .Select(s => s.Name)
+                .ToListAsync();
+
+            return names.Any(n => ShopNames.Normalize(n) == normalizedName);
+        }
+
         public async Task<PagedResult<ShopProfile>> SearchPublicAsync(int page, int pageSize, string? q)
         {
             var query = _context.ShopProfiles
