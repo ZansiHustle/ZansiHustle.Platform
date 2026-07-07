@@ -45,8 +45,10 @@ namespace ZansiHustle.API.Controllers
             => ToActionResult(await _service.GetByOwnerAsync((OwnerEntityType)ownerType, ownerId));
 
         /// <summary>Admin review for verification-class assets (KYC).</summary>
+        // MarketplaceGrowthAssociate is included so seller-onboarding staff can
+        // approve/reject KYC documents in the portal's Sellers review flow.
         [HttpPut("{id:guid}/review")]
-        [Authorize(Roles = "SuperAdmin,Admin,Partner,Support")]
+        [Authorize(Roles = "SuperAdmin,Admin,Partner,Support,MarketplaceGrowthAssociate")]
         public async Task<IActionResult> Review(Guid id, [FromBody] ReviewMediaRequestDto request)
             => ToActionResult(await _service.ReviewAsync(id, request));
     }

@@ -13,7 +13,9 @@ namespace ZansiHustle.API.Controllers
     /// listings regardless of status, source, availability, or visibility.
     /// </summary>
     [Route("api/admin/listings")]
-    [Authorize(Roles = "SuperAdmin,Admin,Partner,Accountant")]
+    // MarketplaceGrowthAssociate is included (read-only grid + KPIs) so
+    // seller-onboarding staff can review products/services in the portal.
+    [Authorize(Roles = "SuperAdmin,Admin,Partner,Accountant,MarketplaceGrowthAssociate")]
     public class AdminListingsController : BaseController
     {
         private readonly IAdminListingService _service;
