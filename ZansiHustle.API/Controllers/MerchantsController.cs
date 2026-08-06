@@ -211,9 +211,11 @@ namespace ZansiHustle.API.Controllers
         }
 
         /// <summary>
-        /// Gets the listings offered by a specific shop.
+        /// Gets the listings offered by a specific shop. Anonymous: the store
+        /// catalogue is buyer-facing and browsable by guest visitors.
         /// </summary>
         [HttpGet("{merchantId:guid}/listings")]
+        [AllowAnonymous]
         [ProducesResponseType(typeof(Result<List<ListingListItemDto>>), StatusCodes.Status200OK)]
         public async Task<IActionResult> GetListings(Guid merchantId)
         {

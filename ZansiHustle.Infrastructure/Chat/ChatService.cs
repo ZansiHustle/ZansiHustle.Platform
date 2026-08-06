@@ -55,6 +55,18 @@ namespace ZansiHustle.Infrastructure.Chat
 
         // ── Start: marketplace ─────────────────────────────────────
 
+        /// <summary>
+        /// True when either user has blocked the other (App Store 1.2). Used to
+        /// gate conversation creation + message sending in both directions.
+        /// </summary>
+        private Task<bool> IsBlockedBetweenAsync(Guid a, Guid b, CancellationToken ct)
+        {
+            if (a == Guid.Empty || b == Guid.Empty) return Task.FromResult(false);
+            return _db.UserBlocks.AnyAsync(x =>
+                (x.BlockerUserId == a && x.BlockedUserId == b) ||
+                (x.BlockerUserId == b && x.BlockedUserId == a), ct);
+        }
+
         public async Task<Result<ConversationDetailDto>> StartMarketplaceConversationAsync(
             Guid callerUserId, Guid listingId, CancellationToken ct = default)
         {
@@ -83,6 +95,11 @@ namespace ZansiHustle.Infrastructure.Chat
                 if (listing.OwnerUserId == callerUserId)
                     return Result<ConversationDetailDto>.Failure(
                         ErrorCodes.Forbidden, "You can't message yourself about your own listing.");
+
+                // App Store 1.2 — a block (either direction) prevents new chats.
+                if (await IsBlockedBetweenAsync(callerUserId, listing.OwnerUserId, ct))
+                    return Result<ConversationDetailDto>.Failure(
+                        ErrorCodes.Forbidden, "You can't message this user.");
 
                 // Serializable so two simultaneous "Message seller" taps
                 // from the same buyer cannot create two parallel
@@ -203,6 +220,11 @@ namespace ZansiHustle.Infrastructure.Chat
                 if (order.BuyerUserId == merchantOwnerId)
                     return Result<ConversationDetailDto>.Failure(
                         ErrorCodes.Forbidden, "Buyer and seller are the same user.");
+
+                // App Store 1.2 — a block (either direction) prevents new chats.
+                if (await IsBlockedBetweenAsync(order.BuyerUserId, merchantOwnerId, ct))
+                    return Result<ConversationDetailDto>.Failure(
+                        ErrorCodes.Forbidden, "You can't message this user.");
 
                 await using var tx = await _db.Database.BeginTransactionAsync(
                     IsolationLevel.Serializable, ct);
@@ -645,6 +667,11 @@ namespace ZansiHustle.Infrastructure.Chat
 
                 if (conversation.IsClosed)
                     return Result<MessageDto>.Failure(ErrorCodes.Forbidden, "This conversation is closed.");
+
+                // App Store 1.2 — once either party blocks the other, neither can
+                // send further messages in the thread.
+                if (await IsBlockedBetweenAsync(conversation.BuyerUserId ?? Guid.Empty, conversation.SellerUserId ?? Guid.Empty, ct))
+                    return Result<MessageDto>.Failure(ErrorCodes.Forbidden, "You can't message this user.");
 
                 // T5/T6 — block sends on a service-booking chat once the booking is
                 // terminal (Completed/Cancelled/Rejected). Keeps the parties from

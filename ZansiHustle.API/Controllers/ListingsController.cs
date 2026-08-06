@@ -32,8 +32,12 @@ namespace ZansiHustle.API.Controllers
 
         /// <summary>
         /// Searches listings with filters, paging, and sorting.
+        /// Anonymous: buyers (including guest / signed-out visitors) browse
+        /// the product & service catalogue without an account. Write actions
+        /// (create/update/delete) below remain seller-scoped via JWT.
         /// </summary>
         [HttpGet]
+        [AllowAnonymous]
         [ProducesResponseType(typeof(Result<PagedResult<ListingListItemDto>>), StatusCodes.Status200OK)]
         public async Task<IActionResult> Search([FromQuery] ListingFilterRequestDto filter)
         {
@@ -59,8 +63,12 @@ namespace ZansiHustle.API.Controllers
 
         /// <summary>
         /// Gets a listing by identifier.
+        /// Anonymous: the product / service detail page is buyer-facing and
+        /// reachable by guest visitors (App Store Guideline 5.1.1(v) — browse
+        /// without registration).
         /// </summary>
         [HttpGet("{id:guid}")]
+        [AllowAnonymous]
         [ProducesResponseType(typeof(Result<ListingDto>), StatusCodes.Status200OK)]
         public async Task<IActionResult> GetById(Guid id)
         {

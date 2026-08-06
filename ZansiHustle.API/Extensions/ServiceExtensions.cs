@@ -619,6 +619,19 @@ public static class ServiceExtensions
         // ZansiHustle.Application.Chat.IChatService for the contract.
         services.AddScoped<ZansiHustle.Application.Chat.IChatService,
                            ZansiHustle.Infrastructure.Chat.ChatService>();
+        // Self-service account deletion (App Store 5.1.1(v)). Infrastructure
+        // service (queries AppDbContext directly across aggregates), same
+        // convention as ChatService.
+        services.AddScoped<ZansiHustle.Application.Account.IAccountDeletionService,
+                           ZansiHustle.Infrastructure.Account.AccountDeletionService>();
+        // Content reporting (App Store 1.2) + user blocking — DB-direct services.
+        services.AddScoped<ZansiHustle.Application.Reports.IReportService,
+                           ZansiHustle.Infrastructure.Reports.ReportService>();
+        services.AddScoped<ZansiHustle.Application.Blocks.IUserBlockService,
+                           ZansiHustle.Infrastructure.Blocks.UserBlockService>();
+        // Admin moderation enforcement (App Store 1.2): suspend/ban users, hide content.
+        services.AddScoped<ZansiHustle.Application.Admin.Moderation.IAdminModerationService,
+                           ZansiHustle.Infrastructure.Admin.AdminModerationService>();
         services.AddScoped<ISellerLeadService, SellerLeadService>();
         services.AddScoped<IInfluencerService, InfluencerService>();
         services.AddScoped<IPodcastService, PodcastService>();

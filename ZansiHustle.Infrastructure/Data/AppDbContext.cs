@@ -184,6 +184,10 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     // ── Polymorphic reviews (Store / Shop / Product / Service) ────────────
     public DbSet<Review> Reviews => Set<Review>();
 
+    // ── Trust & safety (App Store 1.2): content reports + user blocks ──────
+    public DbSet<ZansiHustle.Domain.Reports.ContentReport> ContentReports => Set<ZansiHustle.Domain.Reports.ContentReport>();
+    public DbSet<ZansiHustle.Domain.Blocks.UserBlock> UserBlocks => Set<ZansiHustle.Domain.Blocks.UserBlock>();
+
     // ── Shop storefronts (decoupled from Merchant; see ShopProfile) ──
     public DbSet<ShopProfile> ShopProfiles => Set<ShopProfile>();
 
