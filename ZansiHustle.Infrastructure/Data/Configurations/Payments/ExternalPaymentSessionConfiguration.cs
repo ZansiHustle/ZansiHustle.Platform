@@ -17,7 +17,7 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Payments
             // excluded so a genuinely failed attempt never blocks a fresh retry.
             builder.HasIndex(x => new { x.ShopCode, x.ExternalOrderId })
                 .IsUnique()
-                .HasFilter("[Status] NOT IN (5,6,7)")
+                .HasFilter("[Status] <> 5 AND [Status] <> 6 AND [Status] <> 7")
                 .HasDatabaseName("IX_ExternalPaymentSessions_ActiveShopOrder");
 
             builder.HasIndex(x => x.ProviderReference).IsUnique().HasFilter("[ProviderReference] IS NOT NULL");

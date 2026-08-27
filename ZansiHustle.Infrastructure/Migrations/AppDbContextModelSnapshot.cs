@@ -2878,7 +2878,7 @@ namespace ZansiHustle.Infrastructure.Migrations
                     b.HasIndex("ShopCode", "ExternalOrderId")
                         .IsUnique()
                         .HasDatabaseName("IX_ExternalPaymentSessions_ActiveShopOrder")
-                        .HasFilter("[Status] NOT IN (5,6,7)");
+                        .HasFilter("[Status] <> 5 AND [Status] <> 6 AND [Status] <> 7");
 
                     b.ToTable("ExternalPaymentSessions", (string)null);
                 });

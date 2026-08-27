@@ -49,7 +49,7 @@ namespace ZansiHustle.Infrastructure.Migrations
                 table: "ExternalPaymentSessions",
                 columns: new[] { "ShopCode", "ExternalOrderId" },
                 unique: true,
-                filter: "[Status] NOT IN (5,6,7)");
+                filter: "[Status] <> 5 AND [Status] <> 6 AND [Status] <> 7");
 
             migrationBuilder.CreateIndex(
                 name: "IX_ExternalPaymentSessions_CreatedAtUtc",
