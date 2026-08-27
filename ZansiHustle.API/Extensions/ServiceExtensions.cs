@@ -478,6 +478,49 @@ public static class ServiceExtensions
     }
 
     /// <summary>
+    /// Registers the External Shop Payments feature — the server-to-server
+    /// payment API approved external shops (ZansiTech first) call to take
+    /// payments through ZansiHustle's SAME Ozow integration. Does NOT touch
+    /// <c>AddOzowPayments</c>/<c>IOzowClient</c>/<c>IOzowHashService</c> —
+    /// this only adds new consumers of them. ExternalShopsOptions/
+    /// ExternalPaymentsSettings live in the Application project (like
+    /// MockCheckoutSettings) since ExternalShopPaymentService depends on
+    /// them directly and Application cannot reference Infrastructure.
+    /// </summary>
+    public static IServiceCollection AddExternalShopPayments(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<ZansiHustle.Application.Payments.External.ExternalShopsOptions>(
+            configuration.GetSection(ZansiHustle.Application.Payments.External.ExternalShopsOptions.SectionName));
+        services.Configure<ZansiHustle.Application.Payments.External.ExternalPaymentsSettings>(
+            configuration.GetSection(ZansiHustle.Application.Payments.External.ExternalPaymentsSettings.SectionName));
+
+        services.AddScoped<
+            ZansiHustle.Application.Payments.External.IExternalShopSignatureService,
+            ZansiHustle.Infrastructure.Payments.External.ExternalShopSignatureService>();
+
+        services.AddHttpClient<
+            ZansiHustle.Application.Payments.External.IExternalShopCallbackSender,
+            ZansiHustle.Infrastructure.Payments.External.ExternalShopCallbackSender>((sp, client) =>
+        {
+            var settings = sp.GetRequiredService<IOptions<ZansiHustle.Application.Payments.External.ExternalPaymentsSettings>>().Value;
+            client.Timeout = TimeSpan.FromSeconds(settings.CallbackTimeoutSeconds > 0 ? settings.CallbackTimeoutSeconds : 15);
+        });
+
+        services.AddScoped<
+            ZansiHustle.Application.Persistence.Payments.IExternalPaymentSessionRepository,
+            ZansiHustle.Infrastructure.Persistence.Payments.ExternalPaymentSessionRepository>();
+
+        services.AddScoped<
+            ZansiHustle.Application.Payments.External.IExternalShopPaymentService,
+            ZansiHustle.Application.Payments.External.ExternalShopPaymentService>();
+
+        // Boot-time diagnostic — never a secret value, mirrors OzowConfigReporter.
+        services.AddHostedService<ZansiHustle.API.Services.ExternalPaymentsConfigReporter>();
+
+        return services;
+    }
+
+    /// <summary>
     /// Registers the channel-agnostic OTP service and the in-memory session store.
     /// Replace <see cref="InMemoryOtpStore"/> with a Redis/SQL implementation
     /// when scaling horizontally.
