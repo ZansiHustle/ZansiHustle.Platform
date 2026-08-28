@@ -96,10 +96,16 @@ namespace ZansiHustle.Application.Orders
                     // transactional inventory model with refund-on-cancel
                     // semantics. Pre-checking is enough to stop the obvious
                     // overselling case at the moment of order placement.
-                    // Variant-level stock (ListingVariant.Stock) is NOT
-                    // consulted yet because OrderItem can't yet carry a
-                    // VariantId — see "Variant order support" follow-up.
-                    if (listing.Stock is int available)
+                    //
+                    // Listings that sell through variants are gated by
+                    // PER-VARIANT stock instead (see the line-item loop
+                    // below) — Listing.Stock on a variant-having listing is
+                    // just an aggregate/legacy summary, not authoritative
+                    // for what's actually purchasable. Variant-less listings
+                    // (the overwhelming majority today) keep this exact
+                    // check, unchanged.
+                    var hasVariants = listing.Variants is { Count: > 0 };
+                    if (!hasVariants && listing.Stock is int available)
                     {
                         if (available <= 0)
                             return Result<OrderDto>.Failure(
@@ -170,12 +176,73 @@ namespace ZansiHustle.Application.Orders
                     CreatedAtUtc = DateTime.UtcNow
                 };
 
+                // Re-group by (Listing, Variant) so two different variants of
+                // the same listing become two distinct order lines instead of
+                // merging into one. For every item in today's traffic
+                // VariantId is null on both sides of the tuple, so this
+                // collapses identically to the old ListingId-only grouping —
+                // zero behaviour change for non-variant carts.
+                var lineGroups = request.Items
+                    .Where(i => i.Quantity > 0)
+                    .GroupBy(i => new { i.ListingId, i.VariantId })
+                    .Select(g => new { g.Key.ListingId, g.Key.VariantId, Quantity = g.Sum(x => x.Quantity) })
+                    .ToList();
+
                 decimal subtotal = 0m;
-                foreach (var line in grouped)
+                foreach (var line in lineGroups)
                 {
                     var listing = listings.First(l => l.Id == line.ListingId);
 
-                    var unitPrice = listing.Price;
+                    // Gate on whether the listing has ANY variant rows at all —
+                    // not just active ones. A listing whose only variant(s) are
+                    // currently inactive must still require (and reject) an
+                    // explicit selection, rather than silently falling back to
+                    // "no variants" and letting the request through unchecked.
+                    var allVariants = listing.Variants ?? new List<Domain.Listings.ListingVariant>();
+
+                    Domain.Listings.ListingVariant? variant = null;
+                    if (allVariants.Count > 0)
+                    {
+                        // This listing sells through variants — a selection is mandatory.
+                        if (line.VariantId is null)
+                            return Result<OrderDto>.Failure(
+                                ErrorCodes.BadRequest,
+                                $"'{listing.Title}' requires selecting an option before you can order it.");
+
+                        // A variant that doesn't belong to this listing, or that
+                        // exists but is inactive, is treated identically — "not
+                        // currently a valid selection" — rather than leaking
+                        // which case it was.
+                        variant = allVariants.FirstOrDefault(v => v.Id == line.VariantId.Value && v.IsActive);
+                        if (variant is null)
+                            return Result<OrderDto>.Failure(
+                                ErrorCodes.BadRequest,
+                                $"The selected option for '{listing.Title}' is no longer available.");
+
+                        if (variant.Stock is int variantAvailable)
+                        {
+                            if (variantAvailable <= 0)
+                                return Result<OrderDto>.Failure(
+                                    ErrorCodes.BadRequest,
+                                    $"'{listing.Title} — {variant.Name}' is out of stock.");
+
+                            if (line.Quantity > variantAvailable)
+                                return Result<OrderDto>.Failure(
+                                    ErrorCodes.BadRequest,
+                                    $"Only {variantAvailable} left in stock for '{listing.Title} — {variant.Name}'.");
+                        }
+                    }
+                    // Listing has no variant rows at all — any VariantId the
+                    // client sent for it is simply ignored; nothing to validate against.
+
+                    // Unit price NEVER comes from the request — always looked up
+                    // server-side. A variant only overrides the listing price
+                    // when it carries an explicit custom price (UsesCustomPrice);
+                    // otherwise it inherits Listing.Price, exactly like the
+                    // existing DTO-mapping convention elsewhere in the codebase.
+                    var unitPrice = variant is { UsesCustomPrice: true, Price: decimal customPrice }
+                        ? customPrice
+                        : listing.Price;
                     var lineTotal = unitPrice * line.Quantity;
                     subtotal += lineTotal;
 
@@ -184,8 +251,11 @@ namespace ZansiHustle.Application.Orders
                         Id = Guid.NewGuid(),
                         OrderId = order.Id,
                         ListingId = listing.Id,
+                        VariantId = variant?.Id,
                         ListingType = listing.Type,
                         TitleSnapshot = listing.Title,
+                        VariantNameSnapshot = variant?.Name,
+                        SkuSnapshot = variant?.Sku,
                         ImageSnapshot = listing.Images.Count > 0 ? listing.Images[0] : null,
                         UnitPrice = unitPrice,
                         Quantity = line.Quantity,
@@ -1300,6 +1370,9 @@ namespace ZansiHustle.Application.Orders
                 {
                     Id = i.Id,
                     ListingId = i.ListingId,
+                    VariantId = i.VariantId,
+                    VariantName = i.VariantNameSnapshot,
+                    Sku = i.SkuSnapshot,
                     ListingType = i.ListingType,
                     Title = i.TitleSnapshot,
                     ImageUrl = i.ImageSnapshot,

@@ -19,6 +19,7 @@ using ZansiHustle.Domain.Media;
 using ZansiHustle.Domain.Merchants;
 using ZansiHustle.Domain.Notifications;
 using ZansiHustle.Domain.Orders;
+using ZansiHustle.Domain.ExternalCatalog;
 using ZansiHustle.Domain.Payments;
 using ZansiHustle.Domain.Payments.External;
 using ZansiHustle.Domain.Podcasts;
@@ -167,6 +168,10 @@ public class AppDbContext : IdentityDbContext<User, IdentityRole<Guid>, Guid>
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<PaymentEvent> PaymentEvents => Set<PaymentEvent>();
     public DbSet<ExternalPaymentSession> ExternalPaymentSessions => Set<ExternalPaymentSession>();
+
+    public DbSet<ExternalCatalogSyncRun> ExternalCatalogSyncRuns => Set<ExternalCatalogSyncRun>();
+    public DbSet<ExternalCatalogSourceStatus> ExternalCatalogSourceStatuses => Set<ExternalCatalogSourceStatus>();
+    public DbSet<ExternalCategoryMapping> ExternalCategoryMappings => Set<ExternalCategoryMapping>();
 
     public DbSet<EventPlan> EventPlans => Set<EventPlan>();
     public DbSet<EventPlanItem> EventPlanItems => Set<EventPlanItem>();

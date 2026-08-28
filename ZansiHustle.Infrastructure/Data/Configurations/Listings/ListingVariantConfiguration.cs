@@ -50,6 +50,17 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Listings
 
             builder.HasIndex(x => new { x.ListingId, x.SortOrder });
 
+            // ── External catalog sync ────────────────────────────────────
+            builder.Property(x => x.ExternalSourceCode).HasMaxLength(64);
+            builder.Property(x => x.ExternalVariantId).HasMaxLength(120);
+
+            // (ExternalSourceCode, ExternalVariantId) uniquely identifies one
+            // mirrored variant. IS NOT NULL filter — the proven-safe form.
+            builder.HasIndex(x => new { x.ExternalSourceCode, x.ExternalVariantId })
+                .IsUnique()
+                .HasFilter("[ExternalSourceCode] IS NOT NULL AND [ExternalVariantId] IS NOT NULL")
+                .HasDatabaseName("IX_ListingVariants_ExternalSource_ExternalVariant");
+
             // FK is configured from the dependent side. Cascade ensures
             // a Listings DELETE removes all its variant rows — important
             // because the public detail endpoint always loads variants

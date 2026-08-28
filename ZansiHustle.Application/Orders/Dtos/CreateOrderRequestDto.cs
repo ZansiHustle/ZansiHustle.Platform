@@ -37,6 +37,15 @@ namespace ZansiHustle.Application.Orders.Dtos
     public class CreateOrderItemDto
     {
         public Guid ListingId { get; set; }
+
+        /// <summary>
+        /// Required when the listing has any active variants; must be null
+        /// for a listing with none. Ignored (never inferred) when the
+        /// listing has no variants. Never a price source — the server
+        /// always looks up the variant's own price server-side.
+        /// </summary>
+        public Guid? VariantId { get; set; }
+
         public int Quantity { get; set; } = 1;
     }
 

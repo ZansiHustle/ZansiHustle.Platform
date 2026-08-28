@@ -26,11 +26,42 @@ namespace ZansiHustle.Application.Persistence.Listings
         Task<List<Listing>> GetByShopProfileAsync(Guid shopProfileId);
 
         Task<List<Listing>> GetByOwnerAsync(Guid ownerUserId);
+
+        /// <summary>
+        /// Looks up a mirrored Listing by its external-catalog identity
+        /// (ExternalSourceCode, ExternalProductId) — the sync upsert key.
+        /// Eager-loads Variants (same shape as <see cref="GetByIdAsync"/>)
+        /// so the sync writer can mutate the tracked graph directly.
+        /// </summary>
+        Task<Listing?> GetByExternalIdAsync(string sourceCode, string externalProductId);
+
         Task<bool> ExistsBySlugAsync(string slug);
         Task AddAsync(Listing listing);
         void Update(Listing listing);
         void Delete(Listing listing);
         Task<bool> SaveChangesAsync();
+
+        /// <summary>
+        /// Saves, then clears the context's change tracker. Use after a save
+        /// that mutated a collection navigation (e.g. adding a brand-new
+        /// child variant to an already-loaded Listing) right before another
+        /// unrelated save runs on the same DbContext — leaves nothing stale
+        /// tracked for that next save to trip over. Mirrors the tracker-clear
+        /// SaveListingAndReplaceVariantsAsync already does for its own
+        /// variant-graph reasons.
+        /// </summary>
+        Task<bool> SaveChangesAndDetachAsync();
+
+        /// <summary>
+        /// Adds brand-new variant rows for an EXISTING listing, as their own
+        /// operation separate from any scalar/child mutation already staged
+        /// on that listing's tracked graph. Used by external-catalog sync's
+        /// stable-id upsert: updates to already-tracked existing variants are
+        /// saved first, new variants are added and saved in a distinct pass —
+        /// simpler to reason about than one mixed update+insert SaveChanges
+        /// call against a graph loaded via Include.
+        /// </summary>
+        Task AddVariantsAsync(IEnumerable<ListingVariant> variants);
 
         /// <summary>
         /// Atomic listing-update + variant-replace operation. Wraps:
@@ -62,5 +93,18 @@ namespace ZansiHustle.Application.Persistence.Listings
         Task<bool> SaveListingAndReplaceVariantsAsync(
             Listing listing,
             IReadOnlyList<ListingVariant>? newVariantsOrNull);
+
+        /// <summary>
+        /// Full-snapshot archive boundary: archives (Status = Archived,
+        /// variants deactivated) every Listing for <paramref name="sourceCode"/>
+        /// that was NOT touched by <paramref name="syncRunId"/> — i.e. it
+        /// existed before this run but the run's snapshot no longer
+        /// includes it. Never touches Listings for a different source, and
+        /// never touches manually-created (ExternalSourceCode == null)
+        /// Listings — both are excluded by the WHERE clause itself, not by
+        /// caller discipline. Returns the number of Listings archived.
+        /// Bulk column updates via ExecuteUpdateAsync — no entity loading.
+        /// </summary>
+        Task<int> ArchiveUntouchedExternalListingsAsync(string sourceCode, Guid syncRunId);
     }
 }

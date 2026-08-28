@@ -505,6 +505,17 @@ namespace ZansiHustle.Application.Listings
                 if (listing is null)
                     return Result<ListingDto>.Failure(ErrorCodes.NotFound, "Listing not found.");
 
+                // Externally-managed listings (synced from an approved external
+                // catalog source, e.g. ZansiTech) are never editable through the
+                // ordinary seller path — the source system is authoritative for
+                // these rows and its next sync always overwrites them anyway.
+                // Blocking here avoids the confusing alternative: a seller edit
+                // that appears to save, then silently vanishes on the next sync.
+                if (!string.IsNullOrEmpty(listing.ExternalSourceCode))
+                    return Result<ListingDto>.Failure(
+                        ErrorCodes.Forbidden,
+                        $"This listing is managed by an external catalog ('{listing.ExternalSourceCode}') and can't be edited here. Changes must be made in the source system.");
+
                 if (listing.Merchant is null || listing.Merchant.OwnerUserId != ownerUserId)
                     return Result<ListingDto>.Failure(ErrorCodes.Forbidden, "You do not have permission to update this listing.");
 

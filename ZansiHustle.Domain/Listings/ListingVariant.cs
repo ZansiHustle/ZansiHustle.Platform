@@ -80,6 +80,16 @@ namespace ZansiHustle.Domain.Listings
         /// </summary>
         public bool IsActive { get; set; } = true;
 
+        // ── External catalog sync ────────────────────────────────────
+        // Denormalised copy of the parent Listing's ExternalSourceCode so
+        // (ExternalSourceCode, ExternalVariantId) uniquely identifies a
+        // mirrored variant without a join. Both null for a manually-created
+        // variant. For externally-managed listings, sync matches on
+        // ExternalVariantId (stable across syncs) instead of the normal
+        // wholesale-replace-with-fresh-ids strategy used by seller edits.
+        public string? ExternalSourceCode { get; set; }
+        public string? ExternalVariantId { get; set; }
+
         public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
         public DateTime? UpdatedAtUtc { get; set; }
     }

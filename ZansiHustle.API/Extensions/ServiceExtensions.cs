@@ -521,6 +521,29 @@ public static class ServiceExtensions
     }
 
     /// <summary>
+    /// Registers the External Catalog Sync feature — the server-to-server
+    /// API approved external catalog sources (ZansiTech first) call to
+    /// mirror their products into ZansiHustle's Listing/ListingVariant
+    /// tables. Uses a SEPARATE secret namespace from AddExternalShopPayments
+    /// — catalog sync and payment authorization never share a credential.
+    /// </summary>
+    public static IServiceCollection AddExternalCatalogSync(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<ZansiHustle.Application.Catalog.External.ExternalCatalogSourcesOptions>(
+            configuration.GetSection(ZansiHustle.Application.Catalog.External.ExternalCatalogSourcesOptions.SectionName));
+
+        services.AddScoped<
+            ZansiHustle.Application.Persistence.ExternalCatalog.IExternalCatalogRepository,
+            ZansiHustle.Infrastructure.Persistence.ExternalCatalog.ExternalCatalogRepository>();
+
+        services.AddScoped<
+            ZansiHustle.Application.Catalog.External.IExternalCatalogSyncService,
+            ZansiHustle.Application.Catalog.External.ExternalCatalogSyncService>();
+
+        return services;
+    }
+
+    /// <summary>
     /// Registers the channel-agnostic OTP service and the in-memory session store.
     /// Replace <see cref="InMemoryOtpStore"/> with a Redis/SQL implementation
     /// when scaling horizontally.

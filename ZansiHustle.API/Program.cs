@@ -52,6 +52,7 @@ builder.Services.AddPaystackPayments(builder.Configuration);
 builder.Services.AddOzowPayments(builder.Configuration);
 builder.Services.AddYocoPayments(builder.Configuration);
 builder.Services.AddExternalShopPayments(builder.Configuration);
+builder.Services.AddExternalCatalogSync(builder.Configuration);
 
 // ============================================================================
 // 9. FRONT-END CORS

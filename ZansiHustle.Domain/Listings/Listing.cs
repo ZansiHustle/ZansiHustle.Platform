@@ -198,6 +198,26 @@ namespace ZansiHustle.Domain.Listings
         /// </summary>
         public List<ListingVariant> Variants { get; set; } = new();
 
+        // ── External catalog sync (mirrored from an approved external source, e.g. ZansiTech) ──
+        // Null ExternalSourceCode = a normal, manually-managed ZansiHustle listing (the
+        // overwhelming majority). Non-null = externally managed: ListingService.UpdateAsync
+        // rejects ordinary seller edits to these rows — the source system is authoritative
+        // and the next sync always wins on these fields.
+        /// <summary>Lowercase source code (e.g. "zansitech"). Null = not externally managed.</summary>
+        public string? ExternalSourceCode { get; set; }
+
+        /// <summary>The source system's own stable Product identifier. Combined with ExternalSourceCode, uniquely identifies this mirrored Listing.</summary>
+        public string? ExternalProductId { get; set; }
+
+        /// <summary>The source-side timestamp/version last applied. Stale-update protection: an incoming sync with an older value than this is ignored.</summary>
+        public DateTime? ExternalSourceUpdatedAtUtc { get; set; }
+
+        /// <summary>When ZansiHustle itself last wrote this row from a sync (audit/observability — distinct from ExternalSourceUpdatedAtUtc, which is the source's own clock).</summary>
+        public DateTime? ExternalSyncedAtUtc { get; set; }
+
+        /// <summary>Which full-snapshot run last touched this row. Used as the archive-boundary marker — see ExternalCatalogSyncRun.</summary>
+        public Guid? ExternalSyncRunId { get; set; }
+
         public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
         public DateTime? UpdatedAtUtc { get; set; }
     }

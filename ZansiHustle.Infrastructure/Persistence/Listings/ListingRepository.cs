@@ -227,6 +227,24 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
         }
 
         /// <inheritdoc />
+        public async Task<Listing?> GetByExternalIdAsync(string sourceCode, string externalProductId)
+        {
+            if (string.IsNullOrWhiteSpace(sourceCode) || string.IsNullOrWhiteSpace(externalProductId))
+                return null;
+
+            var source = sourceCode.Trim().ToLowerInvariant();
+            var productId = externalProductId.Trim();
+
+            return await _context.Listings
+                .Include(x => x.Merchant)
+                .Include(x => x.ShopProfile)
+                .Include(x => x.SellerCategory)
+                .Include(x => x.SellerSubcategory)
+                .Include(x => x.Variants)
+                .FirstOrDefaultAsync(x => x.ExternalSourceCode == source && x.ExternalProductId == productId);
+        }
+
+        /// <inheritdoc />
         public async Task<bool> ExistsBySlugAsync(string slug)
         {
             if (string.IsNullOrWhiteSpace(slug))
@@ -281,6 +299,21 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
         public async Task<bool> SaveChangesAsync()
         {
             return await _context.SaveChangesAsync() > 0;
+        }
+
+        /// <inheritdoc />
+        public async Task<bool> SaveChangesAndDetachAsync()
+        {
+            var affected = await _context.SaveChangesAsync();
+            _context.ChangeTracker.Clear();
+            return affected > 0;
+        }
+
+        /// <inheritdoc />
+        public async Task AddVariantsAsync(IEnumerable<ListingVariant> variants)
+        {
+            ArgumentNullException.ThrowIfNull(variants);
+            await _context.ListingVariants.AddRangeAsync(variants);
         }
 
         /// <inheritdoc />
@@ -351,6 +384,48 @@ namespace ZansiHustle.Infrastructure.Persistence.Listings
                 await tx.RollbackAsync();
                 throw;
             }
+        }
+
+        /// <inheritdoc />
+        public async Task<int> ArchiveUntouchedExternalListingsAsync(string sourceCode, Guid syncRunId)
+        {
+            if (string.IsNullOrWhiteSpace(sourceCode))
+                return 0;
+
+            var source = sourceCode.Trim().ToLowerInvariant();
+
+            // Load + mutate + save rather than ExecuteUpdateAsync: this only
+            // ever touches one external source's own catalog on an explicit
+            // full-sync completion (not a hot path), so the bulk-update
+            // micro-optimisation isn't needed — and avoiding it keeps this
+            // method provider-portable (works identically against SQL
+            // Server and any relational test double) rather than depending
+            // on a SQL-Server-only bulk operation.
+            var untouched = await _context.Listings
+                .Include(l => l.Variants)
+                .Where(l => l.ExternalSourceCode == source
+                    && l.ExternalSyncRunId != syncRunId
+                    && l.Status != ListingStatus.Archived)
+                .ToListAsync();
+
+            if (untouched.Count == 0)
+                return 0;
+
+            var now = DateTime.UtcNow;
+            foreach (var listing in untouched)
+            {
+                listing.Status = ListingStatus.Archived;
+                listing.UpdatedAtUtc = now;
+                foreach (var variant in listing.Variants)
+                {
+                    variant.IsActive = false;
+                    variant.UpdatedAtUtc = now;
+                }
+            }
+
+            await _context.SaveChangesAsync();
+
+            return untouched.Count;
         }
 
         private static IQueryable<Listing> ApplySort(IQueryable<Listing> query, string? sort)

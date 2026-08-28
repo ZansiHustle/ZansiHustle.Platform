@@ -15,6 +15,7 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Orders
             builder.HasIndex(x => x.OrderId);
             builder.HasIndex(x => x.ListingId);
             builder.HasIndex(x => x.ListingType);
+            builder.HasIndex(x => x.VariantId);
 
             builder.Property(x => x.TitleSnapshot)
                 .IsRequired()
@@ -22,6 +23,13 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Orders
 
             builder.Property(x => x.ImageSnapshot)
                 .HasMaxLength(1000);
+
+            // Mirrors ListingVariant.Name/Sku's own max lengths.
+            builder.Property(x => x.VariantNameSnapshot)
+                .HasMaxLength(80);
+
+            builder.Property(x => x.SkuSnapshot)
+                .HasMaxLength(64);
 
             builder.Property(x => x.UnitPrice)
                 .HasPrecision(18, 2)
@@ -48,6 +56,14 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Orders
             builder.HasOne(x => x.Listing)
                 .WithMany()
                 .HasForeignKey(x => x.ListingId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            // Same nullable-FK, survive-cleanup pattern as Listing above —
+            // the snapshot fields carry the purchased selection forward
+            // even if the variant row is later changed/removed by a sync.
+            builder.HasOne(x => x.Variant)
+                .WithMany()
+                .HasForeignKey(x => x.VariantId)
                 .OnDelete(DeleteBehavior.SetNull);
         }
     }

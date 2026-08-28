@@ -227,6 +227,32 @@ namespace ZansiHustle.Infrastructure.Data.Configurations.Listings
                 .WithMany()
                 .HasForeignKey(x => x.SellerSubcategoryId)
                 .OnDelete(DeleteBehavior.NoAction);
+
+            // ── External catalog sync ────────────────────────────────────
+            builder.Property(x => x.ExternalSourceCode).HasMaxLength(64);
+            builder.Property(x => x.ExternalProductId).HasMaxLength(120);
+
+            // (ExternalSourceCode, ExternalProductId) uniquely identifies one
+            // mirrored Listing. Filtered on IS NOT NULL (proven-safe SQL
+            // Server filtered-index form — see ExternalPaymentSessionConfiguration
+            // for the NOT-IN pitfall this avoids) so manually-created listings
+            // (both columns null) never collide against the unique constraint.
+            builder.HasIndex(x => new { x.ExternalSourceCode, x.ExternalProductId })
+                .IsUnique()
+                .HasFilter("[ExternalSourceCode] IS NOT NULL AND [ExternalProductId] IS NOT NULL")
+                .HasDatabaseName("IX_Listings_ExternalSource_ExternalProduct");
+
+            builder.HasIndex(x => x.ExternalSourceCode);
+            builder.HasIndex(x => x.ExternalSyncRunId);
+
+            // Restrict — a sync run row must outlive the listings it touched
+            // for audit purposes; SetNull would also work, but Restrict makes
+            // an accidental run-row delete loud instead of silently orphaning
+            // the archive-boundary marker.
+            builder.HasOne<ZansiHustle.Domain.ExternalCatalog.ExternalCatalogSyncRun>()
+                .WithMany()
+                .HasForeignKey(x => x.ExternalSyncRunId)
+                .OnDelete(DeleteBehavior.Restrict);
         }
     }
 }
