@@ -204,7 +204,7 @@ namespace ZansiHustle.Infrastructure.Migrations
                 column: "VariantId",
                 principalTable: "ListingVariants",
                 principalColumn: "Id",
-                onDelete: ReferentialAction.SetNull);
+                onDelete: ReferentialAction.NoAction);
         }
 
         /// <inheritdoc />
